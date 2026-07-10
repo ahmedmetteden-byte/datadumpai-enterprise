@@ -1,0 +1,162 @@
+# =============================================================================
+# DataDumpAI Enterprise — production .gitignore
+# =============================================================================
+# Runtime data lives under data/ and exports/. The storage/ package at the
+# repository root is application source code (file_store.py, etc.) — do not
+# ignore it. Do not add bare "lib/" rules; they would exclude marketing-site/src/lib/.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Secrets and local environment
+# -----------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.toml
+.streamlit/secrets.toml
+
+# -----------------------------------------------------------------------------
+# Python
+# -----------------------------------------------------------------------------
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging (root-level only — avoids marketing-site paths)
+/build/
+/dist/
+/develop-eggs/
+/downloads/
+/eggs/
+/.eggs/
+/lib/
+/lib64/
+/parts/
+/sdist/
+/var/
+/wheels/
+/share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Test and type-check caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage/
+*.cover
+.cache/
+
+# -----------------------------------------------------------------------------
+# Streamlit
+# -----------------------------------------------------------------------------
+# Keep .streamlit/config.toml (tracked). Ignore local secrets above.
+
+# -----------------------------------------------------------------------------
+# Node.js / Next.js (marketing-site and any root-level JS tooling)
+# -----------------------------------------------------------------------------
+node_modules/
+.next/
+out/
+.turbo/
+.vercel/
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+npm-shrinkwrap.json
+
+# TypeScript build info (generated)
+*.tsbuildinfo
+
+# -----------------------------------------------------------------------------
+# Docker (local overrides only — Dockerfile and compose files stay tracked)
+# -----------------------------------------------------------------------------
+docker-compose.override.yml
+docker-compose.*.local.yml
+
+# -----------------------------------------------------------------------------
+# Supabase (local CLI state — migrations under supabase/ stay tracked)
+# -----------------------------------------------------------------------------
+.supabase/
+.branches
+.temp
+
+# -----------------------------------------------------------------------------
+# VS Code
+# -----------------------------------------------------------------------------
+.vscode/
+!.vscode/extensions.json
+
+# -----------------------------------------------------------------------------
+# Windows
+# -----------------------------------------------------------------------------
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.stackdump
+[Dd]esktop.ini
+
+# -----------------------------------------------------------------------------
+# macOS / Linux (common cross-platform noise)
+# -----------------------------------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+*~
+
+# -----------------------------------------------------------------------------
+# Logs
+# -----------------------------------------------------------------------------
+logs/
+*.log
+
+# -----------------------------------------------------------------------------
+# Local databases
+# -----------------------------------------------------------------------------
+*.db
+*.sqlite
+*.sqlite3
+
+# -----------------------------------------------------------------------------
+# Runtime application data
+# -----------------------------------------------------------------------------
+# User uploads, generated reports, exports, caches, and local JSON state.
+# Preserve empty directory skeletons via .gitkeep files only.
+
+data/**
+!data/**/
+!data/**/.gitkeep
+
+exports/**
+!exports/
+!exports/.gitkeep

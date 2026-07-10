@@ -1,0 +1,11 @@
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.git
+.env
+data/users
+data/projects
+*.md
+tests
+exports

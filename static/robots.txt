@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+
+Disallow: /webhooks/
+
+Sitemap: https://www.getdatadump.com/sitemap.xml

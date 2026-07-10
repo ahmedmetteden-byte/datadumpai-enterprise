@@ -1,0 +1,2345 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap");
+
+/* ==========================================================
+   DATADUMPAI
+========================================================== */
+
+:root{
+
+    --radius:18px;
+
+    --shadow:
+        0 12px 35px rgba(15,23,42,.08);
+
+    --transition:.22s ease;
+
+    --hero1:#2340C8;
+    --hero2:#2563EB;
+    --hero3:#14B8D4;
+
+}
+
+
+/* ==========================================================
+   GLOBAL
+========================================================== */
+
+html,
+body,
+[class*="css"]{
+    font-family:__FONT__;
+}
+
+body{
+    background:__CANVAS__;
+}
+
+.stApp{
+    background:__CANVAS__;
+}
+
+[data-testid="stAppViewContainer"]{
+    background:__CANVAS__;
+}
+
+[data-testid="stMain"]{
+    background:__CANVAS__;
+}
+
+.block-container{
+
+    max-width:1450px;
+
+    padding:20px 36px 70px;
+
+}
+
+
+/* ==========================================================
+   STREAMLIT
+========================================================== */
+
+header[data-testid="stHeader"]{
+    display:none;
+}
+
+[data-testid="stToolbar"]{
+    display:none;
+}
+
+[data-testid="stDecoration"]{
+    display:none;
+}
+
+#MainMenu{
+    display:none;
+}
+
+footer{
+    display:none;
+}
+
+/* Sidebar layout — Streamlit 1.46+ needs explicit flex when chrome is hidden */
+.stApp [data-testid="stAppViewContainer"]{
+    display:flex !important;
+    flex-direction:row !important;
+    align-items:stretch !important;
+    width:100% !important;
+}
+
+section[data-testid="stSidebar"],
+section.stSidebar{
+    position:relative !important;
+    top:auto !important;
+    left:auto !important;
+    flex:0 0 300px !important;
+    width:300px !important;
+    min-width:300px !important;
+    max-width:300px !important;
+    height:100vh !important;
+    min-height:100vh !important;
+    transform:none !important;
+    translate:none !important;
+    margin:0 !important;
+    background:__SIDEBAR__ !important;
+    border-right:1px solid rgba(255,255,255,.06) !important;
+    overflow-x:hidden !important;
+    overflow-y:auto !important;
+    z-index:998 !important;
+}
+
+section[data-testid="stSidebar"] > div,
+section.stSidebar > div{
+    width:100% !important;
+    min-width:100% !important;
+    max-width:100% !important;
+    margin-left:0 !important;
+    transform:none !important;
+    background:transparent !important;
+    height:auto !important;
+    min-height:100% !important;
+}
+
+section[data-testid="stSidebar"][aria-expanded="false"],
+section[data-testid="stSidebar"][aria-expanded="false"] > div{
+    margin-left:0 !important;
+    width:300px !important;
+    min-width:300px !important;
+    transform:none !important;
+}
+
+[data-testid="stMain"],
+section.main{
+    flex:1 1 auto !important;
+    width:auto !important;
+    min-width:0 !important;
+    margin-left:0 !important;
+}
+
+[data-testid="stSidebarCollapsedControl"]{
+    display:none !important;
+}
+
+
+/* ==========================================================
+   SIDEBAR
+========================================================== */
+
+section[data-testid="stSidebar"] .block-container{
+    padding:26px 20px 32px;
+    max-width:100%;
+}
+
+section[data-testid="stSidebar"] .stButton{
+    width:100%;
+}
+
+
+/* ==========================================================
+   TYPOGRAPHY
+========================================================== */
+
+h1{
+
+    font-size:46px;
+
+    font-weight:800;
+
+    color:__TEXT__;
+
+}
+
+h2{
+
+    font-size:30px;
+
+    font-weight:700;
+
+    color:__TEXT__;
+
+}
+
+h3{
+
+    font-size:22px;
+
+    font-weight:700;
+
+    color:__TEXT__;
+
+}
+
+p{
+
+    color:__MUTED__;
+
+}
+
+
+/* ==========================================================
+   TOOLBAR
+========================================================== */
+
+.dde-toolbar{
+
+    display:flex;
+
+    align-items:center;
+
+    gap:16px;
+
+    background:white;
+
+    border:1px solid __BORDER__;
+
+    border-radius:16px;
+
+    padding:14px 22px;
+
+    box-shadow:var(--shadow);
+
+}
+
+.dde-beta{
+
+    background:#FEF3C7;
+
+    color:#92400E;
+
+    padding:4px 10px;
+
+    border-radius:999px;
+
+    font-size:12px;
+
+    font-weight:700;
+
+}
+
+.dde-toolbar-title{
+
+    font-size:18px;
+
+    font-weight:700;
+
+    color:__TEXT__;
+
+}
+
+.dde-toolbar-version{
+
+    color:__MUTED__;
+
+    font-size:13px;
+
+}
+
+
+/* ==========================================================
+   APP FOOTER
+========================================================== */
+
+.dde-app-footer{
+    margin-top:48px;
+    padding:20px 0 8px;
+    border-top:1px solid __BORDER__;
+    text-align:center;
+}
+
+.dde-app-footer-version{
+    color:__TEXT__;
+    font-size:14px;
+    font-weight:600;
+}
+
+.dde-app-footer-release{
+    color:__MUTED__;
+    font-size:13px;
+    margin-top:4px;
+}
+
+
+/* ==========================================================
+   HERO
+========================================================== */
+
+.dde-hero{
+
+    background:
+        linear-gradient(
+            135deg,
+            var(--hero1),
+            var(--hero2),
+            var(--hero3)
+        );
+
+    height:6cm;
+
+    max-height:6cm;
+
+    min-height:6cm;
+
+    border-radius:8px;
+
+    padding:0 0.55cm;
+
+    color:white;
+
+    box-shadow:
+        0 3px 10px rgba(37,99,235,.14);
+
+    display:flex;
+
+    align-items:center;
+
+    overflow:visible;
+
+}
+
+.dde-hero-main{
+
+    display:flex;
+
+    align-items:center;
+
+    gap:0.5cm;
+
+    width:100%;
+
+    min-width:0;
+
+}
+
+.dde-hero-details{
+
+    min-width:0;
+
+    display:flex;
+
+    flex-direction:column;
+
+    justify-content:center;
+
+}
+
+.dde-hero-logo-image{
+
+    display:block;
+
+    height:4.5cm;
+
+    width:auto;
+
+    max-height:calc(6cm - 0.2cm);
+
+    object-fit:contain;
+
+    flex-shrink:0;
+
+    border-radius:6px;
+
+}
+
+.dde-hero-eyebrow{
+
+    text-transform:uppercase;
+
+    letter-spacing:.22em;
+
+    font-size:8px;
+
+    opacity:.85;
+
+}
+
+.dde-hero-title{
+
+    margin:0;
+
+    font-size:7px;
+
+    font-weight:800;
+
+    line-height:1.1;
+
+    white-space:nowrap;
+
+    flex-shrink:0;
+
+    display:block;
+
+    color:#FFFFFF;
+
+}
+
+.dde-hero-title span{
+
+    color:#67E8F9;
+
+    font-size:7px;
+
+}
+
+.dde-hero-subtitle{
+
+    margin:0;
+
+    font-size:15px;
+
+    max-width:100%;
+
+    line-height:1.35;
+
+    color:white;
+
+    font-weight:500;
+
+}
+
+.dde-hero-pipeline{
+
+    margin-top:6px;
+
+    display:inline-block;
+
+    background:rgba(255,255,255,.16);
+
+    padding:4px 12px;
+
+    border-radius:999px;
+
+    font-size:13px;
+
+    line-height:1.35;
+
+    white-space:nowrap;
+
+    font-weight:500;
+
+}
+
+
+/* ==========================================================
+   CARDS
+========================================================== */
+
+.dde-card{
+
+    background:white;
+
+    border-radius:18px;
+
+    border:1px solid __BORDER__;
+
+    box-shadow:var(--shadow);
+
+    padding:24px;
+
+}
+
+
+/* ==========================================================
+   BUTTONS
+========================================================== */
+
+.stButton{
+
+    width:100%;
+
+}
+
+.stButton>button p,
+.stButton>button span,
+.stButton>button div{
+
+    font-size:15px !important;
+
+    font-weight:700 !important;
+
+    color:inherit !important;
+
+    transition:color var(--transition), background-color var(--transition);
+
+}
+
+.stButton>button{
+
+    width:100%;
+
+    min-height:46px;
+
+    border-radius:12px;
+
+    font-size:15px !important;
+
+    font-weight:700 !important;
+
+    letter-spacing:0.01em;
+
+    transition:var(--transition), color var(--transition), background-color var(--transition), border-color var(--transition);
+
+}
+
+.stButton>button:hover{
+
+    transform:translateY(-1px);
+
+}
+
+.stButton>button[kind="primary"]{
+
+    background:#2563EB !important;
+
+    border:2px solid #1D4ED8 !important;
+
+    color:#FFFFFF !important;
+
+    box-shadow:0 8px 20px rgba(37,99,235,.28);
+
+}
+
+.stButton>button[kind="primary"] p,
+.stButton>button[kind="primary"] span,
+.stButton>button[kind="primary"] div{
+
+    color:#FFFFFF !important;
+
+}
+
+.stButton>button[kind="primary"]:hover{
+
+    background:#1D4ED8 !important;
+
+    border-color:#1E40AF !important;
+
+    color:#FFFFFF !important;
+
+}
+
+.stButton>button[kind="primary"]:hover p,
+.stButton>button[kind="primary"]:hover span,
+.stButton>button[kind="primary"]:hover div{
+
+    color:#FFFFFF !important;
+
+}
+
+.stButton>button[kind="secondary"]:hover{
+
+    background:#2563EB !important;
+
+    border-color:#1D4ED8 !important;
+
+    color:#FFFFFF !important;
+
+    box-shadow:0 8px 20px rgba(37,99,235,.24);
+
+}
+
+.stButton>button[kind="secondary"]:hover p,
+.stButton>button[kind="secondary"]:hover span,
+.stButton>button[kind="secondary"]:hover div{
+
+    color:#FFFFFF !important;
+
+}
+
+.stButton>button[kind="secondary"]{
+
+    background:#FFFFFF !important;
+
+    border:2px solid #2563EB !important;
+
+    color:#0F172A !important;
+
+    box-shadow:0 2px 8px rgba(37,99,235,.08);
+
+}
+
+.stButton>button[kind="secondary"] p,
+.stButton>button[kind="secondary"] span,
+.stButton>button[kind="secondary"] div{
+
+    color:#0F172A !important;
+
+}
+
+.stDownloadButton>button{
+
+    min-height:46px;
+
+    border-radius:12px !important;
+
+    border:2px solid #2563EB !important;
+
+    background:#FFFFFF !important;
+
+    color:#0F172A !important;
+
+    font-size:15px !important;
+
+    font-weight:700 !important;
+
+}
+
+.stDownloadButton>button p,
+.stDownloadButton>button span,
+.stDownloadButton>button div{
+
+    color:#0F172A !important;
+
+    font-size:15px !important;
+
+    font-weight:700 !important;
+
+}
+
+.stDownloadButton>button:hover{
+
+    background:#2563EB !important;
+
+    border-color:#1D4ED8 !important;
+
+    color:#FFFFFF !important;
+
+    box-shadow:0 8px 20px rgba(37,99,235,.24);
+
+}
+
+.stDownloadButton>button:hover p,
+.stDownloadButton>button:hover span,
+.stDownloadButton>button:hover div{
+
+    color:#FFFFFF !important;
+
+}
+
+section[data-testid="stSidebar"] .stButton>button[kind="secondary"]{
+
+    background:#1E293B !important;
+
+    border:1px solid rgba(255,255,255,.08) !important;
+
+    color:#F8FAFC !important;
+
+}
+
+section[data-testid="stSidebar"] .stButton>button[kind="primary"]{
+
+    background:#2563EB !important;
+
+    border:1px solid #1D4ED8 !important;
+
+    color:#FFFFFF !important;
+
+}
+
+section[data-testid="stSidebar"] .stButton>button:hover{
+
+    background:#2563EB !important;
+
+    border-color:#1D4ED8 !important;
+
+    color:#FFFFFF !important;
+
+}
+
+section[data-testid="stSidebar"] .stButton>button:hover p,
+section[data-testid="stSidebar"] .stButton>button:hover span,
+section[data-testid="stSidebar"] .stButton>button:hover div{
+
+    color:#FFFFFF !important;
+
+}
+
+section[data-testid="stSidebar"] .stButton>button[kind="secondary"]:hover{
+
+    background:#2563EB !important;
+
+    border-color:#1D4ED8 !important;
+
+    color:#FFFFFF !important;
+
+}
+
+section[data-testid="stSidebar"] .stButton>button[kind="secondary"]:hover p,
+section[data-testid="stSidebar"] .stButton>button[kind="secondary"]:hover span,
+section[data-testid="stSidebar"] .stButton>button[kind="secondary"]:hover div{
+
+    color:#FFFFFF !important;
+
+}
+
+section[data-testid="stSidebar"] .stButton>button[kind="primary"]:hover,
+section[data-testid="stSidebar"] .stButton>button[kind="primary"]:hover p,
+section[data-testid="stSidebar"] .stButton>button[kind="primary"]:hover span,
+section[data-testid="stSidebar"] .stButton>button[kind="primary"]:hover div{
+
+    color:#FFFFFF !important;
+
+}
+
+
+/* ==========================================================
+   FILE UPLOADER
+========================================================== */
+
+[data-testid="stFileUploader"]{
+
+    background:white;
+
+    border-radius:16px;
+
+    border:1px solid __BORDER__;
+
+    padding:18px;
+
+}
+
+
+/* ==========================================================
+   PAGE HEADER
+========================================================== */
+
+.dde-page-header{
+
+    margin-bottom:28px;
+
+}
+
+.dde-page-eyebrow{
+
+    font-size:12px;
+
+    font-weight:700;
+
+    letter-spacing:.12em;
+
+    text-transform:uppercase;
+
+    color:__MUTED__;
+
+}
+
+.dde-page-title{
+
+    font-size:32px;
+
+    font-weight:800;
+
+    color:__TEXT__;
+
+}
+
+.dde-page-tagline{
+
+    margin-top:6px;
+
+    font-size:16px;
+
+    color:__MUTED__;
+
+    line-height:1.5;
+
+    max-width:520px;
+
+}
+
+
+/* ==========================================================
+   EMPTY STATE
+========================================================== */
+
+.dde-empty-state{
+
+    text-align:center;
+
+    padding:48px 24px;
+
+    background:white;
+
+    border-radius:18px;
+
+    border:1px dashed __BORDER__;
+
+}
+
+.dde-empty-icon{
+
+    font-size:40px;
+
+    margin-bottom:12px;
+
+}
+
+.dde-empty-title{
+
+    font-size:20px;
+
+    font-weight:700;
+
+    color:__TEXT__;
+
+}
+
+.dde-empty-message{
+
+    margin-top:8px;
+
+    font-size:15px;
+
+    color:__MUTED__;
+
+    max-width:420px;
+
+    margin-left:auto;
+
+    margin-right:auto;
+
+    line-height:1.6;
+
+}
+
+
+/* ==========================================================
+   SIDEBAR BRAND
+========================================================== */
+
+.dde-sidebar-brand{
+
+    display:flex;
+
+    flex-direction:column;
+
+    align-items:center;
+
+    gap:8px;
+
+    padding-bottom:4px;
+
+}
+
+section[data-testid="stSidebar"] [data-testid="stImage"]{
+    margin-bottom:2px;
+}
+
+section[data-testid="stSidebar"] [data-testid="stImage"] img{
+    display:block;
+    width:100%;
+    max-width:100%;
+    height:auto;
+    margin:0 auto;
+}
+
+.dde-sidebar-wordmark-tagline{
+    margin:4px 0 0;
+    text-align:center;
+    font-size:12px;
+    line-height:1.45;
+    color:#94A3B8;
+}
+
+.dde-sidebar-logo-mark{
+
+    width:42px;
+
+    height:42px;
+
+    border-radius:12px;
+
+    display:flex;
+
+    align-items:center;
+
+    justify-content:center;
+
+    font-size:14px;
+
+    font-weight:800;
+
+    letter-spacing:-0.04em;
+
+    color:#FFFFFF;
+
+    background:linear-gradient(135deg, #2563EB, #06B6D4);
+
+    box-shadow:0 10px 24px rgba(37,99,235,.28);
+
+    flex-shrink:0;
+
+}
+
+.dde-sidebar-brand-text{
+
+    min-width:0;
+
+}
+
+section[data-testid="stSidebar"] .dde-sidebar-title{
+
+    font-size:20px;
+
+    font-weight:800;
+
+    color:#FFFFFF;
+
+    line-height:1.2;
+
+}
+
+section[data-testid="stSidebar"] .dde-sidebar-tagline{
+
+    margin-top:4px;
+
+    font-size:12px;
+
+    line-height:1.45;
+
+    color:#94A3B8;
+
+}
+
+.dde-user-card{
+
+    display:flex;
+
+    align-items:center;
+
+    gap:12px;
+
+    padding:12px;
+
+    background:rgba(255,255,255,.04);
+
+    border:1px solid rgba(255,255,255,.08);
+
+    border-radius:12px;
+
+}
+
+.dde-user-avatar{
+
+    width:36px;
+
+    height:36px;
+
+    border-radius:50%;
+
+    display:flex;
+
+    align-items:center;
+
+    justify-content:center;
+
+    font-size:13px;
+
+    font-weight:700;
+
+    color:#FFFFFF;
+
+    background:linear-gradient(135deg, #2563EB, #06B6D4);
+
+    flex-shrink:0;
+
+}
+
+.dde-user-name{
+
+    font-size:14px;
+
+    font-weight:700;
+
+    color:#F8FAFC;
+
+    line-height:1.3;
+
+}
+
+.dde-user-role{
+
+    margin-top:2px;
+
+    font-size:12px;
+
+    color:#94A3B8;
+
+    line-height:1.3;
+
+}
+
+.dde-sidebar-title{
+
+    font-size:22px;
+
+    font-weight:800;
+
+    color:__TEXT__;
+
+}
+
+.dde-sidebar-title span{
+
+    color:#2563EB;
+
+}
+
+.dde-sidebar-tagline{
+
+    margin-top:8px;
+
+    font-size:13px;
+
+    line-height:1.5;
+
+    color:__MUTED__;
+
+}
+
+.dde-toolbar-tagline{
+
+    color:__MUTED__;
+
+    font-size:14px;
+
+}
+
+
+/* ==========================================================
+   SIDEBAR VERSION
+========================================================== */
+
+.dde-sidebar-version{
+
+    margin-top:6px;
+
+    font-size:12px;
+
+    color:__MUTED__;
+
+}
+
+
+/* ==========================================================
+   PROJECT SUMMARY
+========================================================== */
+
+.dde-project-summary{
+
+    background:transparent;
+
+    border:none;
+
+    border-radius:0;
+
+    padding:0;
+
+    box-shadow:none;
+
+}
+
+.dde-project-summary-wrap [data-testid="stVerticalBlockBorderWrapper"]{
+
+    box-shadow:var(--shadow);
+
+}
+
+.dde-summary-actions{
+
+    display:flex;
+
+    align-items:center;
+
+    justify-content:flex-end;
+
+    height:100%;
+
+    padding-top:18px;
+
+}
+
+.dde-summary-actions .stButton{
+
+    width:auto;
+
+}
+
+.dde-summary-actions .stButton>button{
+
+    width:100%;
+
+    min-width:168px;
+
+    max-width:220px;
+
+    margin-left:auto;
+
+    border-radius:12px !important;
+
+    box-shadow:0 10px 24px rgba(37,99,235,.18) !important;
+
+}
+
+.dde-generate-cta{
+
+    margin-top:16px;
+
+}
+
+
+/* ==========================================================
+   RECENT REPORTS
+========================================================== */
+
+.dde-recent-reports{
+
+    margin-top:18px;
+
+    margin-bottom:8px;
+
+}
+
+.dde-recent-reports h3{
+
+    font-size:20px !important;
+
+    margin-bottom:12px !important;
+
+}
+
+.dde-recent-report-row{
+
+    padding:2px 0;
+
+}
+
+.dde-recent-report-name{
+
+    font-size:16px;
+
+    font-weight:700;
+
+    color:__TEXT__;
+
+}
+
+.dde-recent-report-time{
+
+    margin-top:4px;
+
+    font-size:14px;
+
+    color:__MUTED__;
+
+}
+
+
+/* ==========================================================
+   REPORT TYPE CARDS
+========================================================== */
+
+.dde-report-type-card{
+
+    background:white;
+
+    border:1px solid __BORDER__;
+
+    border-radius:16px;
+
+    padding:18px;
+
+    margin-bottom:10px;
+
+    box-shadow:var(--shadow);
+
+}
+
+.dde-report-type-card.selected{
+
+    border:2px solid #2563EB;
+
+    background:#F8FBFF;
+
+}
+
+.dde-report-type-top{
+
+    display:flex;
+
+    justify-content:space-between;
+
+    align-items:flex-start;
+
+    gap:12px;
+
+}
+
+.dde-report-type-name{
+
+    font-size:18px;
+
+    font-weight:700;
+
+    color:__TEXT__;
+
+}
+
+.dde-report-type-rating{
+
+    font-size:14px;
+
+    color:#F59E0B;
+
+    white-space:nowrap;
+
+}
+
+.dde-report-type-description{
+
+    margin-top:8px;
+
+    font-size:14px;
+
+    line-height:1.5;
+
+    color:__MUTED__;
+
+}
+
+.dde-report-type-badge{
+
+    display:inline-block;
+
+    margin-top:12px;
+
+    padding:6px 14px;
+
+    border-radius:999px;
+
+    background:#2563EB;
+
+    color:#FFFFFF;
+
+    font-size:13px;
+
+    font-weight:800;
+
+    letter-spacing:0.04em;
+
+    text-transform:uppercase;
+
+    box-shadow:0 4px 12px rgba(37,99,235,.24);
+
+}
+
+
+.dde-docs-generate-cta{
+
+    margin:20px 0 24px;
+
+    padding:18px 20px;
+
+    background:#F8FBFF;
+
+    border:1px solid #BFDBFE;
+
+    border-radius:16px;
+
+}
+
+.dde-docs-generate-cta .stButton{
+
+    width:auto;
+
+}
+
+.dde-docs-generate-cta .stButton>button{
+
+    width:100%;
+
+    min-width:168px;
+
+    max-width:220px;
+
+    margin-left:auto;
+
+    border-radius:12px !important;
+
+    box-shadow:0 10px 24px rgba(37,99,235,.18) !important;
+
+}
+
+
+/* ==========================================================
+   SIDEBAR PROJECT SELECTOR
+========================================================== */
+
+.dde-project-current-name{
+
+    margin-top:8px;
+
+    font-size:14px;
+
+    font-weight:700;
+
+    line-height:1.45;
+
+    color:#F8FAFC;
+
+    word-break:break-word;
+
+}
+
+section[data-testid="stSidebar"] [data-baseweb="select"] > div{
+
+    background:#1E293B !important;
+
+    border-color:rgba(255,255,255,.12) !important;
+
+}
+
+section[data-testid="stSidebar"] [data-baseweb="select"] span{
+
+    color:#CBD5E1 !important;
+
+    font-size:13px !important;
+
+}
+
+section[data-testid="stSidebar"] .dde-nav-heading{
+
+    color:#94A3B8;
+
+}
+
+.dde-project-summary-label{
+
+    font-size:12px;
+
+    font-weight:700;
+
+    letter-spacing:.12em;
+
+    text-transform:uppercase;
+
+    color:__MUTED__;
+
+}
+
+.dde-project-summary-name{
+
+    margin-top:8px;
+
+    font-size:28px;
+
+    font-weight:800;
+
+    color:__TEXT__;
+
+    line-height:1.2;
+
+}
+
+.dde-project-summary-stats{
+
+    margin-top:10px;
+
+    font-size:16px;
+
+    color:__TEXT__;
+
+    font-weight:600;
+
+}
+
+.dde-project-summary-meta{
+
+    margin-top:14px;
+
+    display:flex;
+
+    flex-wrap:wrap;
+
+    gap:12px 20px;
+
+    font-size:14px;
+
+    color:__MUTED__;
+
+}
+
+.dde-project-summary-status{
+
+    color:#2563EB;
+
+    font-weight:600;
+
+}
+
+.dde-generate-cta{
+
+    margin-top:16px;
+
+}
+
+
+/* ==========================================================
+   UPLOAD ZONE
+========================================================== */
+
+.dde-upload-shell,
+[data-testid="stVerticalBlockBorderWrapper"]:has(.dde-upload-prompt){
+
+    margin-bottom:24px;
+
+}
+
+.dde-upload-prompt{
+
+    text-align:center;
+
+    padding:28px 24px 12px;
+
+    background:linear-gradient(180deg, #F8FAFF 0%, #FFFFFF 100%);
+
+    border:2px dashed #93C5FD;
+
+    border-bottom:none;
+
+    border-radius:18px 18px 0 0;
+
+}
+
+.dde-upload-icon{
+
+    font-size:42px;
+
+    line-height:1;
+
+}
+
+.dde-upload-title{
+
+    margin-top:12px;
+
+    font-size:22px;
+
+    font-weight:700;
+
+    color:__TEXT__;
+
+}
+
+.dde-upload-sub{
+
+    margin-top:8px;
+
+    font-size:14px;
+
+    color:__MUTED__;
+
+}
+
+[data-testid="stVerticalBlockBorderWrapper"]:has(.dde-upload-prompt) [data-testid="stFileUploader"]{
+
+    border:2px dashed #93C5FD;
+
+    border-top:1px solid __BORDER__;
+
+    border-radius:0 0 18px 18px;
+
+    min-height:120px;
+
+    background:white;
+
+}
+
+[data-testid="stVerticalBlockBorderWrapper"]:has(.dde-upload-prompt) [data-testid="stFileUploader"] section{
+
+    padding:18px 24px 28px;
+
+}
+
+[data-testid="stVerticalBlockBorderWrapper"]:has(.dde-upload-prompt) [data-testid="stFileUploader"] button{
+
+    width:auto;
+
+    min-width:180px;
+
+    margin:0 auto;
+
+}
+
+
+/* ==========================================================
+   REPORT SOURCE PANEL
+========================================================== */
+
+/* Outer panel: bordered container that holds the two source columns */
+[data-testid="stVerticalBlockBorderWrapper"]:has(
+    > [data-testid="stHorizontalBlock"] [data-testid="stColumn"] [data-testid="stVerticalBlockBorderWrapper"]
+){
+    margin:8px 0 28px;
+    padding:24px;
+    border:2px solid #2563EB !important;
+    border-radius:18px !important;
+    background:#FFFFFF !important;
+    box-shadow:0 8px 24px rgba(37, 99, 235, 0.06);
+}
+
+[data-testid="stVerticalBlockBorderWrapper"]:has(
+    > [data-testid="stHorizontalBlock"] [data-testid="stColumn"] [data-testid="stVerticalBlockBorderWrapper"]
+) h3{
+    margin-top:0;
+}
+
+/* Inner Quick Report / Project cards */
+[data-testid="stColumn"] > [data-testid="stVerticalBlockBorderWrapper"]{
+    padding:18px;
+    border:2px solid #2563EB !important;
+    border-radius:14px !important;
+    background:#FFFFFF !important;
+    min-height:120px;
+}
+
+.dde-report-source-label{
+
+    margin-bottom:12px;
+
+    font-size:16px;
+
+    font-weight:700;
+
+    color:__TEXT__;
+
+}
+
+[data-testid="stColumn"] > [data-testid="stVerticalBlockBorderWrapper"] [data-testid="stSelectbox"]{
+    margin-bottom:12px;
+}
+
+[data-testid="stColumn"] > [data-testid="stVerticalBlockBorderWrapper"] [data-testid="stMultiSelect"]{
+    margin-top:8px;
+}
+
+[data-testid="stVerticalBlockBorderWrapper"]:has(
+    > [data-testid="stHorizontalBlock"] [data-testid="stColumn"] [data-testid="stVerticalBlockBorderWrapper"]
+) [data-baseweb="select"] > div{
+
+    background-color:#FFFFFF !important;
+
+    border:1.5px solid #2563EB !important;
+
+    border-radius:10px !important;
+
+    box-shadow:none !important;
+
+}
+
+[data-testid="stVerticalBlockBorderWrapper"]:has(
+    > [data-testid="stHorizontalBlock"] [data-testid="stColumn"] [data-testid="stVerticalBlockBorderWrapper"]
+) [data-baseweb="select"] > div:hover{
+
+    border-color:#1D4ED8 !important;
+
+}
+
+[data-testid="stVerticalBlockBorderWrapper"]:has(
+    > [data-testid="stHorizontalBlock"] [data-testid="stColumn"] [data-testid="stVerticalBlockBorderWrapper"]
+) [data-baseweb="tag"]{
+
+    background-color:#DBEAFE !important;
+
+    border:2px solid #2563EB !important;
+
+    border-radius:999px !important;
+
+    padding:4px 10px !important;
+
+}
+
+[data-testid="stVerticalBlockBorderWrapper"]:has(
+    > [data-testid="stHorizontalBlock"] [data-testid="stColumn"] [data-testid="stVerticalBlockBorderWrapper"]
+) [data-baseweb="tag"] span,
+[data-testid="stVerticalBlockBorderWrapper"]:has(
+    > [data-testid="stHorizontalBlock"] [data-testid="stColumn"] [data-testid="stVerticalBlockBorderWrapper"]
+) [data-baseweb="tag"] div{
+
+    color:#0F172A !important;
+
+    font-size:14px !important;
+
+    font-weight:700 !important;
+
+}
+
+[data-baseweb="tag"]{
+
+    background-color:#DBEAFE !important;
+
+    border:2px solid #2563EB !important;
+
+    border-radius:999px !important;
+
+}
+
+[data-baseweb="tag"] span,
+[data-baseweb="tag"] div{
+
+    color:#0F172A !important;
+
+    font-size:14px !important;
+
+    font-weight:700 !important;
+
+}
+
+
+/* Dialog action buttons */
+
+div[data-testid="stDialog"] .stButton>button{
+
+    min-height:48px;
+
+    font-size:15px !important;
+
+    font-weight:700 !important;
+
+}
+
+div[data-testid="stDialog"] .stButton>button[kind="primary"]{
+
+    background:#2563EB !important;
+
+    border:2px solid #1D4ED8 !important;
+
+    color:#FFFFFF !important;
+
+}
+
+div[data-testid="stDialog"] .stButton>button[kind="secondary"]{
+
+    background:#FFFFFF !important;
+
+    border:2px solid #2563EB !important;
+
+    color:#0F172A !important;
+
+}
+
+div[data-testid="stDialog"] .stButton>button[kind="secondary"]:hover,
+div[data-testid="stDialog"] .stButton>button[kind="primary"]:hover{
+
+    background:#2563EB !important;
+
+    border-color:#1D4ED8 !important;
+
+    color:#FFFFFF !important;
+
+}
+
+div[data-testid="stDialog"] .stButton>button:hover p,
+div[data-testid="stDialog"] .stButton>button:hover span,
+div[data-testid="stDialog"] .stButton>button:hover div{
+
+    color:#FFFFFF !important;
+
+}
+
+div[data-testid="stDialog"] .stDownloadButton>button{
+
+    border:2px solid #2563EB !important;
+
+    color:#0F172A !important;
+
+    font-weight:700 !important;
+
+}
+
+div[data-testid="stDialog"] .stDownloadButton>button:hover{
+
+    background:#2563EB !important;
+
+    border-color:#1D4ED8 !important;
+
+    color:#FFFFFF !important;
+
+}
+
+div[data-testid="stDialog"] .stDownloadButton>button:hover p,
+div[data-testid="stDialog"] .stDownloadButton>button:hover span,
+div[data-testid="stDialog"] .stDownloadButton>button:hover div{
+
+    color:#FFFFFF !important;
+
+}
+
+
+/* ==========================================================
+   REPORT PREVIEW DIALOG
+========================================================== */
+
+.dde-report-preview-header{
+
+    margin-bottom:16px;
+
+}
+
+.dde-report-preview-eyebrow{
+
+    font-size:12px;
+
+    font-weight:700;
+
+    letter-spacing:0.08em;
+
+    text-transform:uppercase;
+
+    color:#2563EB;
+
+}
+
+.dde-report-preview-title{
+
+    margin-top:8px;
+
+    font-size:24px;
+
+    font-weight:700;
+
+    color:__TEXT__;
+
+}
+
+.dde-report-preview-sub{
+
+    margin-top:6px;
+
+    font-size:14px;
+
+    color:__MUTED__;
+
+}
+
+.dde-report-preview-body{
+
+    max-height:52vh;
+
+    overflow:auto;
+
+    padding:16px;
+
+    border:1px solid __BORDER__;
+
+    border-radius:12px;
+
+    background:#FFFFFF;
+
+}
+
+
+/* ==========================================================
+   EXECUTIVE INTELLIGENCE REPORTS
+========================================================== */
+
+.dde-intelligence-report{
+
+    font-size:15px;
+
+    line-height:1.6;
+
+    color:__TEXT__;
+
+}
+
+.dde-intelligence-report h2{
+
+    margin-top:28px;
+
+    margin-bottom:12px;
+
+    font-size:22px;
+
+    font-weight:700;
+
+    color:#0F172A;
+
+    border-bottom:2px solid #E2E8F0;
+
+    padding-bottom:8px;
+
+}
+
+.dde-intelligence-report h3{
+
+    margin-top:20px;
+
+    font-size:18px;
+
+    font-weight:700;
+
+    color:#1E293B;
+
+}
+
+.dde-intelligence-report h4{
+
+    margin-top:16px;
+
+    font-size:16px;
+
+    font-weight:700;
+
+    color:#334155;
+
+}
+
+.dde-intelligence-report table{
+
+    width:100%;
+
+    border-collapse:collapse;
+
+    margin:12px 0 20px;
+
+    font-size:14px;
+
+}
+
+.dde-intelligence-report th,
+.dde-intelligence-report td{
+
+    border:1px solid #E2E8F0;
+
+    padding:10px 12px;
+
+    text-align:left;
+
+}
+
+.dde-intelligence-report th{
+
+    background:#F8FAFC;
+
+    font-weight:700;
+
+    color:#0F172A;
+
+}
+
+.dde-confidence{
+
+    display:inline-block;
+
+    padding:2px 10px;
+
+    border-radius:999px;
+
+    font-size:12px;
+
+    font-weight:700;
+
+    letter-spacing:0.02em;
+
+}
+
+.dde-confidence-high{
+
+    background:#DCFCE7;
+
+    color:#166534;
+
+    border:1px solid #86EFAC;
+
+}
+
+.dde-confidence-medium{
+
+    background:#FEF3C7;
+
+    color:#92400E;
+
+    border:1px solid #FCD34D;
+
+}
+
+.dde-confidence-low{
+
+    background:#FEE2E2;
+
+    color:#991B1B;
+
+    border:1px solid #FCA5A5;
+
+}
+
+.dde-health-score{
+
+    display:inline-block;
+
+    padding:4px 12px;
+
+    border-radius:8px;
+
+    background:#2563EB;
+
+    color:#FFFFFF;
+
+    font-weight:700;
+
+}
+
+.dde-topic-bar{
+
+    display:grid;
+
+    grid-template-columns:minmax(120px, 1.2fr) minmax(120px, 2fr) 52px;
+
+    gap:12px;
+
+    align-items:center;
+
+    margin:8px 0;
+
+}
+
+.dde-topic-label{
+
+    font-weight:600;
+
+    color:#0F172A;
+
+}
+
+.dde-topic-track{
+
+    height:12px;
+
+    background:#E2E8F0;
+
+    border-radius:999px;
+
+    overflow:hidden;
+
+}
+
+.dde-topic-fill{
+
+    height:100%;
+
+    background:linear-gradient(90deg, #2563EB, #3B82F6);
+
+    border-radius:999px;
+
+}
+
+.dde-topic-pct{
+
+    font-size:13px;
+
+    font-weight:700;
+
+    color:#2563EB;
+
+    text-align:right;
+
+}
+
+.dde-executive-summary-card{
+
+    margin:0 0 24px;
+
+    padding:20px 22px;
+
+    border:1px solid #BFDBFE;
+
+    border-radius:16px;
+
+    background:linear-gradient(135deg, #EFF6FF 0%, #FFFFFF 100%);
+
+    box-shadow:0 10px 24px rgba(37,99,235,.08);
+
+}
+
+.dde-executive-summary-card-title{
+
+    margin-bottom:14px;
+
+    font-size:13px;
+
+    font-weight:800;
+
+    letter-spacing:0.08em;
+
+    text-transform:uppercase;
+
+    color:#2563EB;
+
+}
+
+.dde-executive-summary-card-grid{
+
+    display:grid;
+
+    grid-template-columns:repeat(4, minmax(0, 1fr));
+
+    gap:12px;
+
+}
+
+.dde-summary-card-item{
+
+    padding:12px 14px;
+
+    border-radius:12px;
+
+    background:#FFFFFF;
+
+    border:1px solid #E2E8F0;
+
+}
+
+.dde-summary-card-label{
+
+    font-size:12px;
+
+    font-weight:700;
+
+    color:#64748B;
+
+    text-transform:uppercase;
+
+    letter-spacing:0.04em;
+
+}
+
+.dde-summary-card-value{
+
+    margin-top:6px;
+
+    font-size:18px;
+
+    font-weight:700;
+
+    color:#0F172A;
+
+}
+
+.dde-health-visual{
+
+    display:flex;
+
+    align-items:center;
+
+    gap:20px;
+
+    margin:12px 0 20px;
+
+}
+
+.dde-health-gauge{
+
+    --score:75;
+
+    width:92px;
+
+    height:92px;
+
+    border-radius:50%;
+
+    background:
+        radial-gradient(closest-side, #FFFFFF 78%, transparent 80% 100%),
+        conic-gradient(#2563EB calc(var(--score) * 1%), #E2E8F0 0);
+
+    display:flex;
+
+    align-items:center;
+
+    justify-content:center;
+
+    box-shadow:inset 0 0 0 1px #DBEAFE;
+
+}
+
+.dde-health-gauge-inner{
+
+    font-size:20px;
+
+    font-weight:800;
+
+    color:#1D4ED8;
+
+}
+
+.dde-health-bar-wrap{
+
+    flex:1;
+
+}
+
+.dde-health-bar-track{
+
+    height:14px;
+
+    border-radius:999px;
+
+    background:#E2E8F0;
+
+    overflow:hidden;
+
+}
+
+.dde-health-bar-fill{
+
+    height:100%;
+
+    border-radius:999px;
+
+    background:linear-gradient(90deg, #2563EB, #60A5FA);
+
+}
+
+.dde-health-bar-label{
+
+    margin-top:8px;
+
+    font-size:13px;
+
+    font-weight:600;
+
+    color:#475569;
+
+}
+
+.dde-executive-quote{
+
+    margin:16px 0;
+
+    padding:18px 20px 18px 48px;
+
+    border-left:4px solid #2563EB;
+
+    border-radius:12px;
+
+    background:#F8FAFC;
+
+    position:relative;
+
+}
+
+.dde-quote-mark{
+
+    position:absolute;
+
+    left:16px;
+
+    top:10px;
+
+    font-size:32px;
+
+    line-height:1;
+
+    color:#93C5FD;
+
+    font-weight:800;
+
+}
+
+.dde-quote-text{
+
+    font-size:16px;
+
+    font-style:italic;
+
+    color:#0F172A;
+
+    font-weight:500;
+
+}
+
+.dde-quote-attribution{
+
+    margin-top:10px;
+
+    font-size:13px;
+
+    color:#64748B;
+
+}
+
+.dde-section-tag{
+
+    display:inline-block;
+
+    margin-left:8px;
+
+    padding:2px 8px;
+
+    border-radius:999px;
+
+    background:#EFF6FF;
+
+    color:#2563EB;
+
+    font-size:11px;
+
+    font-weight:700;
+
+    vertical-align:middle;
+
+}
+
+
+/* ==========================================================
+   DOCUMENT ROWS
+========================================================== */
+
+.dde-document-row{
+
+    margin-bottom:4px;
+
+}
+
+.dde-document-name{
+
+    font-size:17px;
+
+    font-weight:700;
+
+    color:__TEXT__;
+
+}
+
+.dde-document-meta{
+
+    margin-top:8px;
+
+    display:flex;
+
+    flex-wrap:wrap;
+
+    gap:8px 16px;
+
+    font-size:14px;
+
+    color:__MUTED__;
+
+}
+
+.dde-document-type{
+
+    background:#2563EB;
+
+    color:#FFFFFF;
+
+    padding:4px 12px;
+
+    border-radius:999px;
+
+    font-size:12px;
+
+    font-weight:800;
+
+    letter-spacing:0.04em;
+
+    text-transform:uppercase;
+
+}
+
+.dde-document-actions{
+
+    display:flex;
+
+    justify-content:flex-end;
+
+    align-items:flex-start;
+
+    padding-top:4px;
+
+}
+
+.dde-document-actions .stButton{
+
+    width:auto;
+
+}
+
+.dde-document-actions .stButton>button{
+
+    width:100%;
+
+    min-width:42px;
+
+    height:40px;
+
+    padding:0 10px;
+
+    font-size:16px;
+
+    line-height:1;
+
+    background:#F8FAFC !important;
+
+    border:1px solid __BORDER__ !important;
+
+    color:__TEXT__ !important;
+
+    box-shadow:none !important;
+
+}
+
+.dde-document-actions .stButton>button:hover{
+
+    background:#2563EB !important;
+
+    border-color:#1D4ED8 !important;
+
+    color:#FFFFFF !important;
+
+}
+
+.dde-document-actions .stButton>button:hover p,
+.dde-document-actions .stButton>button:hover span,
+.dde-document-actions .stButton>button:hover div{
+
+    color:#FFFFFF !important;
+
+}
+
+
+/* ==========================================================
+   NAV HEADING
+========================================================== */
+
+.dde-nav-heading{
+
+    font-size:11px;
+
+    font-weight:700;
+
+    letter-spacing:.14em;
+
+    color:__MUTED__;
+
+    margin-bottom:8px;
+
+}
