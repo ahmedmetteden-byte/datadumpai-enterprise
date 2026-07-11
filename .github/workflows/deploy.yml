@@ -46,25 +46,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - name: Diagnose compose env (pre-prepare)
-        run: bash .github/scripts/diagnose-ci-compose-env.sh pre-prepare
-
       - name: Prepare CI placeholder .env
-        run: |
-          set -euxo pipefail
-          bash .github/scripts/prepare-ci-compose-env.sh
-          ls -la .env .env.ci.example
-
-      - name: Diagnose compose env (post-prepare)
-        run: bash .github/scripts/diagnose-ci-compose-env.sh post-prepare
+        run: bash .github/scripts/prepare-ci-compose-env.sh
 
       - name: Validate Docker Compose configuration
-        run: |
-          set -euxo pipefail
-          pwd
-          ls -la .env .env.ci.example
-          test -f .env
-          docker compose -f docker-compose.yml config
+        run: docker compose -f docker-compose.yml config --quiet
 
       - name: Validate workflow syntax
         run: |
