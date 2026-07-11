@@ -18,6 +18,28 @@ DEFAULT_EXPORT_WIDTH = 1200
 DEFAULT_EXPORT_HEIGHT = 480
 
 
+def _chart_export_error(detail: str) -> str:
+    lowered = detail.lower()
+
+    if "chrome" in lowered or "chromium" in lowered:
+        return (
+            "Chart export requires Chrome for kaleido. "
+            "Install dependencies with `pip install -r requirements.txt`, then run "
+            "`kaleido_get_chrome` if Chrome is not already available."
+        )
+
+    if "kaleido" in lowered:
+        return (
+            "Chart export requires kaleido v1 with Plotly 6.1 or later. "
+            "Run: pip install -r requirements.txt"
+        )
+
+    return (
+        "Chart export failed. Ensure kaleido v1 is installed and Chrome is available. "
+        "Run: pip install -r requirements.txt"
+    )
+
+
 def plotly_figure_to_png(
     figure: go.Figure,
     *,
@@ -28,20 +50,9 @@ def plotly_figure_to_png(
 
     try:
         return figure.to_image(format="png", width=width, height=height, scale=2)
-    except Exception as first_error:
-        try:
-            return figure.to_image(
-                format="png",
-                width=width,
-                height=height,
-                scale=2,
-                engine="kaleido",
-            )
-        except Exception as second_error:
-            raise RuntimeError(
-                "Chart export requires the kaleido package. "
-                "Run: pip install kaleido"
-            ) from second_error
+    except Exception as exc:
+        detail = str(exc).strip() or type(exc).__name__
+        raise RuntimeError(_chart_export_error(detail)) from exc
 
 
 def render_chart_pngs(chart_data: dict[str, Any]) -> list[tuple[str, bytes]]:
