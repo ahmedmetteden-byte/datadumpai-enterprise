@@ -355,7 +355,11 @@ class ReportPipeline:
             workspace_id=project["id"],
             source_documents=source_documents,
             report_type=report_type,
-            include_prior_reports=self._plan_service.include_cross_document_intelligence(),
+            include_prior_reports=(
+                self._plan_service.include_cross_document_intelligence()
+                or self._plan_service.uses_full_report_format(report_type)
+            ),
+            reporting_period=report.get("reporting_period"),
         )
 
         intelligence_format = self._plan_service.uses_intelligence_format(report_type)

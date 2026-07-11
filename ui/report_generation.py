@@ -9,6 +9,7 @@ from typing import Any
 
 import streamlit as st
 
+from config import FULL_REPORT_PERIODS
 from application.report_pipeline import ReportPipeline
 from core.workspace_context import QUICK_REPORT_PROJECT_ID, QUICK_REPORT_NAME
 from services.document_service import DocumentService
@@ -41,6 +42,12 @@ REPORT_TYPE_META = {
         "badge": "Most Popular",
         "rating": "★★★★★",
         "tier": "free",
+    },
+    "Full Report": {
+        "description": "Roll up weekly, monthly, or quarterly reports into one comprehensive period report.",
+        "badge": "Most Popular",
+        "rating": "★★★★★",
+        "tier": "starter",
     },
     "Board Report": {
         "description": "Structured update for board review.",
@@ -105,6 +112,7 @@ NOTHING_SELECTED = "Nothing Selected"
 QUICK_REPORT_OPTION = "Quick Report"
 QUICK_SOURCE_SELECT_KEY = "quick_report_source_select"
 PROJECT_SOURCE_SELECT_KEY = "project_report_source_select"
+FULL_REPORT_PERIOD_KEY = "full_report_period"
 
 
 def _project_document_filenames(project_id: str) -> list[str]:
@@ -516,6 +524,45 @@ def render_report_type_picker() -> str:
     return st.session_state.get("selected_report_type", available_types[0])
 
 
+def render_full_report_period_selector(report_type: str) -> str:
+    """Let the user choose the rollup period when Full Report is selected."""
+
+    if report_type != "Full Report":
+        return "Comprehensive Report"
+
+    if FULL_REPORT_PERIOD_KEY not in st.session_state:
+        st.session_state[FULL_REPORT_PERIOD_KEY] = FULL_REPORT_PERIODS[0]
+
+    current = st.session_state.get(FULL_REPORT_PERIOD_KEY, FULL_REPORT_PERIODS[0])
+    if current not in FULL_REPORT_PERIODS:
+        current = FULL_REPORT_PERIODS[0]
+
+    with st.container(border=True):
+        st.markdown('<div class="dde-full-report-period-marker"></div>', unsafe_allow_html=True)
+        st.markdown(
+            """
+<div class="dde-full-report-period-title">Reporting period</div>
+<div class="dde-full-report-period-subtitle">
+Choose how DataDumpAI should consolidate your uploaded documents — for example,
+four weekly reports into a <strong>monthly</strong> report, three monthly reports
+into a <strong>quarterly</strong> report, or four quarterly reports into an
+<strong>annual</strong> report.
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
+        selected = st.selectbox(
+            "Choose reporting period",
+            FULL_REPORT_PERIODS,
+            index=FULL_REPORT_PERIODS.index(current),
+            key=FULL_REPORT_PERIOD_KEY,
+            help="Select the time span this Full Report should cover.",
+        )
+
+    return selected
+
+
 def render_documents_page_generation(
     projects: list[dict[str, Any]],
     document_selection: list[dict[str, str]],
@@ -546,11 +593,23 @@ def render_documents_page_generation(
         render_upgrade_prompt("report_types")
         return
 
+    reporting_period = render_full_report_period_selector(report_type)
+
     st.caption(
         f"**{len(document_selection)}** document(s) will be analyzed for this report."
     )
 
-    if _plan_service().uses_intelligence_format(report_type):
+    if _plan_service().uses_full_report_format(report_type):
+        st.caption(
+            f"**Full Report** will consolidate your selected documents into a "
+            f"**{reporting_period.lower()}** with period narrative, cross-period themes, "
+            "consolidated findings, risks, and recommendations."
+        )
+        if _plan_service().include_professional_charts():
+            st.caption(
+                "Professional charts and trend visuals are included when your plan supports them."
+            )
+    elif _plan_service().uses_intelligence_format(report_type):
         st.caption(
             "This report includes an **Executive Intelligence Dashboard**, "
             "summary card, professional charts, ranked findings with confidence scores, "
@@ -624,7 +683,9 @@ def render_documents_page_generation(
                 workspace_id=workspace["id"],
                 source_documents=source_labels,
                 report_type=report_type,
-                include_prior_reports=_plan_service().include_cross_document_intelligence(),
+                include_prior_reports=_plan_service().include_cross_document_intelligence()
+                or _plan_service().uses_full_report_format(report_type),
+                reporting_period=reporting_period,
             )
 
             with loading(

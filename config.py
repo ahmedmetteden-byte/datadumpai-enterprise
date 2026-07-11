@@ -129,6 +129,9 @@ AI_REPORT_MAX_OUTPUT_TOKENS = int(os.getenv("AI_REPORT_MAX_OUTPUT_TOKENS", "2500
 AI_INTELLIGENCE_REPORT_MAX_OUTPUT_TOKENS = int(
     os.getenv("AI_INTELLIGENCE_REPORT_MAX_OUTPUT_TOKENS", "4500"),
 )
+AI_FULL_REPORT_MAX_OUTPUT_TOKENS = int(
+    os.getenv("AI_FULL_REPORT_MAX_OUTPUT_TOKENS", "6000"),
+)
 AI_REQUEST_TIMEOUT_SECONDS = float(os.getenv("AI_REQUEST_TIMEOUT_SECONDS", "120"))
 
 # Keep report prompts responsive when users select many/large files.
@@ -165,7 +168,16 @@ FREE_REPORT_TYPES = [
     "Executive Summary",
 ]
 
+FULL_REPORT_PERIODS = [
+    "Monthly Report",
+    "Quarterly Report",
+    "Annual Report",
+    "Weekly Report",
+    "Comprehensive Report",
+]
+
 STARTER_REPORT_TYPES = [
+    "Full Report",
     "Board Report",
     "Management Report",
     "Financial Analysis",
@@ -325,7 +337,7 @@ PLANS = {
             "Unlimited projects",
             "100 document uploads per month",
             "100 AI-generated reports per month",
-            "Board, Management, Financial, and Meeting reports",
+            "Board, Management, Financial, Meeting, and Full Report rollups",
             "AI Assistant with project context",
             "Word and PDF exports",
             "Email support",

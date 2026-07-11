@@ -7,6 +7,10 @@ services:
       - "${STREAMLIT_PORT:-8501}:8501"
     volumes:
       - app_data:/app/data
+      - ./assets:/app/assets:ro
+      - ./static:/app/static
+      - ./ui:/app/ui:ro
+      - ./.streamlit:/app/.streamlit:ro
     restart: unless-stopped
     healthcheck:
       test:

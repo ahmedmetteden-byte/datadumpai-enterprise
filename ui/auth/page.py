@@ -24,7 +24,7 @@ from ui.auth.forms import (
     render_verify_email_notice,
 )
 
-WORDMARK_PATH = Path(__file__).resolve().parents[2] / "assets" / "logo.png"
+WORDMARK_PATH = Path(__file__).resolve().parents[2] / "assets" / "auth-wordmark.png"
 
 
 def render_auth_page() -> None:
@@ -38,8 +38,9 @@ def render_auth_page() -> None:
     left, center, right = st.columns([1, 1.2, 1])
 
     with center:
+        st.markdown('<div class="dde-auth-wordmark-marker" style="display:none"></div>', unsafe_allow_html=True)
         if WORDMARK_PATH.exists():
-            st.image(str(WORDMARK_PATH), use_container_width=True)
+            st.image(str(WORDMARK_PATH), width=320)
         else:
             st.markdown(f"## {APP_NAME}")
 
@@ -98,6 +99,15 @@ def _render_auth_styles() -> None:
     color: #64748b;
     margin-top: -0.5rem;
     margin-bottom: 1.5rem;
+}
+.block-container:has(.dde-auth-wordmark-marker) [data-testid="stImage"] {
+    display: flex;
+    justify-content: center;
+}
+.block-container:has(.dde-auth-wordmark-marker) [data-testid="stImage"] img {
+    width: 320px;
+    max-width: 100%;
+    height: auto;
 }
 .dde-auth-card {
     padding: 0.25rem 0 1rem 0;

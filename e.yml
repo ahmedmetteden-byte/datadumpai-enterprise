@@ -1,0 +1,40 @@
+[1mdiff --git a/config.py b/config.py[m
+[1mindex b05b955..be960e4 100644[m
+[1m--- a/config.py[m
+[1m+++ b/config.py[m
+[36m@@ -129,6 +129,9 @@[m [mAI_REPORT_MAX_OUTPUT_TOKENS = int(os.getenv("AI_REPORT_MAX_OUTPUT_TOKENS", "2500[m
+ AI_INTELLIGENCE_REPORT_MAX_OUTPUT_TOKENS = int([m
+     os.getenv("AI_INTELLIGENCE_REPORT_MAX_OUTPUT_TOKENS", "4500"),[m
+ )[m
+[32m+[m[32mAI_FULL_REPORT_MAX_OUTPUT_TOKENS = int([m
+[32m+[m[32m    os.getenv("AI_FULL_REPORT_MAX_OUTPUT_TOKENS", "6000"),[m
+[32m+[m[32m)[m
+ AI_REQUEST_TIMEOUT_SECONDS = float(os.getenv("AI_REQUEST_TIMEOUT_SECONDS", "120"))[m
+ [m
+ # Keep report prompts responsive when users select many/large files.[m
+[36m@@ -165,7 +168,16 @@[m [mFREE_REPORT_TYPES = [[m
+     "Executive Summary",[m
+ ][m
+ [m
+[32m+[m[32mFULL_REPORT_PERIODS = [[m
+[32m+[m[32m    "Monthly Report",[m
+[32m+[m[32m    "Quarterly Report",[m
+[32m+[m[32m    "Annual Report",[m
+[32m+[m[32m    "Weekly Report",[m
+[32m+[m[32m    "Comprehensive Report",[m
+[32m+[m[32m][m
+[32m+[m
+ STARTER_REPORT_TYPES = [[m
+[32m+[m[32m    "Full Report",[m
+     "Board Report",[m
+     "Management Report",[m
+     "Financial Analysis",[m
+[36m@@ -325,7 +337,7 @@[m [mPLANS = {[m
+             "Unlimited projects",[m
+             "100 document uploads per month",[m
+             "100 AI-generated reports per month",[m
+[31m-            "Board, Management, Financial, and Meeting reports",[m
+[32m+[m[32m            "Board, Management, Financial, Meeting, and Full Report rollups",[m
+             "AI Assistant with project context",[m
+             "Word and PDF exports",[m
+             "Email support",[m

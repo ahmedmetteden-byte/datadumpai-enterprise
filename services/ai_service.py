@@ -13,6 +13,7 @@ from openai import OpenAI
 from config import (
     AI_MODEL,
     AI_REPORT_MODEL,
+    AI_FULL_REPORT_MAX_OUTPUT_TOKENS,
     AI_INTELLIGENCE_REPORT_MAX_OUTPUT_TOKENS,
     AI_REPORT_MAX_OUTPUT_TOKENS,
     AI_SYSTEM_PROMPT,
@@ -23,6 +24,7 @@ from services.executive_report_prompt import (
     build_executive_report_prompt,
     uses_intelligence_format,
 )
+from services.full_report_prompt import build_full_report_prompt, is_full_report
 
 load_dotenv()
 
@@ -66,13 +68,23 @@ class AIService:
 
         report_context = report_context or {}
 
-        intelligence_format = (
+        if is_full_report(report_type):
+            user_prompt = build_full_report_prompt(
+                document_text=document_text,
+                writing_style=writing_style,
+                audience=audience,
+                include_recommendations=include_recommendations,
+                include_charts=include_charts,
+                source_document_count=document_count,
+                report_context=report_context,
+            )
+            max_output_tokens = AI_FULL_REPORT_MAX_OUTPUT_TOKENS
+        elif (
             use_intelligence_format
             if use_intelligence_format is not None
             else uses_intelligence_format(report_type)
-        )
-
-        if intelligence_format:
+        ):
+            intelligence_format = True
             user_prompt = build_executive_report_prompt(
                 report_type=report_type,
                 document_text=document_text,
@@ -85,6 +97,7 @@ class AIService:
             )
             max_output_tokens = AI_INTELLIGENCE_REPORT_MAX_OUTPUT_TOKENS
         else:
+            intelligence_format = False
             count_instruction = ""
             if document_count > 1:
                 count_instruction = (

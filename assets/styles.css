@@ -346,17 +346,17 @@ p{
 
     display:block;
 
-    height:4.5cm;
+    height:auto;
 
     width:auto;
 
-    max-height:calc(6cm - 0.2cm);
+    max-height:2.8cm;
+
+    max-width:min(14cm, 55vw);
 
     object-fit:contain;
 
     flex-shrink:0;
-
-    border-radius:6px;
 
 }
 
@@ -1248,6 +1248,101 @@ section[data-testid="stSidebar"] .dde-sidebar-tagline{
     text-transform:uppercase;
 
     box-shadow:0 4px 12px rgba(37,99,235,.24);
+
+}
+
+.dde-full-report-period-marker{
+
+    display:none;
+
+}
+
+[data-testid="stVerticalBlockBorderWrapper"]:has(.dde-full-report-period-marker){
+
+    border:2px solid #2563EB !important;
+
+    background:linear-gradient(180deg,#F0F6FF 0%,#FFFFFF 100%) !important;
+
+    border-radius:16px !important;
+
+    padding:22px 24px !important;
+
+    margin:1.25rem 0 1.5rem 0 !important;
+
+    box-shadow:0 6px 18px rgba(37,99,235,.14) !important;
+
+}
+
+.dde-full-report-period-title{
+
+    font-size:20px;
+
+    font-weight:800;
+
+    color:__TEXT__;
+
+    margin:0 0 6px 0;
+
+}
+
+.dde-full-report-period-subtitle{
+
+    font-size:14px;
+
+    line-height:1.55;
+
+    color:__MUTED__;
+
+    margin:0 0 16px 0;
+
+}
+
+[data-testid="stVerticalBlockBorderWrapper"]:has(.dde-full-report-period-marker) [data-testid="stSelectbox"]{
+
+    margin-top:4px;
+
+}
+
+[data-testid="stVerticalBlockBorderWrapper"]:has(.dde-full-report-period-marker) [data-testid="stSelectbox"] label p,
+[data-testid="stVerticalBlockBorderWrapper"]:has(.dde-full-report-period-marker) [data-testid="stSelectbox"] label{
+
+    font-size:15px !important;
+
+    font-weight:700 !important;
+
+    color:#0F172A !important;
+
+}
+
+[data-testid="stVerticalBlockBorderWrapper"]:has(.dde-full-report-period-marker) [data-baseweb="select"] > div{
+
+    min-height:54px !important;
+
+    border:2px solid #2563EB !important;
+
+    border-radius:12px !important;
+
+    background:#FFFFFF !important;
+
+    box-shadow:0 2px 8px rgba(37,99,235,.08) !important;
+
+}
+
+[data-testid="stVerticalBlockBorderWrapper"]:has(.dde-full-report-period-marker) [data-baseweb="select"] span{
+
+    font-size:16px !important;
+
+    font-weight:600 !important;
+
+    color:#0F172A !important;
+
+}
+
+[data-testid="stVerticalBlockBorderWrapper"]:has(.dde-full-report-period-marker) [data-baseweb="select"] > div:hover{
+
+    border-color:#1D4ED8 !important;
+
+    box-shadow:0 4px 12px rgba(37,99,235,.16) !important;
 
 }
 

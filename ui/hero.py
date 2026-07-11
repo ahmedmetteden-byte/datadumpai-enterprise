@@ -5,8 +5,6 @@ Hero Banner
 
 from __future__ import annotations
 
-import base64
-from functools import lru_cache
 from pathlib import Path
 
 import streamlit as st
@@ -16,36 +14,60 @@ from config import APP_TAGLINE
 HERO_LOGO_PATH = Path(__file__).resolve().parent.parent / "assets" / "datadump-hero-logo.png"
 
 
-@lru_cache(maxsize=1)
-def _hero_logo_data_uri() -> str:
-    encoded = base64.b64encode(HERO_LOGO_PATH.read_bytes()).decode("ascii")
-    return f"data:image/png;base64,{encoded}"
-
-
 def render_hero() -> None:
-    logo_markup = ""
-
-    if HERO_LOGO_PATH.exists():
-        logo_markup = (
-            f'<img class="dde-hero-logo-image" '
-            f'src="{_hero_logo_data_uri()}" alt="DataDumpAI" />'
-        )
-
     st.markdown(
-        f"""
-<div class="dde-hero">
-<div class="dde-hero-main">
-{logo_markup}
-<div class="dde-hero-details">
-<div class="dde-hero-subtitle">
-{APP_TAGLINE}
-</div>
+        """
+<style>
+div[data-testid="stHorizontalBlock"]:has(.dde-hero-marker) {
+    background: linear-gradient(135deg, #2340C8, #2563EB, #14B8D4);
+    border-radius: 8px;
+    padding: 0.55cm 0.7cm;
+    margin: 0 0 1rem 0;
+    box-shadow: 0 3px 10px rgba(37, 99, 235, 0.14);
+    min-height: 5.5cm;
+    align-items: center !important;
+}
+div[data-testid="stHorizontalBlock"]:has(.dde-hero-marker) [data-testid="stImage"] img {
+    background: #ffffff;
+    padding: 10px 18px;
+    border-radius: 8px;
+    max-height: 2.6cm;
+    width: auto;
+}
+.dde-hero-text .dde-hero-subtitle {
+    color: #ffffff;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.35;
+    margin: 0 0 0.2cm 0;
+}
+.dde-hero-text .dde-hero-pipeline {
+    color: rgba(255, 255, 255, 0.92);
+    font-size: 12px;
+    line-height: 1.4;
+    margin: 0;
+}
+</style>
+""",
+        unsafe_allow_html=True,
+    )
+
+    logo_col, text_col = st.columns([1.15, 2], gap="medium", vertical_alignment="center")
+
+    with logo_col:
+        st.markdown('<div class="dde-hero-marker" style="display:none"></div>', unsafe_allow_html=True)
+        if HERO_LOGO_PATH.exists():
+            st.image(str(HERO_LOGO_PATH), width=300)
+
+    with text_col:
+        st.markdown(
+            f"""
+<div class="dde-hero-text">
+<div class="dde-hero-subtitle">{APP_TAGLINE}</div>
 <div class="dde-hero-pipeline">
 Upload documents · Generate reports · Download and share
 </div>
 </div>
-</div>
-</div>
 """,
-        unsafe_allow_html=True,
-    )
+            unsafe_allow_html=True,
+        )

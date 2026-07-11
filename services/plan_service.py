@@ -12,6 +12,7 @@ from config import (
     resolve_plan_id,
 )
 from services.executive_report_prompt import INTELLIGENCE_REPORT_TYPES
+from services.full_report_prompt import is_full_report
 from services.usage_service import UsageService
 
 
@@ -60,9 +61,14 @@ class PlanService:
         return report_type in self.get_available_report_types()
 
     def uses_intelligence_format(self, report_type: str) -> bool:
+        if is_full_report(report_type):
+            return False
         if not self.has_feature("intelligence_reports"):
             return False
         return report_type in INTELLIGENCE_REPORT_TYPES
+
+    def uses_full_report_format(self, report_type: str) -> bool:
+        return is_full_report(report_type)
 
     def include_professional_charts(self) -> bool:
         return self.has_feature("professional_charts")
