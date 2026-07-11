@@ -6,12 +6,14 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from typing import Any
 
-CHART_DATA_PATTERN = re.compile(
-    r"<!--\s*REPORT_CHARTS\s*(\{[\s\S]*?\})\s*-->",
-    re.IGNORECASE,
-)
+from models.report_data import ReportData
+from services.report_markdown_renderer import remove_empty_sections
+
+CHART_BLOCK_OPENER = re.compile(r"<!--\s*REPORT_?CHARTS\s*", re.IGNORECASE)
+CHART_BLOCK_PATTERN = re.compile(r"<!--\s*REPORT_?CHARTS\s*[\s\S]*?-->", re.IGNORECASE)
 
 SUMMARY_CARD_PATTERN = re.compile(
     r"### Executive Summary Card\s*\n+"
@@ -28,13 +30,18 @@ def is_intelligence_report(report_text: str) -> bool:
 
 
 def extract_chart_data(report_text: str) -> dict[str, Any]:
-    match = CHART_DATA_PATTERN.search(report_text)
+    opener = CHART_BLOCK_OPENER.search(report_text)
 
-    if not match:
+    if not opener:
+        return {}
+
+    closer = report_text.find("-->", opener.end())
+
+    if closer == -1:
         return {}
 
     try:
-        payload = json.loads(match.group(1))
+        payload = json.loads(report_text[opener.end() : closer].strip())
     except json.JSONDecodeError:
         return {}
 
@@ -42,7 +49,31 @@ def extract_chart_data(report_text: str) -> dict[str, Any]:
 
 
 def strip_chart_data(report_text: str) -> str:
-    return CHART_DATA_PATTERN.sub("", report_text).strip()
+    return CHART_BLOCK_PATTERN.sub("", report_text).strip()
+
+
+@dataclass(frozen=True)
+class PreparedReport:
+    """User-facing report text with chart metadata extracted for rendering."""
+
+    text: str
+    chart_data: dict[str, Any]
+
+
+def prepare_report_for_output(
+    report_text: str,
+    report_data: ReportData | None = None,
+) -> PreparedReport:
+    """Parse internal chart metadata and return cleaned report text for display/export."""
+
+    canonical_charts = report_data.charts if report_data and report_data.charts else {}
+    embedded_charts = extract_chart_data(report_text)
+    chart_data = canonical_charts or embedded_charts
+
+    return PreparedReport(
+        text=remove_empty_sections(strip_chart_data(report_text)),
+        chart_data=chart_data,
+    )
 
 
 def extract_executive_summary_card(report_text: str) -> tuple[dict[str, str], str]:

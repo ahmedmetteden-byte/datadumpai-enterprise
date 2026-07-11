@@ -147,17 +147,16 @@ def _render_report_row(project: dict, report: dict) -> None:
         if st.session_state.get("download_report") == filename:
             try:
                 report_text = report_service.load_report(report["path"])
-                metadata = report_service.get_report_metadata(project_id, filename)
-                report_type = metadata.get("report_type") or report["name"]
-                source_documents = report.get("source_documents") or []
+                report_data = report_service.load_report_data(
+                    project_id,
+                    filename,
+                    markdown_text=report_text,
+                )
 
                 render_premium_downloads(
                     project_id=project_id,
                     project_name=project["name"],
-                    report_name=report["name"],
-                    report_type=report_type,
-                    report_text=report_text,
-                    source_documents=source_documents,
+                    report=report_data,
                     key_prefix=f"library_{safe_key}",
                 )
             except Exception as exc:

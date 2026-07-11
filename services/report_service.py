@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from storage.file_store import FileStore
+from models.report_data import ReportData
+from services.report_document import report_data_from_storage
 
 
 class ReportService:
@@ -63,6 +65,7 @@ class ReportService:
         *,
         report_type: str,
         source_documents: list[str],
+        report_data: dict[str, Any] | None = None,
     ) -> None:
         meta_name = cls._metadata_filename(filename)
         payload = {
@@ -70,6 +73,9 @@ class ReportService:
             "source_documents": source_documents,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
+
+        if report_data:
+            payload["report_data"] = report_data
         cls._file_store().write(
             project_id,
             "reports",
@@ -86,10 +92,18 @@ class ReportService:
         cls,
         project_id: str,
         report_name: str,
-        report_text: str,
         *,
+        report: ReportData | None = None,
+        report_text: str | None = None,
         source_documents: list[str] | None = None,
+        report_data: dict[str, Any] | None = None,
     ) -> dict:
+        if report is not None:
+            report_text = report.to_markdown()
+            report_data = report.to_dict()
+        elif report_text is None:
+            raise ValueError("save_report requires report or report_text")
+
         filename = f"{cls._slugify_report_name(report_name)}.md"
         created_at = datetime.now(timezone.utc).isoformat()
         content = report_text.encode("utf-8")
@@ -106,6 +120,7 @@ class ReportService:
                 filename,
                 report_type=report_name,
                 source_documents=source_documents,
+                report_data=report_data,
             )
 
         from services.timeline_service import TimelineService
@@ -162,10 +177,18 @@ class ReportService:
         cls,
         project_id: str,
         filename: str,
-        report_text: str,
         *,
+        report: ReportData | None = None,
+        report_text: str | None = None,
         source_documents: list[str] | None = None,
+        report_data: dict[str, Any] | None = None,
     ) -> dict:
+        if report is not None:
+            report_text = report.to_markdown()
+            report_data = report.to_dict()
+        elif report_text is None:
+            raise ValueError("update_report requires report or report_text")
+
         safe_name = Path(filename).name
         store = cls._file_store()
 
@@ -195,6 +218,7 @@ class ReportService:
             safe_name,
             report_type=report_type,
             source_documents=documents,
+            report_data=report_data if report_data is not None else existing_meta.get("report_data"),
         )
 
         return {
@@ -246,6 +270,23 @@ class ReportService:
     @classmethod
     def load_report(cls, path: str) -> str:
         return cls._file_store().read_text(path)
+
+    @classmethod
+    def load_report_data(
+        cls,
+        project_id: str,
+        filename: str,
+        *,
+        markdown_text: str | None = None,
+    ) -> ReportData:
+        """Load the canonical ReportData object for a saved report."""
+
+        meta = cls.get_report_metadata(project_id, filename)
+
+        if markdown_text is None:
+            markdown_text = cls.load_report(cls._report_storage_path(project_id, filename))
+
+        return report_data_from_storage(markdown_text, meta)
 
     @classmethod
     def _report_storage_path(cls, project_id: str, filename: str) -> str:

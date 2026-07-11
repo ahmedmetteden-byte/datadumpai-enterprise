@@ -12,7 +12,8 @@ from typing import Any
 from services.export_service import ExportService
 from services.premium_docx_export import DocxExportMetadata, build_premium_docx
 from services.premium_pdf_export import PremiumExportMetadata, build_premium_pdf
-from services.report_chart_data import is_intelligence_report
+from services.report_document import report_is_intelligence
+from models.report_data import ReportData
 
 
 def is_presentation_export_available() -> bool:
@@ -28,11 +29,24 @@ def is_presentation_export_available() -> bool:
 class ReportExportContext:
     project_id: str
     project_name: str
-    report_name: str
-    report_type: str
-    report_text: str
-    source_documents: list[str] | None = None
+    report: ReportData
     reporting_period: str = "Not specified"
+
+    @property
+    def report_name(self) -> str:
+        return self.report.title or self.report.report_type or "Report"
+
+    @property
+    def report_type(self) -> str:
+        return self.report.report_type or self.report_name
+
+    @property
+    def report_text(self) -> str:
+        return self.report.to_markdown()
+
+    @property
+    def source_documents(self) -> list[str] | None:
+        return self.report.source_documents or None
 
 
 class PremiumExportService:
@@ -44,7 +58,7 @@ class PremiumExportService:
         return f"{slug}_{suffix}"
 
     def export_executive_pdf(self, context: ReportExportContext) -> dict[str, Any]:
-        if is_intelligence_report(context.report_text):
+        if report_is_intelligence(context.report):
             data = build_premium_pdf(
                 report_text=context.report_text,
                 metadata=PremiumExportMetadata(
@@ -67,11 +81,11 @@ class PremiumExportService:
         return self._base.export_pdf(
             project_id=context.project_id,
             report_name=f"{context.report_name} Executive",
-            report_text=context.report_text,
+            report=context.report,
         )
 
     def export_board_pack_pdf(self, context: ReportExportContext) -> dict[str, Any]:
-        if is_intelligence_report(context.report_text):
+        if report_is_intelligence(context.report):
             data = build_premium_pdf(
                 report_text=context.report_text,
                 metadata=PremiumExportMetadata(
@@ -94,7 +108,7 @@ class PremiumExportService:
         return self._base.export_pdf(
             project_id=context.project_id,
             report_name=f"{context.report_name} Board Pack",
-            report_text=context.report_text,
+            report=context.report,
         )
 
     def export_presentation(self, context: ReportExportContext) -> dict[str, Any]:
@@ -132,11 +146,11 @@ class PremiumExportService:
         return self._base.export_markdown(
             project_id=context.project_id,
             report_name=context.report_name,
-            report_text=context.report_text,
+            report=context.report,
         )
 
     def export_docx(self, context: ReportExportContext) -> dict[str, Any]:
-        if is_intelligence_report(context.report_text):
+        if report_is_intelligence(context.report):
             data = build_premium_docx(
                 report_text=context.report_text,
                 metadata=DocxExportMetadata(
@@ -159,5 +173,5 @@ class PremiumExportService:
         return self._base.export_docx(
             project_id=context.project_id,
             report_name=context.report_name,
-            report_text=context.report_text,
+            report=context.report,
         )

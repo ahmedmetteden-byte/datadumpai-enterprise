@@ -10,6 +10,8 @@ import streamlit as st
 
 from application.report_pipeline import ReportPipeline
 from core.workspace_navigation import set_workspace_section
+from models.report_data import ReportData
+from models.report_processing_mode import ReportProcessingMode
 from services.executive_report_context import ExecutiveReportContextBuilder
 from ui.feedback import loading, show_error, show_success
 from ui.report_downloads import render_premium_downloads
@@ -27,18 +29,18 @@ DRAFT_REPORT_KEY = "draft_report"
 
 def set_draft_report(
     *,
-    report_type: str,
-    report_text: str,
+    report: ReportData,
     source_documents: list[str],
     workspace: dict[str, Any],
     document_selection: list[dict[str, str]],
+    processing_mode: str | None = None,
 ) -> None:
     st.session_state[DRAFT_REPORT_KEY] = {
-        "report_type": report_type,
-        "report_text": report_text,
+        "report": report.to_dict(),
         "source_documents": source_documents,
         "workspace": workspace,
         "document_selection": document_selection,
+        "processing_mode": processing_mode,
     }
 
 
@@ -62,8 +64,8 @@ def _report_preview_dialog() -> None:
     if not draft:
         return
 
-    report_type = draft["report_type"]
-    report_text = draft["report_text"]
+    report = ReportData.from_dict(draft.get("report"))
+    report_type = report.report_type
     workspace = draft["workspace"]
 
     st.markdown(
@@ -78,7 +80,7 @@ def _report_preview_dialog() -> None:
     )
 
     st.markdown('<div class="dde-report-preview-body">', unsafe_allow_html=True)
-    render_report_content(report_text)
+    render_report_content(report)
     st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("---")
@@ -91,7 +93,7 @@ def _report_preview_dialog() -> None:
                 with loading("Saving report..."):
                     metadata = _report_pipeline().save_generated_report(
                         project=workspace,
-                        report_text=report_text,
+                        report=report,
                         report_type=report_type,
                         source_documents=draft["source_documents"],
                     )
@@ -125,16 +127,19 @@ def _report_preview_dialog() -> None:
                 )
 
                 with loading(f"Regenerating {report_type}…"):
-                    new_text = _report_pipeline().generate(
+                    new_report = _report_pipeline().generate(
                         document_text=document_text,
                         report_type=report_type,
                         source_document_count=len(
                             draft["document_selection"],
                         ),
                         report_context=report_context,
+                        processing_mode=ReportProcessingMode.from_value(
+                            draft.get("processing_mode"),
+                        ),
                     )
 
-                draft["report_text"] = new_text
+                draft["report"] = new_report.to_dict()
                 st.session_state[DRAFT_REPORT_KEY] = draft
                 st.rerun()
             except Exception as exc:
@@ -148,9 +153,6 @@ def _report_preview_dialog() -> None:
     render_premium_downloads(
         project_id=workspace["id"],
         project_name=workspace.get("name", "Quick Report"),
-        report_name=report_type,
-        report_type=report_type,
-        report_text=report_text,
-        source_documents=draft["source_documents"],
+        report=report,
         key_prefix="draft",
     )

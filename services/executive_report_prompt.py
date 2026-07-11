@@ -38,6 +38,7 @@ def build_executive_report_prompt(
     include_charts: bool,
     source_document_count: int,
     report_context: dict[str, Any],
+    canonical_metrics_section: str = "",
 ) -> str:
     """Return the user prompt for an executive intelligence report."""
 
@@ -65,33 +66,9 @@ For each recommendation use this structure:
     charts_block = """
 ## Visual Summary
 
-Briefly describe the visuals. The application will render real charts from the
-`REPORT_CHARTS` JSON block at the end of the report — do NOT use ASCII block charts.
-
-At the very end of the report, after all sections, append this exact machine-readable block
-with real values inferred from the documents (percentages for topics should sum to ~100):
-
-<!-- REPORT_CHARTS
-{
-  "topics": [
-    {"label": "Claims", "value": 31},
-    {"label": "Capital", "value": 21}
-  ],
-  "trends": [
-    {"label": "Claims", "prior": 18, "current": 31},
-    {"label": "Governance", "prior": 12, "current": 16}
-  ],
-  "risk_distribution": [
-    {"label": "Critical", "value": 2},
-    {"label": "High", "value": 4},
-    {"label": "Medium", "value": 3}
-  ],
-  "benchmarks": [
-    {"metric": "Claims Risk", "current": "High", "previous": "Medium", "trend": "up"}
-  ],
-  "health_score": 75
-}
--->
+Briefly describe the visuals. Charts are rendered automatically by the application
+from the canonical metrics above. Do NOT output a REPORT_CHARTS block or invent
+chart values.
 """
 
     if not include_recommendations:
@@ -99,6 +76,11 @@ with real values inferred from the documents (percentages for topics should sum 
 
     if not include_charts:
         charts_block = ""
+        canonical_metrics_section = ""
+
+    metrics_section = canonical_metrics_section.strip()
+    if metrics_section:
+        metrics_section = f"\n{metrics_section}\n"
 
     return f"""
 Create a professional {report_type} using DataDumpAI's Executive Intelligence format.
@@ -112,7 +94,7 @@ Writing style: {writing_style}
 
 SOURCE DOCUMENT MANIFEST
 {source_manifest}
-
+{metrics_section}
 CROSS-DOCUMENT FREQUENCY
 {frequency_hint or f"Use 'X of {source_document_count} documents' when citing how often a theme appears."}
 

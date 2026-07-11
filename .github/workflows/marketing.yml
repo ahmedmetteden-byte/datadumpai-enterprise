@@ -1,0 +1,191 @@
+name: Deploy Marketing Site
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "marketing-site/**"
+      - ".github/workflows/marketing.yml"
+      - ".github/scripts/deploy-marketing.sh"
+  workflow_dispatch:
+
+# Prevent overlapping marketing deployments on the same server.
+concurrency:
+  group: marketing-deployment
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  build:
+    name: Build marketing site
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: marketing-site
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: marketing-site/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build production bundle
+        env:
+          NEXT_PUBLIC_SITE_URL: https://www.getdatadump.com
+          NEXT_PUBLIC_APP_URL: https://app.getdatadump.com
+          NEXT_PUBLIC_CONTACT_EMAIL: hello@getdatadump.com
+        run: npm run build
+
+      - name: Lint
+        run: npm run lint
+
+  deploy:
+    name: Deploy marketing site to production
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 30
+    environment: production
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Record deployment metadata
+        id: meta
+        run: |
+          echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy marketing site via SSH
+        id: ssh_deploy
+        uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17 # v1.2.0
+        env:
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          command_timeout: 25m
+          envs: GITHUB_RUN_ID
+          script: |
+            set -euo pipefail
+            export APP_DIR="/opt/datadumpai-enterprise"
+            export GITHUB_RUN_ID="${GITHUB_RUN_ID}"
+
+            LOG_DIR="${APP_DIR}/.deploy/logs"
+            LOG_FILE="${LOG_DIR}/marketing-deploy-${GITHUB_RUN_ID}.log"
+            mkdir -p "$LOG_DIR"
+
+            cd "$APP_DIR"
+
+            {
+              echo "Workflow run: ${GITHUB_RUN_ID}"
+              echo "Started (UTC): $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+              git fetch origin main --prune
+              git reset --hard origin/main
+              chmod +x .github/scripts/*.sh
+
+              bash .github/scripts/deploy-marketing.sh
+            } 2>&1 | tee "$LOG_FILE"
+
+            exit "${PIPESTATUS[0]}"
+
+      - name: Append server diagnostics on failure
+        if: failure()
+        uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17 # v1.2.0
+        env:
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          command_timeout: 10m
+          envs: GITHUB_RUN_ID
+          script: |
+            set -euo pipefail
+            APP_DIR="/opt/datadumpai-enterprise"
+            LOG_FILE="${APP_DIR}/.deploy/logs/marketing-deploy-${GITHUB_RUN_ID}.log"
+
+            {
+              echo ""
+              echo "========================================"
+              echo "Post-failure diagnostics (UTC: $(date -u +%Y-%m-%dT%H:%M:%SZ))"
+              echo "========================================"
+              echo ""
+              echo "=== pm2 status ==="
+              pm2 describe datadump-marketing || true
+              echo ""
+              echo "=== pm2 logs (last 100 lines) ==="
+              pm2 logs datadump-marketing --lines 100 --nostream || true
+              echo ""
+              echo "=== marketing HTTP probe ==="
+              curl -s -o /dev/null -w "HTTP %{http_code}\n" --max-time 10 http://127.0.0.1:3000/ || true
+            } >> "$LOG_FILE" 2>&1 || true
+
+      - name: Download deployment logs
+        if: failure()
+        uses: appleboy/scp-action@917f8b81dfc1ccd331fef9e2d61bdc6c8be94634 # v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          source: "/opt/datadumpai-enterprise/.deploy/logs/marketing-deploy-${{ github.run_id }}.log"
+          target: deployment-artifacts/
+          strip_components: 4
+
+      - name: Upload deployment logs
+        if: failure()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: marketing-deployment-logs-${{ github.run_id }}
+          path: deployment-artifacts/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Publish deployment summary
+        if: always()
+        run: |
+          finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          started_epoch="$(date -d "${{ steps.meta.outputs.started_at }}" +%s 2>/dev/null || echo 0)"
+          finished_epoch="$(date -d "$finished_at" +%s)"
+          if [ "$started_epoch" -gt 0 ]; then
+            duration="$((finished_epoch - started_epoch))"
+          else
+            duration="unknown"
+          fi
+
+          {
+            echo "## Marketing Deployment Summary"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Site | https://getdatadump.com |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Started (UTC) | \`${{ steps.meta.outputs.started_at }}\` |"
+            echo "| Finished (UTC) | \`${finished_at}\` |"
+            echo "| Duration | \`${duration}s\` |"
+            echo "| Workflow run | [\`${{ github.run_id }}\`](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |"
+            echo "| Deploy step | \`${{ steps.ssh_deploy.outcome }}\` |"
+            echo ""
+            if [ "${{ steps.ssh_deploy.outcome }}" = "success" ]; then
+              echo "**Overall status: SUCCESS**"
+            else
+              echo "**Overall status: FAILED**"
+              echo ""
+              echo "Deployment logs were uploaded as workflow artifact \`marketing-deployment-logs-${{ github.run_id }}\`."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

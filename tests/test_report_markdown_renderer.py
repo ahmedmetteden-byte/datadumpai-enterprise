@@ -6,6 +6,7 @@ from services.premium_docx_export import DocxExportMetadata, build_premium_docx
 from services.premium_pdf_export import PremiumExportMetadata, build_premium_pdf
 from services.report_markdown_renderer import (
     parse_markdown_blocks,
+    remove_empty_sections,
     strip_inline_markdown,
 )
 
@@ -49,6 +50,63 @@ def test_parse_markdown_blocks_renders_findings_without_hash_symbols():
     assert labels[0].value == "100%"
     assert labels[1].label == "Summary"
     assert "Nigerian insurance industry" in labels[1].value
+
+
+def test_remove_empty_sections_drops_heading_without_content():
+    report = """
+## Executive Intelligence Dashboard
+
+### Executive Snapshot
+| Metric | Value |
+| --- | --- |
+| Documents analyzed | 4 |
+
+## Executive Quotations
+
+## AI Insights
+- Claims issues increased across all four meetings.
+"""
+
+    cleaned = remove_empty_sections(report)
+
+    assert "## Executive Quotations" not in cleaned
+    assert "## AI Insights" in cleaned
+    assert "Claims issues increased" in cleaned
+
+
+def test_remove_empty_sections_drops_empty_subsections():
+    report = """
+## Executive Intelligence Dashboard
+
+### Executive Summary Card
+| Field | Value |
+| --- | --- |
+| Confidence | 90% |
+
+### Key Opportunities
+
+### Top Risks
+- Claims delays continue
+"""
+
+    cleaned = remove_empty_sections(report)
+
+    assert "### Key Opportunities" not in cleaned
+    assert "### Top Risks" in cleaned
+    assert "Claims delays continue" in cleaned
+
+
+def test_remove_empty_sections_keeps_placeholder_free_content():
+    report = """
+## Executive Quotations
+> "Prompt and fair claims settlement builds trust."
+> — Annual Report 2024
+"""
+
+    cleaned = remove_empty_sections(report)
+
+    assert "## Executive Quotations" in cleaned
+    assert "Prompt and fair claims settlement" in cleaned
 
 
 def test_premium_pdf_has_no_raw_markdown_headings():

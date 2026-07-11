@@ -15,6 +15,7 @@ from config import (
     AI_REPORT_MODEL,
     AI_FULL_REPORT_MAX_OUTPUT_TOKENS,
     AI_INTELLIGENCE_REPORT_MAX_OUTPUT_TOKENS,
+    AI_REPORT_CHUNK_SUMMARY_OUTPUT_TOKENS,
     AI_REPORT_MAX_OUTPUT_TOKENS,
     AI_SYSTEM_PROMPT,
     AI_MAX_OUTPUT_TOKENS,
@@ -25,6 +26,8 @@ from services.executive_report_prompt import (
     uses_intelligence_format,
 )
 from services.full_report_prompt import build_full_report_prompt, is_full_report
+from services.report_assembler import canonical_metrics_prompt
+from models.report_data import ReportData
 
 load_dotenv()
 
@@ -60,6 +63,7 @@ class AIService:
         source_document_count: int | None = None,
         report_context: dict | None = None,
         use_intelligence_format: bool | None = None,
+        report_data: ReportData | None = None,
     ) -> str:
 
         document_count = source_document_count
@@ -67,16 +71,30 @@ class AIService:
             document_count = document_text.count("=== SOURCE DOCUMENT:")
 
         report_context = report_context or {}
+        metrics_section = (
+            canonical_metrics_prompt(report_data)
+            if include_charts and report_data is not None
+            else ""
+        )
+        synthesis_note = ""
+        if "=== SOURCE CHUNK:" in document_text:
+            synthesis_note = (
+                "\nThe source material below is a complete set of section summaries from "
+                "every analysed document chunk. Synthesize all sections — do not ignore "
+                "later chunks.\n"
+            )
+        narrative_source = f"{synthesis_note}{document_text}" if synthesis_note else document_text
 
         if is_full_report(report_type):
             user_prompt = build_full_report_prompt(
-                document_text=document_text,
+                document_text=narrative_source,
                 writing_style=writing_style,
                 audience=audience,
                 include_recommendations=include_recommendations,
                 include_charts=include_charts,
                 source_document_count=document_count,
                 report_context=report_context,
+                canonical_metrics_section=metrics_section,
             )
             max_output_tokens = AI_FULL_REPORT_MAX_OUTPUT_TOKENS
         elif (
@@ -87,13 +105,14 @@ class AIService:
             intelligence_format = True
             user_prompt = build_executive_report_prompt(
                 report_type=report_type,
-                document_text=document_text,
+                document_text=narrative_source,
                 writing_style=writing_style,
                 audience=audience,
                 include_recommendations=include_recommendations,
                 include_charts=include_charts,
                 source_document_count=document_count,
                 report_context=report_context,
+                canonical_metrics_section=metrics_section,
             )
             max_output_tokens = AI_INTELLIGENCE_REPORT_MAX_OUTPUT_TOKENS
         else:
@@ -141,7 +160,7 @@ Requirements:
 Source Material
 ===============================
 
-{document_text}
+{narrative_source}
 """
             max_output_tokens = AI_REPORT_MAX_OUTPUT_TOKENS
 
@@ -153,6 +172,50 @@ Source Material
         )
 
         return response.output_text.strip()
+
+    def summarize_source_chunk(
+        self,
+        *,
+        source_document: str,
+        heading: str,
+        chunk_text: str,
+        report_type: str,
+        max_summary_chars: int = 600,
+    ) -> str:
+        """Generate a concise summary for one analysed chunk."""
+
+        prompt = f"""
+Summarize this source-material section for later synthesis into a {report_type}.
+
+Rules:
+- Capture material facts, figures, risks, decisions, and themes from this section only.
+- Do not invent information that is not present in the section.
+- Write {max(3, max_summary_chars // 120)}–{max(4, max_summary_chars // 80)} concise sentences.
+- Stay under {max_summary_chars} characters.
+- Name the source document when citing specifics.
+
+Source document: {source_document}
+Section: {heading}
+
+Section text:
+{chunk_text[:12000]}
+"""
+
+        response = self.client.responses.create(
+            model=AI_REPORT_MODEL,
+            instructions=AI_SYSTEM_PROMPT,
+            input=prompt,
+            max_output_tokens=min(
+                AI_REPORT_CHUNK_SUMMARY_OUTPUT_TOKENS,
+                max(200, max_summary_chars // 2),
+            ),
+        )
+
+        summary = response.output_text.strip()
+        if len(summary) > max_summary_chars:
+            summary = summary[: max_summary_chars - 1].rstrip() + "…"
+
+        return summary
 
     def answer_question(
         self,

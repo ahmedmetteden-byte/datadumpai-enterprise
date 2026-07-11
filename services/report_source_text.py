@@ -1,5 +1,5 @@
 """
-Trim combined source text so report generation stays fast and within model limits.
+Prepare combined source text for report generation without discarding substance.
 """
 
 from __future__ import annotations
@@ -10,6 +10,10 @@ SOURCE_SECTION_PATTERN = re.compile(
     r"(=== SOURCE DOCUMENT: .+? ===\n\n)",
     re.DOTALL,
 )
+
+WHITESPACE_RUN = re.compile(r"[ \t]+")
+BLANK_LINES = re.compile(r"\n{3,}")
+REPEATED_LINE_WINDOW = 4
 
 
 def _split_source_sections(combined_text: str) -> list[tuple[str, str]]:
@@ -30,53 +34,81 @@ def _split_source_sections(combined_text: str) -> list[tuple[str, str]]:
     return sections
 
 
-def trim_combined_source_text(
-    combined_text: str,
-    *,
-    max_chars_per_doc: int,
-    max_total_chars: int,
-) -> tuple[str, bool]:
-    """Fairly trim each document section, then enforce a total size cap."""
+def _collapse_whitespace(text: str) -> str:
+    normalized = WHITESPACE_RUN.sub(" ", text)
+    normalized = BLANK_LINES.sub("\n\n", normalized)
+    return normalized.strip()
 
-    sections = _split_source_sections(combined_text)
+
+def _dedupe_repeated_lines(text: str) -> str:
+    """Remove consecutive duplicate lines (common headers/footers), not unique content."""
+
+    lines = text.splitlines()
+    if len(lines) < 2:
+        return text
+
+    cleaned: list[str] = []
+    previous_window: list[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+
+        if (
+            stripped
+            and len(previous_window) >= REPEATED_LINE_WINDOW
+            and previous_window[-REPEATED_LINE_WINDOW:] == [stripped] * REPEATED_LINE_WINDOW
+        ):
+            continue
+
+        cleaned.append(line)
+        if stripped:
+            previous_window.append(stripped)
+            if len(previous_window) > REPEATED_LINE_WINDOW:
+                previous_window.pop(0)
+
+    return "\n".join(cleaned)
+
+
+def normalize_document_body(text: str) -> str:
+    """Normalize one document body — whitespace and boilerplate only."""
+
+    return _dedupe_repeated_lines(_collapse_whitespace(text))
+
+
+def normalize_combined_source_text(combined_text: str) -> tuple[str, bool]:
+    """
+    Normalize combined source text without truncating substantive content.
+
+    Returns (normalized_text, was_normalized).
+    """
+
+    original = combined_text.strip()
+    if not original:
+        return "", False
+
+    sections = _split_source_sections(original)
 
     if not sections:
-        if len(combined_text) <= max_total_chars:
-            return combined_text, False
+        normalized = normalize_document_body(original)
+        return normalized, normalized != original
 
-        return (
-            combined_text[:max_total_chars]
-            + "\n\n[… source material trimmed for faster report generation …]",
-            True,
-        )
-
-    doc_count = len(sections)
-    per_doc_limit = min(
-        max_chars_per_doc,
-        max(max_total_chars // doc_count, 1),
-    )
-
-    trimmed_sections: list[str] = []
-    truncated = False
+    normalized_sections: list[str] = []
 
     for header, body in sections:
-        if len(body) > per_doc_limit:
-            body = (
-                body[:per_doc_limit]
-                + f"\n\n[… document trimmed to {per_doc_limit:,} characters "
-                "for faster report generation …]"
-            )
-            truncated = True
+        normalized_body = normalize_document_body(body)
+        normalized_sections.append(f"{header}{normalized_body}")
 
-        trimmed_sections.append(f"{header}{body}")
+    normalized = "\n\n".join(normalized_sections)
+    return normalized, normalized != original
 
-    result = "\n\n".join(trimmed_sections)
 
-    if len(result) > max_total_chars:
-        result = (
-            result[:max_total_chars]
-            + "\n\n[… combined source material trimmed for faster report generation …]"
-        )
-        truncated = True
+def prepare_combined_source_text(combined_text: str) -> dict[str, object]:
+    """Prepare source text for analysis and report whether normalization ran."""
 
-    return result, truncated
+    normalized, was_normalized = normalize_combined_source_text(combined_text)
+
+    return {
+        "combined_text": normalized,
+        "normalized": was_normalized,
+        "multi_stage_recommended": len(normalized) > 0,
+    }

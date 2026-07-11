@@ -9,20 +9,23 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from config import (
-    AI_REPORT_MAX_CHARS_PER_DOC,
     AI_REPORT_MAX_PDF_PAGES,
     AI_REPORT_MAX_TABULAR_ROWS,
     AI_REPORT_MAX_TOTAL_CHARS,
 )
+from models.report_processing_mode import ReportProcessingMode
 from services.ai_service import AIService
 from services.document_service import DocumentService
 from services.document_processor import DocumentProcessor
 from services.project_service import ProjectService
 from services.report_service import ReportService
-from services.report_source_text import trim_combined_source_text
+from services.report_source_text import prepare_combined_source_text
 from services.usage_service import UsageService
 from services.executive_report_context import ExecutiveReportContextBuilder
 from services.plan_service import PlanService
+from services.report_document import compose_report_data
+from services.report_chunk_processor import process_source_documents
+from models.report_data import ReportData
 from core.workspace_context import QUICK_REPORT_NAME, QUICK_REPORT_PROJECT_ID, is_quick_report_workspace
 
 
@@ -46,17 +49,29 @@ class ReportPipeline:
         self._plan_service = plan_service or PlanService(self._usage_service)
 
     @staticmethod
+    def _document_extraction_limits(
+        processing_mode: ReportProcessingMode,
+    ) -> tuple[int | None, int | None]:
+        if processing_mode == ReportProcessingMode.COMPREHENSIVE:
+            return None, None
+        return AI_REPORT_MAX_PDF_PAGES, AI_REPORT_MAX_TABULAR_ROWS
+
+    @staticmethod
     def load_document_text(
         project_id: str,
         filenames: list[str],
         *,
         user_id: str | None = None,
+        processing_mode: ReportProcessingMode = ReportProcessingMode.COMPREHENSIVE,
     ) -> str:
         """Extract and combine text from selected project documents."""
 
         from core.auth import get_current_user_id
 
         resolved_user_id = user_id or get_current_user_id()
+        max_pdf_pages, max_tabular_rows = ReportPipeline._document_extraction_limits(
+            processing_mode,
+        )
         texts: list[str] = []
 
         for filename in filenames:
@@ -64,8 +79,8 @@ class ReportPipeline:
                 text = DocumentService(user_id=resolved_user_id).read_document_text(
                     project_id,
                     filename,
-                    max_pdf_pages=AI_REPORT_MAX_PDF_PAGES,
-                    max_tabular_rows=AI_REPORT_MAX_TABULAR_ROWS,
+                    max_pdf_pages=max_pdf_pages,
+                    max_tabular_rows=max_tabular_rows,
                 )
                 if text.strip():
                     texts.append(text)
@@ -78,18 +93,22 @@ class ReportPipeline:
     def _load_selection_item(
         item: dict[str, str],
         user_id: str,
+        processing_mode: ReportProcessingMode,
     ) -> tuple[str, str | None]:
         """Load one selected document. Returns (filename, chunk or None)."""
 
         filename = item["filename"]
         project_id = item["project_id"]
+        max_pdf_pages, max_tabular_rows = ReportPipeline._document_extraction_limits(
+            processing_mode,
+        )
 
         try:
             chunk = DocumentService(user_id=user_id).read_document_text(
                 project_id,
                 filename,
-                max_pdf_pages=AI_REPORT_MAX_PDF_PAGES,
-                max_tabular_rows=AI_REPORT_MAX_TABULAR_ROWS,
+                max_pdf_pages=max_pdf_pages,
+                max_tabular_rows=max_tabular_rows,
             ).strip()
         except Exception:
             return filename, None
@@ -105,6 +124,7 @@ class ReportPipeline:
         selection: list[dict[str, str]],
         *,
         user_id: str | None = None,
+        processing_mode: ReportProcessingMode = ReportProcessingMode.COMPREHENSIVE,
     ) -> dict[str, Any]:
         """Load and combine text from a structured document selection."""
 
@@ -115,7 +135,9 @@ class ReportPipeline:
                 "combined_text": "",
                 "loaded": [],
                 "skipped": [],
-                "truncated": False,
+                "normalized": False,
+                "multi_stage": False,
+                "chunk_count": 0,
             }
 
         resolved_user_id = user_id or get_current_user_id()
@@ -128,7 +150,11 @@ class ReportPipeline:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             results = list(
                 executor.map(
-                    lambda item: cls._load_selection_item(item, resolved_user_id),
+                    lambda item: cls._load_selection_item(
+                        item,
+                        resolved_user_id,
+                        processing_mode,
+                    ),
                     selection,
                 )
             )
@@ -140,17 +166,17 @@ class ReportPipeline:
             else:
                 skipped.append(filename)
 
-        combined_text, truncated = trim_combined_source_text(
-            "\n\n".join(texts),
-            max_chars_per_doc=AI_REPORT_MAX_CHARS_PER_DOC,
-            max_total_chars=AI_REPORT_MAX_TOTAL_CHARS,
-        )
+        prepared = prepare_combined_source_text("\n\n".join(texts))
+        combined_text = str(prepared["combined_text"])
+        multi_stage = len(combined_text) > AI_REPORT_MAX_TOTAL_CHARS
 
         return {
             "combined_text": combined_text,
             "loaded": loaded,
             "skipped": skipped,
-            "truncated": truncated,
+            "normalized": bool(prepared["normalized"]),
+            "multi_stage": multi_stage,
+            "chunk_count": 0,
         }
 
     def _resolve_source_documents(
@@ -228,8 +254,9 @@ class ReportPipeline:
         include_recommendations: bool = True,
         source_document_count: int | None = None,
         report_context: dict | None = None,
-    ) -> str:
-        """Generate report text without persisting it."""
+        processing_mode: ReportProcessingMode = ReportProcessingMode.COMPREHENSIVE,
+    ) -> ReportData:
+        """Generate a structured report without persisting it."""
 
         self._usage_service.check_can_generate_report()
 
@@ -238,8 +265,19 @@ class ReportPipeline:
             include_charts and self._plan_service.include_professional_charts()
         )
 
-        report_text = self._ai_service.generate_report(
+        report_context = report_context or {}
+        report_data, narrative_input = process_source_documents(
             document_text=document_text,
+            report_type=report_type,
+            processing_mode=processing_mode,
+            ai_service=self._ai_service,
+            source_documents=report_context.get("source_documents"),
+            report_context=report_context,
+            source_document_count=source_document_count,
+        )
+
+        narrative = self._ai_service.generate_report(
+            document_text=narrative_input,
             report_type=report_type,
             writing_style=writing_style,
             audience=audience,
@@ -248,17 +286,26 @@ class ReportPipeline:
             source_document_count=source_document_count,
             report_context=report_context,
             use_intelligence_format=intelligence_format,
+            report_data=report_data if charts_enabled else None,
+        )
+
+        report = compose_report_data(
+            narrative=narrative,
+            base=report_data,
+            report_type=report_type,
+            title=report_type,
+            include_charts=charts_enabled,
         )
 
         self._usage_service.record_report_generated()
 
-        return report_text
+        return report
 
     def save_generated_report(
         self,
         *,
         project: dict[str, Any],
-        report_text: str,
+        report: ReportData,
         report_type: str,
         source_documents: list[str],
     ) -> dict[str, Any]:
@@ -267,7 +314,7 @@ class ReportPipeline:
         metadata = self._report_service.save_report(
             project_id=project["id"],
             report_name=report_type,
-            report_text=report_text,
+            report=report,
             source_documents=source_documents,
         )
 
@@ -293,8 +340,8 @@ class ReportPipeline:
         audience: str = "Executive Management",
         include_charts: bool = False,
         include_recommendations: bool = True,
-    ) -> tuple[str, dict[str, Any]]:
-        report_text = self.generate(
+    ) -> tuple[ReportData, dict[str, Any]]:
+        report = self.generate(
             document_text=document_text,
             report_type=report_type,
             writing_style=writing_style,
@@ -305,19 +352,19 @@ class ReportPipeline:
 
         metadata = self.save_generated_report(
             project=project,
-            report_text=report_text,
+            report=report,
             report_type=report_type,
             source_documents=source_documents,
         )
 
-        return report_text, metadata
+        return report, metadata
 
     def regenerate_and_save(
         self,
         *,
         project: dict[str, Any],
         report: dict[str, Any],
-    ) -> tuple[str, dict[str, Any]]:
+    ) -> tuple[ReportData, dict[str, Any]]:
         """Regenerate an existing saved report from its stored sources."""
 
         self._usage_service.check_can_generate_report()
@@ -339,9 +386,14 @@ class ReportPipeline:
             {"project_id": project_id, "filename": filename}
             for project_id, filename in resolved
         ]
+        processing_mode = ReportProcessingMode.from_value(
+            report.get("processing_mode")
+            or report.get("metadata", {}).get("processing_mode"),
+        )
         load_result = self.load_document_text_from_selection(
             selection,
             user_id=self._document_service._user_id,
+            processing_mode=processing_mode,
         )
         document_text = load_result["combined_text"].strip()
 
@@ -363,23 +415,43 @@ class ReportPipeline:
         )
 
         intelligence_format = self._plan_service.uses_intelligence_format(report_type)
+        charts_enabled = self._plan_service.include_professional_charts()
 
-        report_text = self._ai_service.generate_report(
+        report_data, narrative_input = process_source_documents(
             document_text=document_text,
+            report_type=report_type,
+            processing_mode=processing_mode,
+            ai_service=self._ai_service,
+            source_documents=source_documents,
+            report_context=report_context,
+            source_document_count=len(load_result["loaded"]),
+        )
+
+        narrative = self._ai_service.generate_report(
+            document_text=narrative_input,
             report_type=report_type,
             writing_style="Professional",
             audience="Executive Management",
-            include_charts=self._plan_service.include_professional_charts(),
+            include_charts=charts_enabled,
             include_recommendations=True,
             source_document_count=len(load_result["loaded"]),
             report_context=report_context,
             use_intelligence_format=intelligence_format,
+            report_data=report_data if charts_enabled else None,
+        )
+
+        updated_report = compose_report_data(
+            narrative=narrative,
+            base=report_data,
+            report_type=report_type,
+            title=report_type,
+            include_charts=charts_enabled,
         )
 
         metadata = self._report_service.update_report(
             project_id=project["id"],
             filename=report["filename"],
-            report_text=report_text,
+            report=updated_report,
             source_documents=source_documents,
         )
 
@@ -397,4 +469,4 @@ class ReportPipeline:
         self._sync_workspace_reports(project, metadata)
         self._usage_service.record_report_generated()
 
-        return report_text, metadata
+        return updated_report, metadata

@@ -70,7 +70,7 @@ def test_core_workflow_smoke(isolated_env):
     project = project_service.get_project(project["id"])
     project["documents"] = document_service.get_documents(project["id"])
 
-    report_text, metadata = report_pipeline.generate_and_save(
+    report, metadata = report_pipeline.generate_and_save(
         project=project,
         document_text=document_text,
         report_type="Executive Summary",
@@ -89,7 +89,7 @@ def test_core_workflow_smoke(isolated_env):
     # 5. Open report
     opened = ReportService.load_report(reports[0]["path"])
 
-    assert opened == report_text
+    assert opened == report.to_markdown()
     assert "Supply chain" in opened
 
     # Workspace reflects the completed workflow

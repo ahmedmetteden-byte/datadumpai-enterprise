@@ -10,12 +10,11 @@ import re
 import streamlit as st
 
 from services.report_chart_data import (
-    extract_chart_data,
     extract_executive_summary_card,
-    is_intelligence_report,
     normalize_intelligence_title,
-    strip_chart_data,
 )
+from services.report_document import prepare_report_view, report_data_from_markdown, report_is_intelligence
+from models.report_data import ReportData
 from ui.report_charts import render_report_charts
 
 CONFIDENCE_PATTERN = re.compile(
@@ -151,15 +150,22 @@ def enhance_report_markdown(markdown_text: str) -> str:
     return enhanced
 
 
-def render_report_content(report_text: str) -> None:
+def render_report_content(report: ReportData | str) -> None:
     """Render a report with executive intelligence styling when applicable."""
 
-    if not is_intelligence_report(report_text):
-        st.markdown(report_text)
+    if isinstance(report, str):
+        report = report_data_from_markdown(report)
+
+    prepared = prepare_report_view(report)
+    chart_data = prepared.chart_data
+    body = prepared.text
+
+    if not report_is_intelligence(report):
+        if chart_data:
+            render_report_charts(chart_data)
+        st.markdown(body)
         return
 
-    chart_data = extract_chart_data(report_text)
-    body = strip_chart_data(report_text)
     body = normalize_intelligence_title(body)
 
     summary_card, body = extract_executive_summary_card(body)

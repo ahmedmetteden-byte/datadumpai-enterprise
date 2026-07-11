@@ -12,6 +12,11 @@ import streamlit as st
 from config import FULL_REPORT_PERIODS
 from application.report_pipeline import ReportPipeline
 from core.workspace_context import QUICK_REPORT_PROJECT_ID, QUICK_REPORT_NAME
+from models.report_processing_mode import (
+    DEFAULT_PROCESSING_MODE,
+    PROCESSING_MODE_OPTIONS,
+    ReportProcessingMode,
+)
 from services.document_service import DocumentService
 from core.workspace_navigation import set_workspace_section
 from services.executive_report_context import ExecutiveReportContextBuilder
@@ -35,6 +40,7 @@ def _plan_service() -> PlanService:
 
 
 context_builder = ExecutiveReportContextBuilder()
+PROCESSING_MODE_KEY = "report_processing_mode"
 
 REPORT_TYPE_META = {
     "Executive Summary": {
@@ -563,6 +569,32 @@ into a <strong>quarterly</strong> report, or four quarterly reports into an
     return selected
 
 
+def render_processing_mode_selector() -> ReportProcessingMode:
+    """Let the user choose fast vs comprehensive document analysis."""
+
+    if PROCESSING_MODE_KEY not in st.session_state:
+        st.session_state[PROCESSING_MODE_KEY] = DEFAULT_PROCESSING_MODE.value
+
+    current = ReportProcessingMode.from_value(st.session_state.get(PROCESSING_MODE_KEY))
+    labels = [label for _, label in PROCESSING_MODE_OPTIONS]
+    values = [value for value, _ in PROCESSING_MODE_OPTIONS]
+    selected_value = st.radio(
+        "Analysis depth",
+        options=values,
+        index=values.index(current.value),
+        format_func=lambda value: next(
+            label for option_value, label in PROCESSING_MODE_OPTIONS if option_value == value
+        ),
+        key=PROCESSING_MODE_KEY,
+        help=(
+            "Comprehensive mode analyses every section of large documents in multiple "
+            "stages. Fast mode is quicker and suits smaller or less critical reports."
+        ),
+    )
+
+    return ReportProcessingMode.from_value(selected_value)
+
+
 def render_documents_page_generation(
     projects: list[dict[str, Any]],
     document_selection: list[dict[str, str]],
@@ -594,10 +626,22 @@ def render_documents_page_generation(
         return
 
     reporting_period = render_full_report_period_selector(report_type)
+    processing_mode = render_processing_mode_selector()
 
     st.caption(
         f"**{len(document_selection)}** document(s) will be analyzed for this report."
     )
+
+    if processing_mode == ReportProcessingMode.COMPREHENSIVE:
+        st.caption(
+            "Comprehensive mode analyses every section of your selected documents. "
+            "Large files are processed in multiple stages so nothing important is skipped."
+        )
+    else:
+        st.caption(
+            "Fast mode prioritises speed. Large documents still use staged analysis, "
+            "but with lighter per-section summaries."
+        )
 
     if _plan_service().uses_full_report_format(report_type):
         st.caption(
@@ -642,6 +686,7 @@ def render_documents_page_generation(
         load_result = _report_pipeline().load_document_text_from_selection(
             document_selection,
             user_id=get_current_user_id(),
+            processing_mode=processing_mode,
         )
         document_text = load_result["combined_text"].strip()
         source_labels = _selection_source_labels(document_selection, get_user_projects())
@@ -672,10 +717,15 @@ def render_documents_page_generation(
                 f"{len(document_selection)} selected documents."
             )
 
-        if load_result.get("truncated"):
+        if load_result.get("multi_stage"):
             st.info(
-                "Large documents were trimmed to speed up generation. "
-                "Your original files are unchanged."
+                "Large documents are analysed in multiple stages to ensure complete "
+                "coverage while maintaining thorough report generation."
+            )
+        elif load_result.get("normalized"):
+            st.caption(
+                "Repeated headers, footers, and excess whitespace were normalised. "
+                "All substantive document content is included."
             )
 
         try:
@@ -688,24 +738,29 @@ def render_documents_page_generation(
                 reporting_period=reporting_period,
             )
 
-            with loading(
-                f"Generating {report_type} from "
-                f"{len(load_result['loaded'])} document(s)…"
-            ):
-                report_text = _report_pipeline().generate(
+            loading_message = (
+                f"Analysing {len(load_result['loaded'])} document(s) in comprehensive mode…"
+                if processing_mode == ReportProcessingMode.COMPREHENSIVE
+                and load_result.get("multi_stage")
+                else f"Generating {report_type} from {len(load_result['loaded'])} document(s)…"
+            )
+
+            with loading(loading_message):
+                report = _report_pipeline().generate(
                     document_text=document_text,
                     report_type=report_type,
                     source_document_count=len(load_result["loaded"]),
                     report_context=report_context,
                     include_charts=_plan_service().include_professional_charts(),
+                    processing_mode=processing_mode,
                 )
 
             set_draft_report(
-                report_type=report_type,
-                report_text=report_text,
+                report=report,
                 source_documents=source_labels,
                 workspace=workspace,
                 document_selection=document_selection,
+                processing_mode=processing_mode.value,
             )
             st.rerun()
         except Exception as exc:

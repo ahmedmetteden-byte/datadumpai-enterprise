@@ -54,6 +54,105 @@ def strip_inline_markdown(text: str) -> str:
     return cleaned.strip()
 
 
+PLACEHOLDER_LINE = re.compile(
+    r"^(?:"
+    r"none(?:\s+identified)?|"
+    r"n/?a|"
+    r"not\s+(?:applicable|available|identified)|"
+    r"no\s+(?:data|quotations?|quotes?|content|"
+    r"relevant\s+quotations?)(?:\s+(?:were\s+)?identified)?|"
+    r"[—\-]"
+    r")\.?$",
+    re.IGNORECASE,
+)
+
+
+def _is_substantive_content(text: str) -> bool:
+    """Return True when a section body contains renderable report content."""
+
+    if not text or not text.strip():
+        return False
+
+    for line in text.splitlines():
+        stripped = line.strip()
+
+        if not stripped:
+            continue
+
+        if HEADING_PATTERN.match(stripped):
+            continue
+
+        if HORIZONTAL_RULE.match(stripped):
+            continue
+
+        if TABLE_ROW_PATTERN.match(stripped):
+            return True
+
+        if stripped.startswith(("-", "*", ">")):
+            return True
+
+        if LABEL_VALUE_PATTERN.match(stripped):
+            return True
+
+        cleaned = strip_inline_markdown(stripped)
+
+        if cleaned and not PLACEHOLDER_LINE.match(cleaned):
+            return True
+
+    return False
+
+
+def _parse_heading_sections(text: str, level: int) -> list[tuple[str | None, str]]:
+    """Split markdown into (heading title, body) tuples at a fixed heading level."""
+
+    pattern = re.compile(rf"^#{{{level}}}\s+(.+)$")
+    sections: list[tuple[str | None, list[str]]] = [(None, [])]
+
+    for line in text.splitlines():
+        match = pattern.match(line)
+
+        if match and not line.startswith("#" * (level + 1)):
+            sections.append((match.group(1).strip(), []))
+            continue
+
+        sections[-1][1].append(line)
+
+    return [
+        (title, "\n".join(lines).strip())
+        for title, lines in sections
+    ]
+
+
+def _remove_empty_headings_at_level(text: str, level: int, *, max_level: int = 5) -> str:
+    if level > max_level:
+        return text.strip()
+
+    sections = _parse_heading_sections(text, level)
+    rebuilt: list[str] = []
+
+    for title, body in sections:
+        if title is None:
+            if body.strip():
+                rebuilt.append(_remove_empty_headings_at_level(body, level + 1, max_level=max_level))
+            continue
+
+        cleaned_body = _remove_empty_headings_at_level(body, level + 1, max_level=max_level)
+
+        if _is_substantive_content(cleaned_body):
+            rebuilt.append(f"{'#' * level} {title}\n\n{cleaned_body}".strip())
+
+    return "\n\n".join(part for part in rebuilt if part).strip()
+
+
+def remove_empty_sections(report_text: str) -> str:
+    """Drop section headings that have no substantive content beneath them."""
+
+    if not report_text.strip():
+        return report_text
+
+    return _remove_empty_headings_at_level(report_text, level=2).strip()
+
+
 def clean_heading(text: str) -> tuple[int, str]:
     """Return heading level (1-5) and plain title text."""
 

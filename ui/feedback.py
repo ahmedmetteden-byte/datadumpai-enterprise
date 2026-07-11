@@ -34,8 +34,13 @@ def friendly_message(exc: Exception) -> str:
     if isinstance(exc, PermissionError):
         return "Permission denied. Close the file if it is open elsewhere and try again."
 
-    if isinstance(exc, ConnectionError):
-        return "Could not reach the AI service. Check your internet connection and API key."
+    if isinstance(exc, ConnectionError) or type(exc).__name__ == "APIConnectionError":
+        return (
+            "Could not reach the AI service. Check your internet connection, "
+            "VPN or proxy settings, and that OPENAI_API_KEY is set in .env. "
+            "On Windows, run `pip install -r requirements.txt` and restart the app "
+            "if SSL certificate errors block OpenAI."
+        )
 
     detail_lower = detail.lower()
     if "timeout" in detail_lower or "timed out" in detail_lower:

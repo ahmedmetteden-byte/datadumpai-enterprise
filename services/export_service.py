@@ -19,8 +19,12 @@ from reportlab.lib.enums import TA_JUSTIFY
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer
 
+from services.export_chart_blocks import get_export_chart_images
+from models.report_data import ReportData
+from services.report_chart_data import prepare_report_for_output
+from services.report_document import prepare_report_view, report_data_from_markdown
 from services.report_markdown_renderer import (
     parse_markdown_blocks,
     strip_inline_markdown,
@@ -96,6 +100,113 @@ class ExportService:
 
         return slug or "report"
 
+    def _append_pdf_charts(self, story: list[Any], charts: list[tuple[str, bytes]], body_style: ParagraphStyle) -> None:
+        story.append(Spacer(1, 0.12 * inch))
+
+        for title, png_bytes in charts:
+            story.append(Paragraph(f"<b>{title}</b>", body_style))
+            story.append(
+                Image(
+                    BytesIO(png_bytes),
+                    width=6.2 * inch,
+                    height=2.6 * inch,
+                    kind="proportional",
+                )
+            )
+            story.append(Spacer(1, 0.15 * inch))
+
+    def _append_docx_charts(self, document: Document, charts: list[tuple[str, bytes]]) -> None:
+        for title, png_bytes in charts:
+            heading = document.add_heading(title, level=3)
+            for run in heading.runs:
+                run.font.size = Pt(12)
+                run.font.color.rgb = RGBColor(0x1D, 0x4E, 0xD8)
+
+            paragraph = document.add_paragraph()
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            paragraph.add_run().add_picture(BytesIO(png_bytes), width=Inches(6.2))
+
+    def _prepend_pdf_charts(
+        self,
+        story: list[Any],
+        chart_data: dict[str, Any],
+        *,
+        body_style: ParagraphStyle,
+        heading_style: ParagraphStyle,
+    ) -> None:
+        charts = get_export_chart_images(chart_data)
+
+        if not charts:
+            return
+
+        story.append(Paragraph("Visual Analytics", heading_style))
+        self._append_pdf_charts(story, charts, body_style)
+
+    def _prepend_docx_charts(self, document: Document, chart_data: dict[str, Any]) -> None:
+        charts = get_export_chart_images(chart_data)
+
+        if not charts:
+            return
+
+        document.add_heading("Visual Analytics", level=2)
+        self._append_docx_charts(document, charts)
+
+    def _render_pdf_block(
+        self,
+        block: Any,
+        *,
+        story: list[Any],
+        body_style: ParagraphStyle,
+        heading_style: ParagraphStyle,
+    ) -> None:
+        if block.block_type == "heading":
+            story.append(Paragraph(strip_inline_markdown(block.content), heading_style))
+        elif block.block_type == "paragraph":
+            safe = (
+                strip_inline_markdown(block.content)
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+            )
+            story.append(Paragraph(safe, body_style))
+        elif block.block_type == "bullets":
+            for item in block.items:
+                safe = (
+                    strip_inline_markdown(item)
+                    .replace("&", "&amp;")
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;")
+                )
+                story.append(Paragraph(safe, body_style))
+        elif block.block_type == "label_value":
+            label = strip_inline_markdown(block.label)
+            value = strip_inline_markdown(block.value)
+            story.append(Paragraph(f"<b>{label}:</b> {value}", body_style))
+        elif block.block_type == "spacer":
+            story.append(Spacer(1, 0.08 * inch))
+
+    def _render_docx_block(self, document: Document, block: Any) -> None:
+        if block.block_type == "heading":
+            document.add_heading(strip_inline_markdown(block.content), level=min(block.level, 4))
+        elif block.block_type == "paragraph":
+            paragraph = document.add_paragraph(strip_inline_markdown(block.content))
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+            paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.MULTIPLE
+            paragraph.paragraph_format.line_spacing = 1.45
+            paragraph.paragraph_format.space_before = Pt(6)
+            paragraph.paragraph_format.space_after = Pt(10)
+            for run in paragraph.runs:
+                run.font.size = Pt(11)
+                run.font.color.rgb = RGBColor(0x0F, 0x17, 0x2A)
+        elif block.block_type == "bullets":
+            for item in block.items:
+                paragraph = document.add_paragraph(strip_inline_markdown(item), style="List Bullet")
+                paragraph.paragraph_format.left_indent = Inches(0.35)
+        elif block.block_type == "label_value":
+            paragraph = document.add_paragraph()
+            paragraph.add_run(f"{strip_inline_markdown(block.label)}: ").bold = True
+            paragraph.add_run(strip_inline_markdown(block.value))
+
     def _build_result(
         self,
         *,
@@ -129,17 +240,40 @@ class ExportService:
             "size": len(data),
         }
 
+    def _resolve_report(self, report: ReportData | str) -> ReportData:
+        if isinstance(report, ReportData):
+            return report
+        return report_data_from_markdown(report)
+
+    def _prepare_export(self, report: ReportData | str):
+        return prepare_report_view(self._resolve_report(report))
+
+    def _resolve_export_input(
+        self,
+        *,
+        report: ReportData | str | None = None,
+        report_text: str | None = None,
+    ) -> ReportData | str:
+        if report is not None:
+            return report
+        if report_text is not None:
+            return report_text
+        raise TypeError("export requires report or report_text")
+
     def export_markdown(
         self,
         *,
         project_id: str,
         report_name: str,
-        report_text: str,
+        report: ReportData | str | None = None,
+        report_text: str | None = None,
     ) -> dict[str, Any]:
         """Export a report as Markdown."""
 
         filename = f"{self._slugify(report_name)}.md"
-        data = report_text.encode("utf-8")
+        data = self._prepare_export(
+            self._resolve_export_input(report=report, report_text=report_text)
+        ).text.encode("utf-8")
 
         return self._build_result(
             project_id=project_id,
@@ -154,10 +288,15 @@ class ExportService:
         *,
         project_id: str,
         report_name: str,
-        report_text: str,
+        report: ReportData | str | None = None,
+        report_text: str | None = None,
     ) -> dict[str, Any]:
         """Export a report as PDF."""
 
+        prepared = self._prepare_export(
+            self._resolve_export_input(report=report, report_text=report_text)
+        )
+        report_text = prepared.text
         filename = f"{self._slugify(report_name)}.pdf"
         buffer = BytesIO()
 
@@ -188,32 +327,20 @@ class ExportService:
         )
         story = []
 
+        self._prepend_pdf_charts(
+            story,
+            prepared.chart_data,
+            body_style=body_style,
+            heading_style=heading_style,
+        )
+
         for block in parse_markdown_blocks(report_text):
-            if block.block_type == "heading":
-                story.append(Paragraph(strip_inline_markdown(block.content), heading_style))
-            elif block.block_type == "paragraph":
-                safe = (
-                    strip_inline_markdown(block.content)
-                    .replace("&", "&amp;")
-                    .replace("<", "&lt;")
-                    .replace(">", "&gt;")
-                )
-                story.append(Paragraph(safe, body_style))
-            elif block.block_type == "bullets":
-                for item in block.items:
-                    safe = (
-                        strip_inline_markdown(item)
-                        .replace("&", "&amp;")
-                        .replace("<", "&lt;")
-                        .replace(">", "&gt;")
-                    )
-                    story.append(Paragraph(safe, body_style))
-            elif block.block_type == "label_value":
-                label = strip_inline_markdown(block.label)
-                value = strip_inline_markdown(block.value)
-                story.append(Paragraph(f"<b>{label}:</b> {value}", body_style))
-            elif block.block_type == "spacer":
-                story.append(Spacer(1, 0.08 * inch))
+            self._render_pdf_block(
+                block,
+                story=story,
+                body_style=body_style,
+                heading_style=heading_style,
+            )
 
         if not story:
             story.append(Paragraph(" ", body_style))
@@ -234,10 +361,15 @@ class ExportService:
         *,
         project_id: str,
         report_name: str,
-        report_text: str,
+        report: ReportData | str | None = None,
+        report_text: str | None = None,
     ) -> dict[str, Any]:
         """Export a report as Word (.docx)."""
 
+        prepared = self._prepare_export(
+            self._resolve_export_input(report=report, report_text=report_text)
+        )
+        report_text = prepared.text
         filename = f"{self._slugify(report_name)}.docx"
         buffer = BytesIO()
 
@@ -250,27 +382,10 @@ class ExportService:
 
         document.add_heading(strip_inline_markdown(report_name), level=1)
 
+        self._prepend_docx_charts(document, prepared.chart_data)
+
         for block in parse_markdown_blocks(report_text):
-            if block.block_type == "heading":
-                document.add_heading(strip_inline_markdown(block.content), level=min(block.level, 4))
-            elif block.block_type == "paragraph":
-                paragraph = document.add_paragraph(strip_inline_markdown(block.content))
-                paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-                paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.MULTIPLE
-                paragraph.paragraph_format.line_spacing = 1.45
-                paragraph.paragraph_format.space_before = Pt(6)
-                paragraph.paragraph_format.space_after = Pt(10)
-                for run in paragraph.runs:
-                    run.font.size = Pt(11)
-                    run.font.color.rgb = RGBColor(0x0F, 0x17, 0x2A)
-            elif block.block_type == "bullets":
-                for item in block.items:
-                    paragraph = document.add_paragraph(strip_inline_markdown(item), style="List Bullet")
-                    paragraph.paragraph_format.left_indent = Inches(0.35)
-            elif block.block_type == "label_value":
-                paragraph = document.add_paragraph()
-                paragraph.add_run(f"{strip_inline_markdown(block.label)}: ").bold = True
-                paragraph.add_run(strip_inline_markdown(block.value))
+            self._render_docx_block(document, block)
 
         document.save(buffer)
         data = buffer.getvalue()

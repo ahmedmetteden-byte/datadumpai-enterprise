@@ -12,11 +12,6 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-import matplotlib
-
-matplotlib.use("Agg")
-
-import matplotlib.pyplot as plt
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
 from reportlab.lib.pagesizes import letter
@@ -36,6 +31,7 @@ from reportlab.platypus import (
 )
 
 from config import APP_NAME
+from services.report_chart_export import render_chart_pngs
 from services.report_document_parser import (
     ParsedIntelligenceReport,
     ai_insight_bullets,
@@ -416,6 +412,7 @@ class PremiumPDFBuilder:
         )
         story.append(summary_table)
         story.append(Spacer(1, 0.12 * inch))
+        story.extend(self._chart_story_elements(parsed.chart_data))
 
         story.append(Paragraph("Top Risks", self.styles["subheading"]))
         risks = top_risks(parsed)
@@ -675,12 +672,6 @@ class PremiumPDFBuilder:
         story: list[Any] = []
         story.extend(self._metric_cards(parsed))
 
-        chart = self._chart_image(parsed.chart_data)
-
-        if chart:
-            story.append(chart)
-            story.append(Spacer(1, 0.15 * inch))
-
         risk_table = self._risk_card_table(parsed)
 
         if risk_table:
@@ -739,33 +730,22 @@ class PremiumPDFBuilder:
 
         return story
 
-    def _chart_image(self, chart_data: dict[str, Any]) -> Image | None:
-        topics = chart_data.get("topics") or []
+    def _chart_story_elements(self, chart_data: dict[str, Any]) -> list[Any]:
+        story: list[Any] = []
 
-        if not topics:
-            return None
+        for title, png_bytes in render_chart_pngs(chart_data):
+            story.append(Paragraph(escape_xml(title), self.styles["subheading"]))
+            story.append(
+                Image(
+                    BytesIO(png_bytes),
+                    width=6.6 * inch,
+                    height=2.7 * inch,
+                    kind="proportional",
+                )
+            )
+            story.append(Spacer(1, 0.12 * inch))
 
-        labels = [item.get("label", "") for item in topics]
-        values = [float(item.get("value", 0)) for item in topics]
-
-        figure, axes = plt.subplots(1, 2, figsize=(8, 3.2))
-        figure.patch.set_facecolor("white")
-
-        axes[0].bar(labels, values, color="#2563EB")
-        axes[0].set_title("Top Discussion Topics", fontsize=10)
-        axes[0].tick_params(axis="x", labelrotation=25, labelsize=8)
-        axes[0].spines[["top", "right"]].set_visible(False)
-
-        axes[1].pie(values, labels=labels, autopct="%1.0f%%", textprops={"fontsize": 8})
-        axes[1].set_title("Theme Distribution", fontsize=10)
-
-        plt.tight_layout()
-        buffer = BytesIO()
-        figure.savefig(buffer, format="png", dpi=160, bbox_inches="tight")
-        plt.close(figure)
-        buffer.seek(0)
-
-        return Image(buffer, width=6.6 * inch, height=2.7 * inch)
+        return story
 
     def _risk_card_table(self, parsed: ParsedIntelligenceReport) -> Table | None:
         cards = top_risks(parsed)

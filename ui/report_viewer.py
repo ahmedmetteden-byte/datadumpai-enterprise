@@ -13,7 +13,6 @@ import streamlit as st
 from core.workspace_navigation import set_workspace_section
 from services.export_service import ExportService
 from services.report_service import ReportService
-from ui.feedback import show_error
 from ui.projects import get_current_project
 from ui.report_downloads import render_premium_downloads
 from ui.report_renderer import render_report_content
@@ -44,6 +43,11 @@ def render_report_viewer() -> None:
 
     try:
         report_text = Path(report["path"]).read_text(encoding="utf-8")
+        report_data = report_service.load_report_data(
+            project["id"],
+            report.get("filename", ""),
+            markdown_text=report_text,
+        )
     except FileNotFoundError:
         st.error("This report file is missing. It may have been deleted.")
         st.session_state.pop("selected_report", None)
@@ -76,20 +80,13 @@ def render_report_viewer() -> None:
         st.write(report["name"])
 
     st.markdown("---")
-    render_report_content(report_text)
+    render_report_content(report_data)
     st.divider()
-
-    source_documents = report.get("source_documents") or []
-    metadata = report_service.get_report_metadata(project["id"], report.get("filename", ""))
-    report_type = metadata.get("report_type") or report.get("name", "Report")
 
     render_premium_downloads(
         project_id=project["id"],
         project_name=project["name"],
-        report_name=report["name"],
-        report_type=report_type,
-        report_text=report_text,
-        source_documents=source_documents,
+        report=report_data,
         key_prefix="viewer",
     )
 

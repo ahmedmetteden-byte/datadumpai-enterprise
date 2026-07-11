@@ -3,6 +3,10 @@ DataDumpAI v1.0
 Application Entry Point
 """
 
+from core.ssl_bootstrap import bootstrap_system_ssl
+
+bootstrap_system_ssl()
+
 import streamlit as st
 
 from config import LAYOUT, PAGE_ICON, PAGE_TITLE, SIDEBAR_STATE, backend_configuration_warnings

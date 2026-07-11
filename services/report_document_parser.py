@@ -13,7 +13,7 @@ from services.report_chart_data import (
     extract_executive_summary_card,
     strip_chart_data,
 )
-from services.report_markdown_renderer import strip_inline_markdown
+from services.report_markdown_renderer import remove_empty_sections, strip_inline_markdown
 
 SECTION_SPLIT_PATTERN = re.compile(r"^(## .+)$", re.MULTILINE)
 TABLE_ROW_PATTERN = re.compile(r"^\|(.+)\|$")
@@ -164,7 +164,7 @@ def parse_intelligence_report(
     """Structure a report for premium export."""
 
     chart_data = extract_chart_data(report_text)
-    body = strip_chart_data(report_text)
+    body = remove_empty_sections(strip_chart_data(report_text))
     summary_card, body = extract_executive_summary_card(body)
 
     sections = _split_sections(body)

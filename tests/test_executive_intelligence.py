@@ -10,6 +10,7 @@ from services.report_chart_data import (
     extract_chart_data,
     extract_executive_summary_card,
     is_intelligence_report,
+    prepare_report_for_output,
     strip_chart_data,
 )
 from ui.report_renderer import _health_gauge_html, enhance_report_markdown
@@ -39,7 +40,7 @@ def test_prompt_includes_new_sections():
     assert "## Cross-Document Intelligence" in prompt
     assert "## Executive Quotations" in prompt
     assert "## Industry Benchmark" in prompt
-    assert "<!-- REPORT_CHARTS" in prompt
+    assert "Do NOT output a REPORT_CHARTS block" in prompt
     assert "🔴" in prompt
 
 
@@ -58,6 +59,22 @@ def test_extract_chart_data_and_strip():
     assert data["health_score"] == 75
     assert "REPORT_CHARTS" not in stripped
     assert is_intelligence_report(report)
+
+
+def test_extract_chart_data_without_underscore():
+    report = (
+        "## Full Report Overview\n\n"
+        "Body text.\n\n"
+        '<!-- REPORTCHARTS\n'
+        '{"topics": [{"label": "Claims", "value": 31}], "health_score": 75}\n'
+        "-->"
+    )
+
+    prepared = prepare_report_for_output(report)
+
+    assert prepared.chart_data["health_score"] == 75
+    assert "REPORTCHARTS" not in prepared.text
+    assert "Body text." in prepared.text
 
 
 def test_extract_executive_summary_card():

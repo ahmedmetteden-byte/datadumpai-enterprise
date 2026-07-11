@@ -8,6 +8,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from io import BytesIO
+from typing import Any
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
@@ -16,6 +17,7 @@ from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
 from config import APP_NAME
+from services.report_chart_export import render_chart_pngs
 from services.report_document_parser import (
     ai_insight_bullets,
     dashboard_metrics,
@@ -218,6 +220,14 @@ def _render_blocks(document: Document, blocks: list[MarkdownBlock]) -> None:
             _add_body_paragraph(document, block.content)
 
 
+def _append_chart_images(document: Document, chart_data: dict[str, Any]) -> None:
+    for title, png_bytes in render_chart_pngs(chart_data):
+        _add_heading(document, title, 2)
+        paragraph = document.add_paragraph()
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        paragraph.add_run().add_picture(BytesIO(png_bytes), width=Inches(6.2))
+
+
 def _cover_page(document: Document, metadata: DocxExportMetadata) -> None:
     title = document.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -282,6 +292,7 @@ def _executive_summary_page(document: Document, parsed) -> None:
 
     _add_heading(document, "Strategic Recommendation", 2)
     _add_body_paragraph(document, strategic_recommendation(parsed) or metrics.get("priority", "—"))
+    _append_chart_images(document, parsed.chart_data)
     document.add_page_break()
 
 

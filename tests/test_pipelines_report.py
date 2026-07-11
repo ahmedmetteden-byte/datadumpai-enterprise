@@ -28,7 +28,7 @@ def test_report_pipeline_generate_and_save(
         project_service=project_service,
     )
 
-    report_text, metadata = pipeline.generate_and_save(
+    report, metadata = pipeline.generate_and_save(
         project=project,
         document_text="Source document text.",
         report_type="Executive Summary",
@@ -39,7 +39,7 @@ def test_report_pipeline_generate_and_save(
         include_recommendations=True,
     )
 
-    assert "Pipeline integration report" in report_text
+    assert "Pipeline integration report" in report.narrative
     assert metadata["filename"] == "executive_summary.md"
 
     reports = ReportService.get_reports(project["id"])
@@ -81,23 +81,23 @@ def test_report_pipeline_regenerate_and_save(
         document_service=document_service,
     )
 
-    report_text, metadata = pipeline.generate_and_save(
+    report, metadata = pipeline.generate_and_save(
         project=project,
         document_text="Original source.",
         report_type="Executive Summary",
         source_documents=["source.txt"],
     )
 
-    assert "Original report" in report_text
+    assert "Original report" in report.narrative
 
-    regenerated_text, updated = pipeline.regenerate_and_save(
+    regenerated, updated = pipeline.regenerate_and_save(
         project=project,
         report=metadata,
     )
 
-    assert "Regenerated report" in regenerated_text
+    assert "Regenerated report" in regenerated.narrative
     assert updated["filename"] == metadata["filename"]
-    assert ReportService.load_report(updated["path"]) == regenerated_text
+    assert ReportService.load_report(updated["path"]) == regenerated.to_markdown()
     assert ai.generate_report.call_count == 2
 
 
@@ -132,7 +132,7 @@ def test_load_document_text_from_selection_combines_all_documents(
     assert "Beta content." in combined["combined_text"]
     assert combined["loaded"] == ["alpha.txt", "beta.txt"]
     assert combined["skipped"] == []
-    assert combined["truncated"] is False
+    assert combined["multi_stage"] is False
 
 
 def test_report_pipeline_generate_without_save(
@@ -149,11 +149,11 @@ def test_report_pipeline_generate_without_save(
         project_service=project_service,
     )
 
-    report_text = pipeline.generate(
+    report = pipeline.generate(
         document_text="Source document text.",
         report_type="Executive Summary",
     )
 
-    assert "Draft only" in report_text
+    assert "Draft only" in report.narrative
     assert ReportService.get_reports(project["id"]) == []
     ai.generate_report.assert_called_once()

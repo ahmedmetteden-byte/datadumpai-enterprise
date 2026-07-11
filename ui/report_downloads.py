@@ -8,13 +8,14 @@ import re
 
 import streamlit as st
 
+from models.report_data import ReportData
 from services.premium_export_service import (
     PremiumExportService,
     ReportExportContext,
     is_presentation_export_available,
 )
 from services.plan_service import PlanService
-from services.report_chart_data import is_intelligence_report
+from services.report_document import report_is_intelligence
 from ui.feedback import show_error
 from ui.plan_upgrade import render_upgrade_prompt
 
@@ -30,15 +31,12 @@ def _build_context(
     *,
     project_id: str,
     project_name: str,
-    report_name: str,
-    report_type: str,
-    report_text: str,
-    source_documents: list[str] | None,
+    report: ReportData,
 ) -> ReportExportContext:
     reporting_period = "Not specified"
     period_match = re.search(
         r"Reporting period\s*\|\s*([^|\n]+)",
-        report_text,
+        report.narrative,
         re.IGNORECASE,
     )
 
@@ -48,10 +46,7 @@ def _build_context(
     return ReportExportContext(
         project_id=project_id,
         project_name=project_name,
-        report_name=report_name,
-        report_type=report_type,
-        report_text=report_text,
-        source_documents=source_documents,
+        report=report,
         reporting_period=reporting_period,
     )
 
@@ -60,10 +55,7 @@ def render_premium_downloads(
     *,
     project_id: str,
     project_name: str,
-    report_name: str,
-    report_type: str,
-    report_text: str,
-    source_documents: list[str] | None = None,
+    report: ReportData,
     key_prefix: str = "report",
 ) -> None:
     """Render consulting-grade download options."""
@@ -71,13 +63,10 @@ def render_premium_downloads(
     context = _build_context(
         project_id=project_id,
         project_name=project_name,
-        report_name=report_name,
-        report_type=report_type,
-        report_text=report_text,
-        source_documents=source_documents,
+        report=report,
     )
 
-    if is_intelligence_report(report_text) and _plan_service().can_use_professional_exports():
+    if report_is_intelligence(report) and _plan_service().can_use_professional_exports():
         st.markdown("#### Download")
         st.caption(
             "Choose a format designed for executives, board packs, or presentations."
@@ -182,7 +171,7 @@ def _render_branded_pdf_download(
         pdf_export = premium_export_service._base.export_pdf(
             project_id=context.project_id,
             report_name=context.report_name,
-            report_text=context.report_text,
+            report=context.report,
         )
     except Exception as exc:
         show_error(exc)
@@ -204,7 +193,7 @@ def _render_basic_downloads(context: ReportExportContext, *, key_prefix: str) ->
         pdf_export = premium_export_service._base.export_pdf(
             project_id=context.project_id,
             report_name=context.report_name,
-            report_text=context.report_text,
+            report=context.report,
         )
         docx_export = premium_export_service.export_docx(context)
         markdown_export = premium_export_service.export_markdown(context)
