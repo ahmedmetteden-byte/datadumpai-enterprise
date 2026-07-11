@@ -46,11 +46,25 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
+      - name: Diagnose compose env (pre-prepare)
+        run: bash .github/scripts/diagnose-ci-compose-env.sh pre-prepare
+
       - name: Prepare CI placeholder .env
-        run: bash .github/scripts/prepare-ci-compose-env.sh
+        run: |
+          set -euxo pipefail
+          bash .github/scripts/prepare-ci-compose-env.sh
+          ls -la .env .env.ci.example
+
+      - name: Diagnose compose env (post-prepare)
+        run: bash .github/scripts/diagnose-ci-compose-env.sh post-prepare
 
       - name: Validate Docker Compose configuration
-        run: docker compose -f docker-compose.yml config --quiet
+        run: |
+          set -euxo pipefail
+          pwd
+          ls -la .env .env.ci.example
+          test -f .env
+          docker compose -f docker-compose.yml config
 
       - name: Validate workflow syntax
         run: |
@@ -77,10 +91,12 @@ jobs:
       - name: Record deployment metadata
         id: meta
         run: |
-          echo "commit_sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-          echo "commit_short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
-          echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-          echo "deploy_ref=${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}" >> "$GITHUB_OUTPUT"
+          {
+            echo "commit_sha=${GITHUB_SHA}"
+            echo "commit_short=$(git rev-parse --short HEAD)"
+            echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "deploy_ref=${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Deploy to production server
         id: ssh_deploy
