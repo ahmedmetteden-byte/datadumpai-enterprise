@@ -4,6 +4,7 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    chromium \
     libgl1 \
     libglib2.0-0 \
     libnss3 \
@@ -22,9 +23,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+ENV CHROME_PATH=/usr/bin/chromium
+
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt \
-    && kaleido_get_chrome
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 

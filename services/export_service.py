@@ -134,22 +134,36 @@ class ExportService:
         body_style: ParagraphStyle,
         heading_style: ParagraphStyle,
     ) -> None:
-        charts = get_export_chart_images(chart_data)
+        chart_export = get_export_chart_images(chart_data)
 
-        if not charts:
+        if not chart_export.images and not chart_export.unavailable_note:
             return
 
         story.append(Paragraph("Visual Analytics", heading_style))
-        self._append_pdf_charts(story, charts, body_style)
+
+        if chart_export.images:
+            self._append_pdf_charts(story, chart_export.images, body_style)
+
+        if chart_export.unavailable_note:
+            story.append(Paragraph(chart_export.unavailable_note, body_style))
 
     def _prepend_docx_charts(self, document: Document, chart_data: dict[str, Any]) -> None:
-        charts = get_export_chart_images(chart_data)
+        chart_export = get_export_chart_images(chart_data)
 
-        if not charts:
+        if not chart_export.images and not chart_export.unavailable_note:
             return
 
         document.add_heading("Visual Analytics", level=2)
-        self._append_docx_charts(document, charts)
+
+        if chart_export.images:
+            self._append_docx_charts(document, chart_export.images)
+
+        if chart_export.unavailable_note:
+            paragraph = document.add_paragraph(chart_export.unavailable_note)
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            for run in paragraph.runs:
+                run.font.size = Pt(10)
+                run.font.color.rgb = RGBColor(0x64, 0x74, 0x8B)
 
     def _render_pdf_block(
         self,

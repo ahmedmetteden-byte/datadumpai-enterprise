@@ -17,7 +17,7 @@ from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
 from config import APP_NAME
-from services.report_chart_export import render_chart_pngs
+from services.export_chart_blocks import get_export_chart_images
 from services.report_document_parser import (
     ai_insight_bullets,
     dashboard_metrics,
@@ -221,11 +221,21 @@ def _render_blocks(document: Document, blocks: list[MarkdownBlock]) -> None:
 
 
 def _append_chart_images(document: Document, chart_data: dict[str, Any]) -> None:
-    for title, png_bytes in render_chart_pngs(chart_data):
-        _add_heading(document, title, 2)
-        paragraph = document.add_paragraph()
-        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        paragraph.add_run().add_picture(BytesIO(png_bytes), width=Inches(6.2))
+    chart_export = get_export_chart_images(chart_data)
+
+    if not chart_export.images and not chart_export.unavailable_note:
+        return
+
+    if chart_export.images:
+        for title, png_bytes in chart_export.images:
+            _add_heading(document, title, 2)
+            paragraph = document.add_paragraph()
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            paragraph.add_run().add_picture(BytesIO(png_bytes), width=Inches(6.2))
+        return
+
+    if chart_export.unavailable_note:
+        _add_body_paragraph(document, chart_export.unavailable_note)
 
 
 def _cover_page(document: Document, metadata: DocxExportMetadata) -> None:

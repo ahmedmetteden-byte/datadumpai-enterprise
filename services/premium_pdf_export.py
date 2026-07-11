@@ -31,7 +31,7 @@ from reportlab.platypus import (
 )
 
 from config import APP_NAME
-from services.report_chart_export import render_chart_pngs
+from services.export_chart_blocks import get_export_chart_images
 from services.report_document_parser import (
     ParsedIntelligenceReport,
     ai_insight_bullets,
@@ -731,9 +731,14 @@ class PremiumPDFBuilder:
         return story
 
     def _chart_story_elements(self, chart_data: dict[str, Any]) -> list[Any]:
+        chart_export = get_export_chart_images(chart_data)
+
+        if not chart_export.images and not chart_export.unavailable_note:
+            return []
+
         story: list[Any] = []
 
-        for title, png_bytes in render_chart_pngs(chart_data):
+        for title, png_bytes in chart_export.images:
             story.append(Paragraph(escape_xml(title), self.styles["subheading"]))
             story.append(
                 Image(
@@ -741,6 +746,15 @@ class PremiumPDFBuilder:
                     width=6.6 * inch,
                     height=2.7 * inch,
                     kind="proportional",
+                )
+            )
+            story.append(Spacer(1, 0.12 * inch))
+
+        if chart_export.unavailable_note:
+            story.append(
+                Paragraph(
+                    escape_xml(chart_export.unavailable_note),
+                    self.styles["caption"],
                 )
             )
             story.append(Spacer(1, 0.12 * inch))
