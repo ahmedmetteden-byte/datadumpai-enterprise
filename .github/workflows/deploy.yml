@@ -1,0 +1,72 @@
+name: Deploy DataDumpAI Enterprise
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Deploy to Production Server
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            set -e
+
+            echo "========================================"
+            echo "Deploying DataDumpAI Enterprise"
+            echo "========================================"
+
+            cd /opt/datadumpai-enterprise
+
+            echo ""
+            echo "Current commit:"
+            git rev-parse --short HEAD
+
+            echo ""
+            echo "Fetching latest code..."
+            git fetch origin
+
+            echo ""
+            echo "Resetting to latest main..."
+            git reset --hard origin/main
+
+            echo ""
+            echo "Building Docker images..."
+            docker compose build
+
+            echo ""
+            echo "Restarting services..."
+            docker compose up -d
+
+            echo ""
+            echo "Waiting for containers..."
+            sleep 20
+
+            echo ""
+            echo "Container status:"
+            docker compose ps
+
+            echo ""
+            echo "Checking Streamlit health..."
+            curl -fs http://127.0.0.1:8501/_stcore/health
+
+            echo ""
+            echo "Checking Webhook health..."
+            curl -fs http://127.0.0.1:8001/health
+
+            echo ""
+            echo "Deployment completed successfully!"
