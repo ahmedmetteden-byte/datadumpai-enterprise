@@ -92,10 +92,10 @@ class ReportService:
         cls,
         project_id: str,
         report_name: str,
-        *,
-        report: ReportData | None = None,
         report_text: str | None = None,
         source_documents: list[str] | None = None,
+        *,
+        report: ReportData | None = None,
         report_data: dict[str, Any] | None = None,
     ) -> dict:
         if report is not None:
@@ -177,10 +177,10 @@ class ReportService:
         cls,
         project_id: str,
         filename: str,
-        *,
-        report: ReportData | None = None,
         report_text: str | None = None,
         source_documents: list[str] | None = None,
+        *,
+        report: ReportData | None = None,
         report_data: dict[str, Any] | None = None,
     ) -> dict:
         if report is not None:
