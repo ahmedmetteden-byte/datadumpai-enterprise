@@ -27,6 +27,7 @@ from services.executive_report_prompt import (
 )
 from services.full_report_prompt import build_full_report_prompt, is_full_report
 from services.report_assembler import canonical_metrics_prompt
+from services.report_section_templates import SectionPlan
 from models.report_data import ReportData
 
 load_dotenv()
@@ -71,8 +72,18 @@ class AIService:
             document_count = document_text.count("=== SOURCE DOCUMENT:")
 
         report_context = report_context or {}
+        section_plan = None
+        include_theme_metrics = True
+
+        if report_data is not None and report_data.metadata.get("section_plan"):
+            section_plan = SectionPlan.from_dict(report_data.metadata["section_plan"])
+            include_theme_metrics = section_plan.include_canonical_theme_metrics
+
         metrics_section = (
-            canonical_metrics_prompt(report_data)
+            canonical_metrics_prompt(
+                report_data,
+                include_theme_metrics=include_theme_metrics,
+            )
             if include_charts and report_data is not None
             else ""
         )
@@ -95,6 +106,7 @@ class AIService:
                 source_document_count=document_count,
                 report_context=report_context,
                 canonical_metrics_section=metrics_section,
+                section_plan=section_plan,
             )
             max_output_tokens = AI_FULL_REPORT_MAX_OUTPUT_TOKENS
         elif (
@@ -113,6 +125,7 @@ class AIService:
                 source_document_count=document_count,
                 report_context=report_context,
                 canonical_metrics_section=metrics_section,
+                section_plan=section_plan,
             )
             max_output_tokens = AI_INTELLIGENCE_REPORT_MAX_OUTPUT_TOKENS
         else:

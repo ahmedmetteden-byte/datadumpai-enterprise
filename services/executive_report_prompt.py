@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from services.report_section_templates import SectionPlan, build_intelligence_structure_prompt
+
 INTELLIGENCE_REPORT_TYPES = frozenset(
     {
         "Executive Summary",
@@ -39,6 +41,7 @@ def build_executive_report_prompt(
     source_document_count: int,
     report_context: dict[str, Any],
     canonical_metrics_section: str = "",
+    section_plan: SectionPlan | dict[str, Any] | None = None,
 ) -> str:
     """Return the user prompt for an executive intelligence report."""
 
@@ -71,6 +74,14 @@ from the canonical metrics above. Do NOT output a REPORT_CHARTS block or invent
 chart values.
 """
 
+    resolved_plan = (
+        section_plan
+        if isinstance(section_plan, SectionPlan)
+        else SectionPlan.from_dict(section_plan)
+        if section_plan
+        else None
+    )
+
     if not include_recommendations:
         recommendations_block = ""
 
@@ -78,9 +89,36 @@ chart values.
         charts_block = ""
         canonical_metrics_section = ""
 
+    if resolved_plan and not resolved_plan.include_visual_summary:
+        charts_block = ""
+
+    if resolved_plan and not resolved_plan.include_canonical_theme_metrics:
+        canonical_metrics_section = ""
+
     metrics_section = canonical_metrics_section.strip()
     if metrics_section:
         metrics_section = f"\n{metrics_section}\n"
+
+    cross_document_rules = ""
+    if resolved_plan and not resolved_plan.include_cross_document_intelligence:
+        cross_document_rules = (
+            "- Do NOT create a Cross-Document Intelligence section or theme-frequency statements.\n"
+        )
+
+    structure_block = (
+        build_intelligence_structure_prompt(resolved_plan)
+        if resolved_plan
+        else _legacy_intelligence_structure(
+            source_document_count=source_document_count,
+            has_prior=has_prior,
+            include_charts=include_charts,
+            recommendations_block=recommendations_block,
+            charts_block=charts_block,
+        )
+    )
+
+    if resolved_plan and recommendations_block:
+        structure_block = f"{structure_block}\n\n{recommendations_block.strip()}"
 
     return f"""
 Create a professional {report_type} using DataDumpAI's Executive Intelligence format.
@@ -103,12 +141,31 @@ RULES
 - Every major claim needs evidence from the supplied sources.
 - Assign confidence scores (0–100%) based on how often and how clearly sources support the claim.
 - Rank findings by executive importance: Critical, High, Medium.
-- Quantify recurring themes as percentages that sum to roughly 100%.
 - Recommendations must be specific and actionable — not generic advice.
 - Use markdown only for the main report. Do not wrap the report body in code fences.
-- Quantify cross-document patterns as "X of {source_document_count} documents" when supportable.
 - Use status icons: 🔴 Critical, 🟠 High, 🟡 Medium/Cautious, 🟢 Positive/Opportunity.
+{cross_document_rules}
+{structure_block}
 
+{prior_section}
+SOURCE MATERIAL
+===============================
+
+{document_text}
+"""
+
+
+def _legacy_intelligence_structure(
+    *,
+    source_document_count: int,
+    has_prior: bool,
+    include_charts: bool,
+    recommendations_block: str,
+    charts_block: str,
+) -> str:
+    """Preserve the original static template when no section plan is supplied."""
+
+    return f"""
 REQUIRED REPORT STRUCTURE (use these exact ## headings in order)
 
 ## {INTELLIGENCE_DASHBOARD_TITLE}
@@ -208,10 +265,4 @@ If not supportable, state that clearly.
 ## Detailed Narrative
 Executive summary prose, analysis, risks, and opportunities in full paragraphs.
 Reference sources inline where helpful.
-
-{prior_section}
-SOURCE MATERIAL
-===============================
-
-{document_text}
 """

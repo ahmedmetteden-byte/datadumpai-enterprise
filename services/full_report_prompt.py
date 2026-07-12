@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from services.report_section_templates import SectionPlan, build_full_report_structure_prompt
+
 FULL_REPORT_TYPE = "Full Report"
 
 
@@ -23,6 +25,7 @@ def build_full_report_prompt(
     source_document_count: int,
     report_context: dict[str, Any],
     canonical_metrics_section: str = "",
+    section_plan: SectionPlan | dict[str, Any] | None = None,
 ) -> str:
     """Return the user prompt for a comprehensive multi-document period rollup."""
 
@@ -63,9 +66,37 @@ chart values.
         charts_block = ""
         canonical_metrics_section = ""
 
+    resolved_plan = (
+        section_plan
+        if isinstance(section_plan, SectionPlan)
+        else SectionPlan.from_dict(section_plan)
+        if section_plan
+        else None
+    )
+
+    if resolved_plan and not resolved_plan.include_visual_summary:
+        charts_block = ""
+
+    if resolved_plan and not resolved_plan.include_canonical_theme_metrics:
+        canonical_metrics_section = ""
+
     metrics_section = canonical_metrics_section.strip()
     if metrics_section:
         metrics_section = f"\n{metrics_section}\n"
+
+    structure_block = (
+        build_full_report_structure_prompt(resolved_plan)
+        if resolved_plan
+        else _legacy_full_report_structure(
+            reporting_period=reporting_period,
+            source_document_count=source_document_count,
+            recommendations_block=recommendations_block,
+            charts_block=charts_block,
+        )
+    )
+
+    if resolved_plan and recommendations_block:
+        structure_block = f"{structure_block}\n\n{recommendations_block.strip()}"
 
     return f"""
 Create a comprehensive **Full Report** — a period rollup that synthesizes multiple
@@ -92,12 +123,29 @@ SOURCE DOCUMENT MANIFEST
 RULES
 - Never invent facts, figures, dates, or document names.
 - Infer the reporting period from document names, dates, and content when possible.
-- Show how themes, risks, and metrics evolved across the document set.
-- Quantify recurring themes as "X of {source_document_count} documents" when supportable.
-- Compare earlier vs later documents in the set when a time sequence is evident.
+- Show how themes, risks, and metrics evolved across the document set when multiple periods exist.
 - Use status icons: 🔴 Critical, 🟠 High, 🟡 Medium/Cautious, 🟢 Positive/Opportunity.
 - Use markdown only. Do not wrap the report body in code fences.
 
+{structure_block}
+
+{prior_section}
+
+SOURCE MATERIAL
+===============================
+
+{document_text}
+"""
+
+
+def _legacy_full_report_structure(
+    *,
+    reporting_period: str,
+    source_document_count: int,
+    recommendations_block: str,
+    charts_block: str,
+) -> str:
+    return f"""
 REQUIRED REPORT STRUCTURE (use these exact ## headings in order)
 
 ## Full Report Overview
@@ -153,14 +201,7 @@ Include 2–4 powerful quotes from across the source documents:
 > "Exact quote."
 > — *Source: filename*
 
-{prior_section}
-
 {recommendations_block}
 
 {charts_block}
-
-SOURCE MATERIAL
-===============================
-
-{document_text}
 """

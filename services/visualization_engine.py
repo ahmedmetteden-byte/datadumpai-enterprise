@@ -315,7 +315,7 @@ def _combined_text(report_data: ReportData, document_text: str = "") -> str:
     for key, value in report_data.metrics.items():
         parts.append(f"{key} {value}")
 
-    return "\n".join(part for part in parts if part).lower()
+    return "\n".join(str(part) for part in parts if part).lower()
 
 
 def classify_report_intent(user_report_type: str) -> ReportIntent:

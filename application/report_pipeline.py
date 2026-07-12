@@ -25,6 +25,8 @@ from services.executive_report_context import ExecutiveReportContextBuilder
 from services.plan_service import PlanService
 from services.report_document import compose_report_data
 from services.report_chunk_processor import process_source_documents
+from services.full_report_prompt import is_full_report
+from services.report_section_templates import build_report_section_plan
 from models.report_data import ReportData
 from core.workspace_context import QUICK_REPORT_NAME, QUICK_REPORT_PROJECT_ID, is_quick_report_workspace
 
@@ -276,6 +278,21 @@ class ReportPipeline:
             source_document_count=source_document_count,
         )
 
+        report_format = "full_report" if is_full_report(report_type) else "intelligence"
+        section_plan = build_report_section_plan(
+            report_data,
+            user_report_type=report_type,
+            document_text=document_text,
+            report_context=report_context,
+            include_charts=charts_enabled,
+            source_document_count=source_document_count,
+            report_format=report_format,
+        )
+        report_data.metadata = {
+            **report_data.metadata,
+            "section_plan": section_plan.to_dict(),
+        }
+
         narrative = self._ai_service.generate_report(
             document_text=narrative_input,
             report_type=report_type,
@@ -286,7 +303,7 @@ class ReportPipeline:
             source_document_count=source_document_count,
             report_context=report_context,
             use_intelligence_format=intelligence_format,
-            report_data=report_data if charts_enabled else None,
+            report_data=report_data,
         )
 
         report = compose_report_data(
@@ -427,6 +444,21 @@ class ReportPipeline:
             source_document_count=len(load_result["loaded"]),
         )
 
+        report_format = "full_report" if is_full_report(report_type) else "intelligence"
+        section_plan = build_report_section_plan(
+            report_data,
+            user_report_type=report_type,
+            document_text=document_text,
+            report_context=report_context,
+            include_charts=charts_enabled,
+            source_document_count=len(load_result["loaded"]),
+            report_format=report_format,
+        )
+        report_data.metadata = {
+            **report_data.metadata,
+            "section_plan": section_plan.to_dict(),
+        }
+
         narrative = self._ai_service.generate_report(
             document_text=narrative_input,
             report_type=report_type,
@@ -437,7 +469,7 @@ class ReportPipeline:
             source_document_count=len(load_result["loaded"]),
             report_context=report_context,
             use_intelligence_format=intelligence_format,
-            report_data=report_data if charts_enabled else None,
+            report_data=report_data,
         )
 
         updated_report = compose_report_data(

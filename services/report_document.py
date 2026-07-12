@@ -14,6 +14,11 @@ from services.report_chart_data import (
     prepare_report_for_output,
     strip_chart_data,
 )
+from services.full_report_prompt import is_full_report
+from services.report_section_templates import (
+    build_report_section_plan,
+    filter_report_narrative,
+)
 from services.visualization_engine import apply_visualizations
 
 
@@ -49,10 +54,41 @@ def compose_report_data(
         citations=list(base.citations),
     )
 
-    return apply_visualizations(
+    enriched = apply_visualizations(
         composed,
         user_report_type=report_type,
+        document_text=cleaned_narrative,
         include_charts=include_charts,
+    )
+
+    report_format = "full_report" if is_full_report(report_type) else "intelligence"
+    section_plan = build_report_section_plan(
+        enriched,
+        user_report_type=report_type,
+        document_text=cleaned_narrative,
+        report_context=enriched.metadata,
+        include_charts=include_charts,
+        source_document_count=len(enriched.source_documents) or None,
+        report_format=report_format,
+    )
+    filtered_narrative = filter_report_narrative(enriched.narrative, section_plan)
+
+    return ReportData(
+        report_type=enriched.report_type,
+        title=enriched.title,
+        narrative=filtered_narrative,
+        metadata={
+            **enriched.metadata,
+            "section_plan": section_plan.to_dict(),
+        },
+        metrics=dict(enriched.metrics),
+        charts=dict(enriched.charts),
+        kpis=dict(enriched.kpis),
+        source_documents=list(enriched.source_documents),
+        executive_summary=dict(enriched.executive_summary),
+        sections=list(enriched.sections),
+        recommendations=list(enriched.recommendations),
+        citations=list(enriched.citations),
     )
 
 
