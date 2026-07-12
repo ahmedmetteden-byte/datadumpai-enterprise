@@ -28,6 +28,10 @@ AI_WORKSPACE_PROMPT_KEY = "ai_workspace_prompt"
 AI_WORKSPACE_MESSAGES_KEY = "ai_workspace_messages"
 AI_WORKSPACE_INSTRUCTION_KEY = "ai_workspace_instruction"
 
+PRIMARY_ACTION_IDS: frozenset[str] = frozenset(
+    {"executive_report", "summarize", "board_pack", "compare"}
+)
+
 
 @dataclass(frozen=True)
 class AIWorkspaceAction:
@@ -193,44 +197,95 @@ def _handle_prompt_submit(prompt: str) -> None:
         )
 
 
-def _render_action_chips(on_action: Callable[[AIWorkspaceAction], None]) -> None:
-    st.markdown('<div class="dde-ai-action-grid">', unsafe_allow_html=True)
-    columns = st.columns(3)
-    for index, action in enumerate(AI_WORKSPACE_ACTIONS):
-        with columns[index % 3]:
-            label = f"{action.icon} {action.label}"
+def _render_action_buttons(
+    actions: tuple[AIWorkspaceAction, ...],
+    on_action: Callable[[AIWorkspaceAction], None],
+    *,
+    key_prefix: str,
+) -> None:
+    if not actions:
+        return
+
+    st.markdown('<div class="dde-ai-action-row">', unsafe_allow_html=True)
+    columns = st.columns(len(actions))
+    for column, action in zip(columns, actions):
+        with column:
+            label = action.label
             if action.status == "coming_soon":
                 st.button(
                     label,
-                    key=f"ai_action_{action.id}",
+                    key=f"{key_prefix}_{action.id}",
                     use_container_width=True,
                     disabled=True,
                     help="Coming soon",
                 )
             elif st.button(
                 label,
-                key=f"ai_action_{action.id}",
+                key=f"{key_prefix}_{action.id}",
                 use_container_width=True,
+                type="secondary",
             ):
                 on_action(action)
                 st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
 
+def _render_prompt_hero(on_action: Callable[[AIWorkspaceAction], None]) -> None:
+    st.markdown(
+        """
+<div class="dde-ai-prompt-hero">
+<div class="dde-ai-prompt-title">What would you like to do today?</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+    prompt_value = st.session_state.get(AI_WORKSPACE_PROMPT_KEY, "")
+
+    with st.form("ai_workspace_prompt_form", clear_on_submit=False):
+        input_col, send_col = st.columns([8, 1], gap="small", vertical_alignment="bottom")
+
+        with input_col:
+            prompt = st.text_input(
+                "What would you like DataDumpAI to do?",
+                value=prompt_value,
+                placeholder="Summarize this document...",
+                key="ai_workspace_prompt_input",
+                label_visibility="collapsed",
+            )
+
+        with send_col:
+            st.markdown('<div class="dde-ai-send-wrap">', unsafe_allow_html=True)
+            submitted = st.form_submit_button(
+                "+",
+                type="primary",
+                use_container_width=True,
+                help="Run request",
+            )
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        if submitted:
+            st.session_state[AI_WORKSPACE_PROMPT_KEY] = prompt
+            _handle_prompt_submit(prompt)
+            st.rerun()
+
+    primary_actions = tuple(
+        action for action in AI_WORKSPACE_ACTIONS if action.id in PRIMARY_ACTION_IDS
+    )
+    _render_action_buttons(primary_actions, on_action, key_prefix="ai_action_primary")
+
+    secondary_actions = tuple(
+        action
+        for action in AI_WORKSPACE_ACTIONS
+        if action.id not in PRIMARY_ACTION_IDS and action.status != "coming_soon"
+    )
+    if secondary_actions:
+        _render_action_buttons(secondary_actions, on_action, key_prefix="ai_action_secondary")
+
+
 def _render_conversation() -> None:
     messages = st.session_state.get(AI_WORKSPACE_MESSAGES_KEY, [])
     if not messages:
-        st.markdown(
-            """
-<div class="dde-ai-empty-state">
-<div class="dde-ai-empty-title">What would you like to create?</div>
-<div class="dde-ai-empty-copy">
-Ask in plain language, pick a quick action, or open Advanced Options for full control.
-</div>
-</div>
-""",
-            unsafe_allow_html=True,
-        )
         return
 
     st.markdown('<div class="dde-ai-thread">', unsafe_allow_html=True)
@@ -252,65 +307,28 @@ def render_ai_workspace() -> None:
     user_projects = get_user_projects()
 
     if workspace.get("is_pending"):
-        st.markdown("## AI Workspace")
         st.info(
             "Select **Project** in the sidebar and create your project to start working "
             "with your documents."
         )
         return
 
-    st.markdown("## AI Workspace")
-    if workspace.get("is_quick_report"):
-        st.caption(
-            "Ask questions, generate reports, and run analysis on your documents. "
-            "You are in **Quick Report** mode."
-        )
-    else:
-        st.caption(
-            f"Ask questions, generate reports, and run analysis inside "
-            f"**{workspace['name']}**."
-        )
-
-    _render_action_chips(_apply_action)
+    _render_prompt_hero(_apply_action)
     _render_conversation()
-
-    st.markdown('<div class="dde-ai-composer">', unsafe_allow_html=True)
-    prompt = st.text_area(
-        "Ask DataDumpAI",
-        value=st.session_state.get(AI_WORKSPACE_PROMPT_KEY, ""),
-        placeholder=(
-            "e.g. Summarize this document in one page. "
-            "Generate an executive report. Compare these two reports."
-        ),
-        key="ai_workspace_prompt_input",
-        height=96,
-        label_visibility="collapsed",
-    )
-
-    send_col, clear_col = st.columns([3, 1])
-    with send_col:
-        if st.button(
-            "Run request",
-            type="primary",
-            use_container_width=True,
-            key="ai_workspace_send",
-        ):
-            st.session_state[AI_WORKSPACE_PROMPT_KEY] = prompt
-            _handle_prompt_submit(prompt)
-            st.rerun()
-    with clear_col:
-        if st.button("Clear", use_container_width=True, key="ai_workspace_clear"):
-            st.session_state.pop(AI_WORKSPACE_PROMPT_KEY, None)
-            st.session_state.pop(AI_WORKSPACE_INSTRUCTION_KEY, None)
-            st.session_state[AI_WORKSPACE_MESSAGES_KEY] = []
-            st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
 
     instruction = st.session_state.get(AI_WORKSPACE_INSTRUCTION_KEY)
     if instruction:
-        st.caption(f"Active request: _{instruction}_")
+        clear_col, caption_col = st.columns([1, 5])
+        with clear_col:
+            if st.button("Clear", key="ai_workspace_clear"):
+                st.session_state.pop(AI_WORKSPACE_PROMPT_KEY, None)
+                st.session_state.pop(AI_WORKSPACE_INSTRUCTION_KEY, None)
+                st.session_state[AI_WORKSPACE_MESSAGES_KEY] = []
+                st.rerun()
+        with caption_col:
+            st.caption(f"Active request: _{instruction}_")
 
-    with st.expander("Advanced Options", expanded=False):
+    with st.expander("Advanced options", expanded=False):
         st.caption(
             "Upload documents, choose sources, pick report types, and configure "
             "generation — all existing capabilities live here."
