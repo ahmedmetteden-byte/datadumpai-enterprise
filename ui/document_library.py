@@ -49,7 +49,7 @@ def _init_attach_upload_state() -> None:
         st.session_state[AI_WORKSPACE_ATTACH_KEY] = 0
 
 
-def _process_uploaded_files(
+def process_workspace_uploads(
     uploaded_files: list,
     workspace: dict,
     *,
@@ -121,35 +121,6 @@ def _preview_document(project_id: str, filename: str) -> str:
     return text
 
 
-def render_compact_document_attach() -> None:
-    """Compact attach control shown above the AI Workspace prompt."""
-
-    initialize_projects()
-
-    if is_project_pending():
-        return
-
-    workspace = get_active_workspace()
-    _init_attach_upload_state()
-
-    st.markdown('<div class="dde-ai-attach-row-marker"></div>', unsafe_allow_html=True)
-    uploaded_files = st.file_uploader(
-        "Attach documents",
-        type=SUPPORTED_TYPES,
-        accept_multiple_files=True,
-        key=f"ai_workspace_attach_{st.session_state[AI_WORKSPACE_ATTACH_KEY]}",
-        help="Upload documents to use when generating reports",
-    )
-
-    if uploaded_files:
-        _process_uploaded_files(
-            uploaded_files,
-            workspace,
-            batch_key=AI_WORKSPACE_ATTACH_BATCH_KEY,
-            uploader_state_key=AI_WORKSPACE_ATTACH_KEY,
-        )
-
-
 def render_document_upload() -> None:
     """Upload documents into the active Quick Report or project workspace."""
 
@@ -170,7 +141,7 @@ def render_document_upload() -> None:
         uploaded_files = _render_upload_zone()
 
     if uploaded_files:
-        _process_uploaded_files(
+        process_workspace_uploads(
             uploaded_files,
             workspace,
             batch_key=COMPLETED_UPLOAD_BATCH_KEY,
@@ -200,13 +171,15 @@ def render_document_library() -> None:
     if workspace.get("is_quick_report"):
         st.caption(
             "Quick Report files uploaded without a project. "
-            "Upload new documents from **AI Workspace** or your **Dump Box** while Quick Report is selected."
+            "Attach more from **AI Workspace** or upload here."
         )
     else:
         st.caption(
             f"Files uploaded to **{workspace['name']}**. "
-            "Upload new documents from **AI Workspace** or your **Dump Box** while this project is selected."
+            "Upload and manage documents here for use in **AI Workspace**."
         )
+
+    render_document_upload()
 
     documents = _document_service().get_documents(workspace["id"])
 
@@ -217,7 +190,7 @@ def render_document_library() -> None:
             icon="📁",
             title="No documents yet",
             message=(
-                "Upload your first file from **AI Workspace** or your **Dump Box** while "
+                "Upload your first file above while "
                 f"{'Quick Report' if workspace.get('is_quick_report') else workspace['name']} "
                 "is selected in the sidebar."
             ),

@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 from services.report_section_templates import SectionPlan, build_intelligence_structure_prompt
+from services.prompt_guidance import additional_guidance_section
 
 INTELLIGENCE_REPORT_TYPES = frozenset(
     {
@@ -147,7 +148,7 @@ RULES
 {cross_document_rules}
 {structure_block}
 
-{prior_section}
+{prior_section}{additional_guidance_section(report_context)}
 SOURCE MATERIAL
 ===============================
 

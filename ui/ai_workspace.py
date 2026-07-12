@@ -1,5 +1,5 @@
 """
-AI Workspace — conversational front-end for report and analysis actions.
+AI Workspace — conversational front-end for knowledge-driven analysis.
 
 Routes natural-language requests to existing report-generation capabilities.
 The section id remains ``documents`` for backward-compatible routing.
@@ -8,111 +8,57 @@ The section id remains ``documents`` for backward-compatible routing.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Callable
 
 import streamlit as st
 
-from ui.document_library import render_compact_document_attach, render_document_upload
-from ui.projects import (
-    get_active_workspace,
-    get_user_projects,
-    initialize_projects,
+from ui.document_library import (
+    AI_WORKSPACE_ATTACH_BATCH_KEY,
+    AI_WORKSPACE_ATTACH_KEY,
+    SUPPORTED_TYPES,
+    process_workspace_uploads,
 )
-from ui.report_generation import (
-    render_document_source_selection,
-    render_documents_page_generation,
+from ui.projects import get_active_workspace, initialize_projects
+from ui.ai_workspace_runtime import (
+    AIWorkspaceSettings,
+    AUTO_REPORT_TYPE,
+    LANGUAGES,
+    OUTPUT_LENGTHS,
+    TONES,
+    WorkspaceContextSummary,
+    available_report_type_options,
+    execute_workspace_request,
+    list_workspace_context_filenames,
+    summarize_workspace_context,
 )
 
 AI_WORKSPACE_PROMPT_KEY = "ai_workspace_prompt"
 AI_WORKSPACE_MESSAGES_KEY = "ai_workspace_messages"
-AI_WORKSPACE_INSTRUCTION_KEY = "ai_workspace_instruction"
+AI_WORKSPACE_ATTACH_OPEN_KEY = "ai_workspace_attach_open"
+AI_WORKSPACE_SETTINGS_PREFIX = "ai_workspace_setting_"
+AI_WORKSPACE_LAST_INFERENCE_KEY = "ai_workspace_last_inference"
 
-PRIMARY_ACTION_IDS: frozenset[str] = frozenset(
-    {"executive_report", "summarize", "board_pack", "compare"}
+PROMPT_HEADLINE = "What would you like DataDumpAI to do?"
+PROMPT_SUBHEAD = "Ask anything about your documents — summarize, compare, extract, or generate."
+
+PROMPT_EXAMPLES: tuple[str, ...] = (
+    "Summarize this annual report",
+    "Generate a Board paper",
+    "Extract all KPIs",
+    "Create a risk register",
+    "Compare this with last year's report",
+    "Build an M&E framework",
+    "Produce a PowerPoint presentation",
 )
 
-
-@dataclass(frozen=True)
-class AIWorkspaceAction:
-    """First-class action that can grow without another navigation redesign."""
-
-    id: str
-    label: str
-    icon: str
-    prompt: str
-    report_type: str | None = None
-    status: str = "available"  # available | coming_soon
-
-
-AI_WORKSPACE_ACTIONS: tuple[AIWorkspaceAction, ...] = (
-    AIWorkspaceAction(
-        "executive_report",
-        "Executive Report",
-        "📊",
-        "Generate an executive report.",
-        "Executive Summary",
-    ),
-    AIWorkspaceAction(
-        "summarize",
-        "Summarize",
-        "📄",
-        "Summarize this document in one page.",
-        "Executive Summary",
-    ),
-    AIWorkspaceAction(
-        "board_pack",
-        "Board Pack",
-        "📑",
-        "Generate a board-ready report.",
-        "Board Report",
-    ),
-    AIWorkspaceAction(
-        "compare",
-        "Compare",
-        "⚖️",
-        "Compare these two reports.",
-        "Full Report",
-    ),
-    AIWorkspaceAction(
-        "me_framework",
-        "M&E Framework",
-        "📐",
-        "Build a monitoring and evaluation framework.",
-        "Strategic Planning Report",
-    ),
-    AIWorkspaceAction(
-        "visual_insights",
-        "Visual Insights",
-        "📈",
-        "Explore visual insights for this workspace.",
-        None,
-        status="coming_soon",
-    ),
-    AIWorkspaceAction(
-        "swot",
-        "SWOT Analysis",
-        "🎯",
-        "Generate a SWOT analysis.",
-        None,
-        status="coming_soon",
-    ),
-    AIWorkspaceAction(
-        "risk_register",
-        "Risk Register",
-        "🛡️",
-        "Build a risk register.",
-        "Risk Assessment Report",
-    ),
-    AIWorkspaceAction(
-        "presentation",
-        "Presentation",
-        "📽️",
-        "Create a presentation deck.",
-        None,
-        status="coming_soon",
-    ),
-)
+SETTING_DEFAULTS: dict[str, object] = {
+    "report_type": AUTO_REPORT_TYPE,
+    "output_length": "Standard",
+    "tone": "Professional",
+    "language": "English",
+    "include_charts": True,
+    "custom_instructions": "",
+}
 
 _INTENT_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bexecutive\b", re.I), "Executive Summary"),
@@ -130,7 +76,33 @@ _INTENT_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bone page\b", re.I), "Executive Summary"),
     (re.compile(r"\bfull report\b", re.I), "Full Report"),
     (re.compile(r"\bdashboard\b", re.I), "Executive Intelligence Dashboard"),
+    (re.compile(r"\bkpis?\b|\bkey performance\b", re.I), "Management Report"),
+    (re.compile(r"\bswot\b", re.I), "Strategic Planning Report"),
+    (re.compile(r"\brisk register\b", re.I), "Risk Assessment Report"),
 )
+
+
+def _excluded_state_key(workspace_id: str) -> str:
+    return f"ai_workspace_excluded_{workspace_id}"
+
+
+def get_excluded_filenames(workspace_id: str) -> set[str]:
+    return set(st.session_state.get(_excluded_state_key(workspace_id), []))
+
+
+def exclude_filename(workspace_id: str, filename: str) -> None:
+    excluded = get_excluded_filenames(workspace_id)
+    excluded.add(filename)
+    st.session_state[_excluded_state_key(workspace_id)] = sorted(excluded)
+
+
+def active_context_filenames(workspace: dict) -> list[str]:
+    excluded = get_excluded_filenames(workspace["id"])
+    return [
+        filename
+        for filename in list_workspace_context_filenames(workspace)
+        if filename not in excluded
+    ]
 
 
 def parse_prompt_intent(prompt: str) -> tuple[str | None, str]:
@@ -147,178 +119,287 @@ def parse_prompt_intent(prompt: str) -> tuple[str | None, str]:
     return None, cleaned
 
 
+def _init_settings_state() -> None:
+    for key, value in SETTING_DEFAULTS.items():
+        state_key = f"{AI_WORKSPACE_SETTINGS_PREFIX}{key}"
+        if state_key not in st.session_state:
+            st.session_state[state_key] = value
+
+
+def _read_settings() -> AIWorkspaceSettings:
+    _init_settings_state()
+    return AIWorkspaceSettings(
+        report_type_override=st.session_state[f"{AI_WORKSPACE_SETTINGS_PREFIX}report_type"],
+        output_length=st.session_state[f"{AI_WORKSPACE_SETTINGS_PREFIX}output_length"],
+        tone=st.session_state[f"{AI_WORKSPACE_SETTINGS_PREFIX}tone"],
+        language=st.session_state[f"{AI_WORKSPACE_SETTINGS_PREFIX}language"],
+        include_charts=bool(
+            st.session_state[f"{AI_WORKSPACE_SETTINGS_PREFIX}include_charts"]
+        ),
+        custom_instructions=st.session_state[
+            f"{AI_WORKSPACE_SETTINGS_PREFIX}custom_instructions"
+        ],
+    )
+
+
 def _append_message(role: str, content: str) -> None:
     messages = list(st.session_state.get(AI_WORKSPACE_MESSAGES_KEY, []))
     messages.append({"role": role, "content": content})
     st.session_state[AI_WORKSPACE_MESSAGES_KEY] = messages[-12:]
 
 
-def _apply_action(action: AIWorkspaceAction) -> None:
-    st.session_state[AI_WORKSPACE_PROMPT_KEY] = action.prompt
-    st.session_state[AI_WORKSPACE_INSTRUCTION_KEY] = action.prompt
-    if action.report_type:
-        st.session_state["selected_report_type"] = action.report_type
-    _append_message("user", action.prompt)
-    if action.status == "coming_soon":
-        _append_message(
-            "assistant",
-            f"**{action.label}** is on the roadmap. For now, use an available action "
-            "or describe your request below — report generation is fully supported.",
-        )
-    else:
-        _append_message(
-            "assistant",
-            f"Ready to **{action.label.lower()}**. Select documents in Advanced Options "
-            "if needed, then run your request.",
-        )
-
-
-def _handle_prompt_submit(prompt: str) -> None:
+def _handle_prompt_submit(prompt: str, workspace: dict, context_files: list[str]) -> None:
     cleaned = prompt.strip()
     if not cleaned:
         return
 
-    report_type, instruction = parse_prompt_intent(cleaned)
-    st.session_state[AI_WORKSPACE_INSTRUCTION_KEY] = instruction
+    settings = _read_settings()
+    prior_messages = list(st.session_state.get(AI_WORKSPACE_MESSAGES_KEY, []))
+
     _append_message("user", cleaned)
 
-    if report_type:
-        st.session_state["selected_report_type"] = report_type
-        _append_message(
-            "assistant",
-            f"Understood. I'll prepare a **{report_type}** based on your request. "
-            "Confirm document selection in **Advanced Options**, then generate.",
-        )
-    else:
-        _append_message(
-            "assistant",
-            "Got it. Open **Advanced Options** to choose documents and a report type, "
-            "or try a quick action above.",
-        )
+    result = execute_workspace_request(
+        prompt=cleaned,
+        workspace=workspace,
+        settings=settings,
+        context_filenames=context_files,
+        conversation_messages=prior_messages,
+    )
+
+    if result.inference:
+        st.session_state[AI_WORKSPACE_LAST_INFERENCE_KEY] = {
+            "display_label": result.inference.display_label,
+            "confidence": result.inference.confidence,
+            "inferred": result.inference.inferred,
+        }
+
+    _append_message("assistant", result.message)
+
+    if result.success:
+        st.session_state[AI_WORKSPACE_ATTACH_OPEN_KEY] = False
 
 
-def _render_action_buttons(
-    actions: tuple[AIWorkspaceAction, ...],
-    on_action: Callable[[AIWorkspaceAction], None],
-    *,
-    key_prefix: str,
-) -> None:
-    if not actions:
-        return
-
-    st.markdown('<div class="dde-ai-action-row">', unsafe_allow_html=True)
-    columns = st.columns(len(actions))
-    for column, action in zip(columns, actions):
-        with column:
-            label = action.label
-            if action.status == "coming_soon":
-                st.button(
-                    label,
-                    key=f"{key_prefix}_{action.id}",
-                    use_container_width=True,
-                    disabled=True,
-                    help="Coming soon",
-                )
-            elif st.button(
-                label,
-                key=f"{key_prefix}_{action.id}",
-                use_container_width=True,
-                type="secondary",
-            ):
-                on_action(action)
-                st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
+def _safe_chip_key(filename: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_]", "_", filename)
 
 
-def _render_run_request_button_styles() -> None:
-  """Style the prompt form submit button to match platform primary blue."""
-
-  st.markdown(
-    """
+def _render_workspace_styles() -> None:
+    st.markdown(
+        """
 <style>
-[data-testid="stForm"]:has(input[aria-label="What would you like DataDumpAI to do?"])
+[data-testid="stForm"]:has(input[aria-label="AI Workspace prompt"])
 [data-testid="stFormSubmitButton"] button {
     background: #2563EB !important;
     border: 2px solid #1D4ED8 !important;
     color: #FFFFFF !important;
     box-shadow: 0 8px 20px rgba(37, 99, 235, 0.28) !important;
-    min-height: 38px;
-    font-size: 22px;
-    line-height: 1;
-    padding: 0;
 }
-[data-testid="stForm"]:has(input[aria-label="What would you like DataDumpAI to do?"])
+[data-testid="stForm"]:has(input[aria-label="AI Workspace prompt"])
 [data-testid="stFormSubmitButton"] button:hover {
     background: #1D4ED8 !important;
     border-color: #1E40AF !important;
-    color: #FFFFFF !important;
 }
-[data-testid="stForm"]:has(input[aria-label="What would you like DataDumpAI to do?"])
+[data-testid="stForm"]:has(input[aria-label="AI Workspace prompt"])
 [data-testid="stFormSubmitButton"] button p,
-[data-testid="stForm"]:has(input[aria-label="What would you like DataDumpAI to do?"])
+[data-testid="stForm"]:has(input[aria-label="AI Workspace prompt"])
 [data-testid="stFormSubmitButton"] button span,
-[data-testid="stForm"]:has(input[aria-label="What would you like DataDumpAI to do?"])
+[data-testid="stForm"]:has(input[aria-label="AI Workspace prompt"])
 [data-testid="stFormSubmitButton"] button div {
     color: #FFFFFF !important;
 }
+.dde-ai-workspace-shell {
+    max-width: 920px;
+    margin: 0 auto;
+}
+.dde-ai-prompt-headline {
+    font-size: 24px;
+    font-weight: 800;
+    color: #0F172A;
+    line-height: 1.25;
+    margin: 0 0 4px;
+}
+.dde-ai-prompt-subhead {
+    font-size: 14px;
+    color: #64748B;
+    margin: 0 0 14px;
+    line-height: 1.45;
+}
+.dde-ai-context-panel {
+    background: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 14px;
+    padding: 12px 14px;
+    margin: 0 0 12px;
+}
+.dde-ai-context-panel-title {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #64748B;
+    margin: 0 0 8px;
+}
+.dde-ai-context-line {
+    font-size: 13px;
+    color: #0F172A;
+    margin: 0 0 4px;
+    line-height: 1.4;
+}
+.dde-ai-inference-banner {
+    background: #EFF6FF;
+    border: 1px solid #BFDBFE;
+    border-radius: 12px;
+    padding: 10px 14px;
+    margin: 0 0 12px;
+    font-size: 13px;
+    color: #1E3A8A;
+    line-height: 1.45;
+}
+.dde-ai-chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 10px 0 0;
+}
+.dde-ai-thread {
+    max-height: 180px;
+    overflow-y: auto;
+    margin: 0 0 14px;
+}
+.dde-ai-message-user,
+.dde-ai-message-assistant {
+    padding: 10px 14px;
+    border-radius: 14px;
+    margin: 0 0 8px;
+    font-size: 14px;
+    line-height: 1.45;
+}
+.dde-ai-message-user {
+    background: #2563EB;
+    color: #FFFFFF;
+    margin-left: 48px;
+}
+.dde-ai-message-assistant {
+    background: #FFFFFF;
+    color: #0F172A;
+    border: 1px solid #E2E8F0;
+    margin-right: 48px;
+}
+.dde-ai-example-row {
+    margin: 0 0 12px;
+}
+.dde-ai-composer-marker,
+.dde-ai-attach-open-marker {
+    display: none;
+}
+[data-testid="stHorizontalBlock"]:has(.dde-ai-composer-marker) .stButton > button {
+    min-height: 46px;
+    font-size: 18px;
+    padding: 0 12px;
+}
+[data-testid="stVerticalBlock"]:has(.dde-ai-attach-open-marker) [data-testid="stFileUploader"] {
+    margin: 0 0 10px;
+    background: transparent;
+    border: none;
+    padding: 0;
+}
+[data-testid="stVerticalBlock"]:has(.dde-ai-attach-open-marker) [data-testid="stFileUploader"] label {
+    display: none;
+}
+[data-testid="stHorizontalBlock"]:has(.dde-ai-chip-row-marker) .stButton > button {
+    font-size: 12px;
+    min-height: 34px;
+    padding: 6px 12px;
+    border-radius: 999px !important;
+    background: #EFF6FF !important;
+    border: 1px solid #BFDBFE !important;
+    color: #1E3A8A !important;
+    font-weight: 600;
+}
+[data-testid="stHorizontalBlock"]:has(.dde-ai-chip-row-marker) .stButton > button:hover {
+    background: #DBEAFE !important;
+    border-color: #93C5FD !important;
+    color: #1E3A8A !important;
+}
+[data-testid="stHorizontalBlock"]:has(.dde-ai-example-marker) .stButton > button {
+    font-size: 12px;
+    min-height: 34px;
+    padding: 4px 10px;
+    border-radius: 999px !important;
+}
 </style>
 """,
-    unsafe_allow_html=True,
-  )
+        unsafe_allow_html=True,
+    )
 
 
-def _render_prompt_hero(on_action: Callable[[AIWorkspaceAction], None]) -> None:
-    render_compact_document_attach()
-
+def _render_prompt_intro() -> None:
     st.markdown(
-        """
-<div class="dde-ai-prompt-hero">
-<div class="dde-ai-prompt-title">What would you like to do today?</div>
+        f"""
+<div class="dde-ai-prompt-headline">{PROMPT_HEADLINE}</div>
+<div class="dde-ai-prompt-subhead">{PROMPT_SUBHEAD}</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def _render_context_panel(summary: WorkspaceContextSummary) -> None:
+    doc_line = f"✓ {summary.document_count} document{'s' if summary.document_count != 1 else ''}"
+    report_line = (
+        f"✓ {summary.prior_report_count} previous report"
+        f"{'s' if summary.prior_report_count != 1 else ''}"
+    )
+    st.markdown(
+        f"""
+<div class="dde-ai-context-panel">
+<div class="dde-ai-context-panel-title">Working with</div>
+<div class="dde-ai-context-line">{doc_line}</div>
+<div class="dde-ai-context-line">{report_line}</div>
+<div class="dde-ai-context-line">✓ Project: <strong>{summary.project_name}</strong></div>
 </div>
 """,
         unsafe_allow_html=True,
     )
 
-    prompt_value = st.session_state.get(AI_WORKSPACE_PROMPT_KEY, "")
 
-    _render_run_request_button_styles()
+def _render_last_inference() -> None:
+    inference = st.session_state.get(AI_WORKSPACE_LAST_INFERENCE_KEY)
+    if not inference:
+        return
 
-    with st.form("ai_workspace_prompt_form", clear_on_submit=False):
-        input_col, send_col = st.columns([8, 1], gap="small", vertical_alignment="bottom")
+    confidence = inference.get("confidence", "")
+    confidence_html = (
+        f'<div><strong>Confidence:</strong> {confidence}</div>'
+        if confidence and confidence != "Manual"
+        else '<div><strong>Source:</strong> Advanced options override</div>'
+    )
+    st.markdown(
+        f"""
+<div class="dde-ai-inference-banner">
+<div><strong>Last detected task:</strong> {inference.get("display_label", "")}</div>
+{confidence_html}
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
-        with input_col:
-            prompt = st.text_input(
-                "What would you like DataDumpAI to do?",
-                value=prompt_value,
-                placeholder="Summarize this document...",
-                key="ai_workspace_prompt_input",
-                label_visibility="collapsed",
-            )
 
-        with send_col:
-            submitted = st.form_submit_button(
-                "+",
-                type="primary",
+def _render_context_chips(workspace: dict, filenames: list[str]) -> None:
+    if not filenames:
+        return
+
+    st.markdown('<div class="dde-ai-chip-row-marker"></div>', unsafe_allow_html=True)
+    columns = st.columns(min(len(filenames), 3))
+    for index, filename in enumerate(filenames):
+        with columns[index % len(columns)]:
+            if st.button(
+                f"📄 {filename}  ✕",
+                key=f"ai_chip_remove_{_safe_chip_key(filename)}",
                 use_container_width=True,
-            )
-
-        if submitted:
-            st.session_state[AI_WORKSPACE_PROMPT_KEY] = prompt
-            _handle_prompt_submit(prompt)
-            st.rerun()
-
-    primary_actions = tuple(
-        action for action in AI_WORKSPACE_ACTIONS if action.id in PRIMARY_ACTION_IDS
-    )
-    _render_action_buttons(primary_actions, on_action, key_prefix="ai_action_primary")
-
-    secondary_actions = tuple(
-        action
-        for action in AI_WORKSPACE_ACTIONS
-        if action.id not in PRIMARY_ACTION_IDS and action.status != "coming_soon"
-    )
-    if secondary_actions:
-        _render_action_buttons(secondary_actions, on_action, key_prefix="ai_action_secondary")
+                help="Remove from this conversation (keeps the file in your project)",
+            ):
+                exclude_filename(workspace["id"], filename)
+                st.rerun()
 
 
 def _render_conversation() -> None:
@@ -327,7 +408,7 @@ def _render_conversation() -> None:
         return
 
     st.markdown('<div class="dde-ai-thread">', unsafe_allow_html=True)
-    for index, message in enumerate(messages):
+    for message in messages:
         role = message.get("role", "assistant")
         css_class = "dde-ai-message-user" if role == "user" else "dde-ai-message-assistant"
         st.markdown(
@@ -337,12 +418,125 @@ def _render_conversation() -> None:
     st.markdown("</div>", unsafe_allow_html=True)
 
 
+def _render_examples(on_select: Callable[[str], None]) -> None:
+    st.markdown('<div class="dde-ai-example-marker"></div>', unsafe_allow_html=True)
+    row_count = (len(PROMPT_EXAMPLES) + 1) // 2
+    for row in range(row_count):
+        examples = PROMPT_EXAMPLES[row * 2 : row * 2 + 2]
+        columns = st.columns(len(examples))
+        for column, example in zip(columns, examples):
+            with column:
+                if st.button(example, key=f"ai_example_{_safe_chip_key(example)}", use_container_width=True):
+                    on_select(example)
+
+
+def _render_attach_control(workspace: dict) -> None:
+    if AI_WORKSPACE_ATTACH_KEY not in st.session_state:
+        st.session_state[AI_WORKSPACE_ATTACH_KEY] = 0
+
+    st.markdown('<div class="dde-ai-attach-open-marker"></div>', unsafe_allow_html=True)
+    uploaded_files = st.file_uploader(
+        "Attach files",
+        type=SUPPORTED_TYPES,
+        accept_multiple_files=True,
+        label_visibility="collapsed",
+        key=f"ai_workspace_attach_{st.session_state[AI_WORKSPACE_ATTACH_KEY]}",
+    )
+    if uploaded_files:
+        process_workspace_uploads(
+            uploaded_files,
+            workspace,
+            batch_key=AI_WORKSPACE_ATTACH_BATCH_KEY,
+            uploader_state_key=AI_WORKSPACE_ATTACH_KEY,
+        )
+        st.session_state[AI_WORKSPACE_ATTACH_OPEN_KEY] = False
+
+
+def _render_composer(
+    workspace: dict,
+    context_files: list[str],
+    *,
+    pending_prompt: str = "",
+) -> None:
+    _render_workspace_styles()
+
+    placeholder = (
+        "Summarize these documents…"
+        if context_files
+        else "Attach documents, then describe what you need…"
+    )
+
+    st.markdown('<div class="dde-ai-composer-marker"></div>', unsafe_allow_html=True)
+
+    attach_col, composer_col = st.columns([0.08, 0.92], gap="small", vertical_alignment="bottom")
+
+    with attach_col:
+        if st.button("📎", key="ai_workspace_attach_toggle", help="Attach documents"):
+            st.session_state[AI_WORKSPACE_ATTACH_OPEN_KEY] = not st.session_state.get(
+                AI_WORKSPACE_ATTACH_OPEN_KEY, False
+            )
+            st.rerun()
+
+    with composer_col:
+        with st.form("ai_workspace_prompt_form", clear_on_submit=False):
+            input_col, send_col = st.columns([8, 1], gap="small", vertical_alignment="bottom")
+
+            with input_col:
+                prompt = st.text_input(
+                    "AI Workspace prompt",
+                    value=pending_prompt,
+                    placeholder=placeholder,
+                    key="ai_workspace_prompt_input",
+                    label_visibility="collapsed",
+                )
+
+            with send_col:
+                submitted = st.form_submit_button(
+                    "↑",
+                    type="primary",
+                    use_container_width=True,
+                )
+
+            if submitted:
+                _handle_prompt_submit(prompt, workspace, context_files)
+                st.session_state.pop(AI_WORKSPACE_PROMPT_KEY, None)
+                st.rerun()
+
+
+def _render_advanced_options() -> None:
+    _init_settings_state()
+
+    with st.expander("Advanced options", expanded=False):
+        st.caption("Optional AI behavior overrides for this workspace.")
+
+        st.selectbox(
+            "Report type",
+            available_report_type_options(),
+            key=f"{AI_WORKSPACE_SETTINGS_PREFIX}report_type",
+            help="Leave on Auto to infer the task from your prompt.",
+        )
+        st.selectbox("Output length", OUTPUT_LENGTHS, key=f"{AI_WORKSPACE_SETTINGS_PREFIX}output_length")
+        st.selectbox("Tone", TONES, key=f"{AI_WORKSPACE_SETTINGS_PREFIX}tone")
+        st.selectbox("Language", LANGUAGES, key=f"{AI_WORKSPACE_SETTINGS_PREFIX}language")
+        st.checkbox("Include charts", key=f"{AI_WORKSPACE_SETTINGS_PREFIX}include_charts")
+        st.text_area(
+            "Custom instructions",
+            key=f"{AI_WORKSPACE_SETTINGS_PREFIX}custom_instructions",
+            placeholder="Optional guidance for structure, audience, or emphasis.",
+            height=90,
+        )
+
+
+def _queue_example_prompt(example: str) -> None:
+    st.session_state[AI_WORKSPACE_PROMPT_KEY] = example
+    st.session_state["ai_workspace_prompt_input"] = example
+
+
 def render_ai_workspace() -> None:
-    """Render the AI-first workspace experience."""
+    """Render the conversational AI Workspace experience."""
 
     initialize_projects()
     workspace = get_active_workspace()
-    user_projects = get_user_projects()
 
     if workspace.get("is_pending"):
         st.info(
@@ -351,28 +545,33 @@ def render_ai_workspace() -> None:
         )
         return
 
-    _render_prompt_hero(_apply_action)
+    context_files = active_context_filenames(workspace)
+    summary = summarize_workspace_context(workspace, context_files)
+    attach_open = st.session_state.get(AI_WORKSPACE_ATTACH_OPEN_KEY, False)
+    pending_prompt = st.session_state.pop(AI_WORKSPACE_PROMPT_KEY, "")
+
+    st.markdown('<div class="dde-ai-workspace-shell">', unsafe_allow_html=True)
+
+    _render_prompt_intro()
+    _render_context_panel(summary)
+    _render_last_inference()
+    _render_context_chips(workspace, context_files)
     _render_conversation()
 
-    instruction = st.session_state.get(AI_WORKSPACE_INSTRUCTION_KEY)
-    if instruction:
-        clear_col, caption_col = st.columns([1, 5])
-        with clear_col:
-            if st.button("Clear", key="ai_workspace_clear"):
-                st.session_state.pop(AI_WORKSPACE_PROMPT_KEY, None)
-                st.session_state.pop(AI_WORKSPACE_INSTRUCTION_KEY, None)
-                st.session_state[AI_WORKSPACE_MESSAGES_KEY] = []
-                st.rerun()
-        with caption_col:
-            st.caption(f"Active request: _{instruction}_")
+    if attach_open or not context_files:
+        _render_attach_control(workspace)
 
-    with st.expander("Advanced options", expanded=False):
-        st.caption(
-            "Upload documents, choose sources, pick report types, and configure "
-            "generation — all existing capabilities live here."
-        )
-        render_document_upload()
-        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-        document_selection = render_document_source_selection(user_projects, workspace)
-        st.markdown("---")
-        render_documents_page_generation(user_projects, document_selection)
+    _render_examples(_queue_example_prompt)
+    _render_composer(workspace, context_files, pending_prompt=pending_prompt)
+    _render_advanced_options()
+
+    if st.session_state.get(AI_WORKSPACE_MESSAGES_KEY):
+        if st.button("Clear conversation", key="ai_workspace_clear", type="secondary"):
+            st.session_state.pop(AI_WORKSPACE_PROMPT_KEY, None)
+            st.session_state[AI_WORKSPACE_MESSAGES_KEY] = []
+            st.session_state[AI_WORKSPACE_ATTACH_OPEN_KEY] = False
+            st.session_state.pop(AI_WORKSPACE_LAST_INFERENCE_KEY, None)
+            st.session_state[_excluded_state_key(workspace["id"])] = []
+            st.rerun()
+
+    st.markdown("</div>", unsafe_allow_html=True)

@@ -10,7 +10,7 @@ import logging
 import streamlit as st
 
 from core.workspace_navigation import get_workspace_section
-from ui.hero import render_hero, render_hero_compact
+from ui.hero import render_hero
 from ui.onboarding import render_onboarding_wizard
 from ui.project_summary import render_project_summary
 from ui.report_preview import render_report_preview_if_open
@@ -58,14 +58,9 @@ def render_workspace_shell() -> None:
     active_section = get_workspace_section()
     is_ai_workspace = active_section == "documents"
 
-    if is_ai_workspace:
-        render_hero_compact()
-    else:
-        render_hero()
-
-    render_onboarding_wizard()
-
     if not is_ai_workspace:
+        render_hero()
+        render_onboarding_wizard()
         render_project_summary()
 
     if active_section == "overview":

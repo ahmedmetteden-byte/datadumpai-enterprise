@@ -21,6 +21,11 @@ def test_parse_prompt_intent_maps_compare_request():
     assert report_type == "Full Report"
 
 
+def test_parse_prompt_intent_maps_kpi_extraction():
+    report_type, _ = parse_prompt_intent("Extract all KPIs from these files.")
+    assert report_type == "Management Report"
+
+
 def test_parse_prompt_intent_returns_none_for_unknown_request():
     report_type, instruction = parse_prompt_intent("Draft a creative poem about the moon.")
     assert report_type is None

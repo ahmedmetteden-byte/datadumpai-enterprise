@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 from services.report_section_templates import SectionPlan, build_full_report_structure_prompt
+from services.prompt_guidance import additional_guidance_section
 
 FULL_REPORT_TYPE = "Full Report"
 
@@ -129,8 +130,7 @@ RULES
 
 {structure_block}
 
-{prior_section}
-
+{prior_section}{additional_guidance_section(report_context)}
 SOURCE MATERIAL
 ===============================
 
