@@ -145,6 +145,9 @@ def get_access_token() -> str | None:
 
 def _store_session(session: AuthSession, *, remember_me: bool = False) -> None:
     from core.navigation import set_active_page, DEFAULT_PAGE
+    from core.tenant_session import ensure_tenant_context
+
+    ensure_tenant_context(session.user.id)
 
     st.session_state[AUTH_USER_KEY] = session.user
     st.session_state[AUTH_ACCESS_TOKEN_KEY] = session.access_token
@@ -209,6 +212,7 @@ def _start_subscription_trial() -> None:
 def clear_auth_session() -> None:
     from core.auth_persistence import clear_persisted_tokens
     from core.navigation import PUBLIC_DEFAULT_PAGE, set_active_page
+    from core.tenant_session import clear_tenant_session
 
     user = st.session_state.get(AUTH_USER_KEY)
     access_token = st.session_state.get(AUTH_ACCESS_TOKEN_KEY)
@@ -220,6 +224,7 @@ def clear_auth_session() -> None:
         pass
 
     clear_persisted_tokens()
+    clear_tenant_session()
 
     if user is not None:
         _log_activity(user.id, "user.signed_out", "Signed out")

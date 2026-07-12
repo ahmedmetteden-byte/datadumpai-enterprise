@@ -75,6 +75,7 @@ class SupabaseProjectRepository:
             self._client.table("documents")
             .select("*")
             .eq("project_id", project_id)
+            .eq("user_id", self._user_id)
             .order("uploaded_at")
             .execute(),
             action="load documents",
@@ -95,6 +96,7 @@ class SupabaseProjectRepository:
             self._client.table("reports")
             .select("*")
             .eq("project_id", project_id)
+            .eq("user_id", self._user_id)
             .order("created_at")
             .execute(),
             action="load reports",
@@ -122,6 +124,7 @@ class SupabaseProjectRepository:
             self._client.table("exports")
             .select("*")
             .eq("project_id", project_id)
+            .eq("user_id", self._user_id)
             .order("exported_at")
             .execute(),
             action="load exports",
@@ -180,6 +183,7 @@ class SupabaseProjectRepository:
             self._client.table("documents")
             .select("filename")
             .eq("project_id", project_id)
+            .eq("user_id", self._user_id)
             .execute(),
             action="list documents",
         )
@@ -191,6 +195,7 @@ class SupabaseProjectRepository:
                 self._client.table("documents")
                 .delete()
                 .eq("project_id", project_id)
+                .eq("user_id", self._user_id)
                 .eq("filename", filename)
                 .execute(),
                 action="delete document",
@@ -221,6 +226,7 @@ class SupabaseProjectRepository:
             self._client.table("reports")
             .select("filename")
             .eq("project_id", project_id)
+            .eq("user_id", self._user_id)
             .execute(),
             action="list reports",
         )
@@ -232,6 +238,7 @@ class SupabaseProjectRepository:
                 self._client.table("reports")
                 .delete()
                 .eq("project_id", project_id)
+                .eq("user_id", self._user_id)
                 .eq("filename", filename)
                 .execute(),
                 action="delete report",
@@ -265,6 +272,7 @@ class SupabaseProjectRepository:
             self._client.table("exports")
             .select("filename")
             .eq("project_id", project_id)
+            .eq("user_id", self._user_id)
             .execute(),
             action="list exports",
         )
@@ -276,6 +284,7 @@ class SupabaseProjectRepository:
                 self._client.table("exports")
                 .delete()
                 .eq("project_id", project_id)
+                .eq("user_id", self._user_id)
                 .eq("filename", filename)
                 .execute(),
                 action="delete export",

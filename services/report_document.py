@@ -9,17 +9,33 @@ from typing import Any
 from models.report_data import ReportData
 from services.report_assembler import assemble_report_text
 from services.report_chart_data import (
+    PreparedReport,
     extract_chart_data,
     is_intelligence_report,
     prepare_report_for_output,
     strip_chart_data,
 )
+from services.report_markdown_renderer import remove_empty_sections
 from services.full_report_prompt import is_full_report
 from services.report_section_templates import (
-    build_report_section_plan,
     filter_report_narrative,
+    resolve_section_plan_for_assembly,
 )
 from services.visualization_engine import apply_visualizations
+
+
+def _assembly_context(base: ReportData) -> tuple[dict[str, Any], int | None]:
+    report_context = dict(base.metadata.get("report_context") or {})
+    source_document_count = base.metadata.get("source_document_count")
+
+    if source_document_count is None:
+        source_document_count = (
+            len(report_context.get("source_documents") or [])
+            or len(base.source_documents)
+            or base.metrics.get("source_document_count")
+        )
+
+    return report_context, source_document_count
 
 
 def compose_report_data(
@@ -33,6 +49,8 @@ def compose_report_data(
     """Merge AI narrative with extracted canonical metrics into a ReportData object."""
 
     cleaned_narrative = strip_chart_data(narrative).strip()
+    report_context, source_document_count = _assembly_context(base)
+    report_format = "full_report" if is_full_report(report_type) else "intelligence"
 
     composed = ReportData(
         report_type=report_type,
@@ -43,6 +61,8 @@ def compose_report_data(
             "report_type": report_type,
             "title": title or report_type,
             "include_charts": include_charts,
+            "report_context": report_context,
+            "source_document_count": source_document_count,
         },
         metrics=dict(base.metrics),
         charts=dict(base.charts),
@@ -61,14 +81,13 @@ def compose_report_data(
         include_charts=include_charts,
     )
 
-    report_format = "full_report" if is_full_report(report_type) else "intelligence"
-    section_plan = build_report_section_plan(
+    section_plan = resolve_section_plan_for_assembly(
         enriched,
         user_report_type=report_type,
         document_text=cleaned_narrative,
-        report_context=enriched.metadata,
+        report_context=report_context,
         include_charts=include_charts,
-        source_document_count=len(enriched.source_documents) or None,
+        source_document_count=source_document_count,
         report_format=report_format,
     )
     filtered_narrative = filter_report_narrative(enriched.narrative, section_plan)
@@ -80,6 +99,8 @@ def compose_report_data(
         metadata={
             **enriched.metadata,
             "section_plan": section_plan.to_dict(),
+            "report_context": report_context,
+            "source_document_count": source_document_count,
         },
         metrics=dict(enriched.metrics),
         charts=dict(enriched.charts),
@@ -120,8 +141,6 @@ def report_data_from_markdown(
 
     if stored and stored.narrative:
         report = ReportData.from_dict(stored.to_dict())
-        if not report.narrative:
-            report.narrative = narrative
         if not report.charts and embedded_charts:
             report.charts = embedded_charts
         return report
@@ -164,9 +183,28 @@ def report_data_from_storage(
 
 
 def prepare_report_view(report: ReportData):
-    """Return cleaned narrative text and chart data for browser rendering."""
+    """Return canonical narrative text and chart data for browser rendering/export."""
 
-    return prepare_report_for_output(report.to_markdown(), report)
+    if not report.metadata.get("section_plan"):
+        return prepare_report_for_output(report.to_markdown(), report)
+
+    report_context, source_document_count = _assembly_context(report)
+    report_format = "full_report" if is_full_report(report.report_type) else "intelligence"
+    section_plan = resolve_section_plan_for_assembly(
+        report,
+        user_report_type=report.report_type,
+        document_text=report.narrative,
+        report_context=report_context,
+        include_charts=bool(report.metadata.get("include_charts", report.charts)),
+        source_document_count=source_document_count,
+        report_format=report_format,
+    )
+    body = filter_report_narrative(report.narrative, section_plan)
+
+    return PreparedReport(
+        text=remove_empty_sections(body),
+        chart_data=dict(report.charts) if report.charts else {},
+    )
 
 
 def report_is_intelligence(report: ReportData) -> bool:

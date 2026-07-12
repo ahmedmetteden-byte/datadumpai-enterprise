@@ -56,9 +56,15 @@ def test_core_workflow_smoke(isolated_env):
     # 3. Generate report (AI mocked)
     ai = MagicMock()
     ai.generate_report.return_value = (
-        "# Executive Summary\n\n"
+        "## Executive Intelligence Dashboard\n\n"
+        "### Executive Summary Card\n\n"
+        "| Field | Value |\n"
+        "| --- | --- |\n"
+        "| Priority | Supply chain risk |\n\n"
+        "## Detailed Narrative\n\n"
         "Revenue grew 12 percent.\n\n"
-        "## Risks\n\n"
+        "## Key Findings (Ranked by Importance)\n\n"
+        "### Critical\n\n"
         "- Supply chain exposure remains unresolved."
     )
 

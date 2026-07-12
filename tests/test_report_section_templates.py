@@ -81,14 +81,17 @@ def test_legal_section_plan_omits_theme_sections():
     assert "top discussion topics" in plan.suppressed_dashboard_subsections
 
 
-def test_filter_report_narrative_removes_visualization_derived_sections():
+def test_filter_report_narrative_keeps_only_allowed_sections():
     plan = SectionPlan(
-        has_visualizations=False,
-        include_visual_summary=False,
-        include_cross_document_intelligence=False,
-        include_cross_period_themes=False,
-        suppressed_sections=["Visual Summary", "Cross-Document Intelligence"],
-        suppressed_dashboard_subsections=["top discussion topics"],
+        allowed_sections=[
+            "Executive Intelligence Dashboard",
+            "Detailed Narrative",
+            "Executive Quotations",
+        ],
+        allowed_dashboard_subsections=[
+            "Executive Summary Card",
+            "Executive Snapshot",
+        ],
     )
 
     filtered = filter_report_narrative(LEGAL_NARRATIVE, plan)

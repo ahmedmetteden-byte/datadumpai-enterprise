@@ -40,12 +40,33 @@ class FileStore:
         safe_name = Path(filename).name
         return f"{self._user_id}/{project_id}/{category}/{safe_name}"
 
+    def _split_storage_key(self, storage_key: str) -> list[str]:
+        return storage_key.replace("\\", "/").strip("/").split("/")
+
     def _parse_storage_key(self, storage_key: str) -> tuple[str, str, str, str]:
-        parts = Path(storage_key).parts
-        if len(parts) < 4:
+        parts = self._split_storage_key(storage_key)
+        if len(parts) != 4:
             raise ValueError(f"Invalid storage key: {storage_key!r}")
-        user_id, project_id, category, filename = parts[-4], parts[-3], parts[-2], parts[-1]
+        user_id, project_id, category, filename = parts
         return user_id, project_id, category, filename
+
+    def _assert_owned_storage_key(self, storage_key: str) -> None:
+        user_root = get_user_projects_root(self._user_id).resolve()
+        path = Path(storage_key)
+
+        try:
+            path.resolve(strict=False).relative_to(user_root)
+            return
+        except ValueError:
+            pass
+
+        parts = self._split_storage_key(storage_key)
+        if len(parts) == 4 and parts[2] in self.CATEGORIES:
+            if parts[0] != self._user_id:
+                raise PermissionError(f"Access denied to storage key: {storage_key!r}")
+            return
+
+        raise PermissionError(f"Access denied to storage key: {storage_key!r}")
 
     def write(
         self,
@@ -73,6 +94,8 @@ class FileStore:
         return str(path)
 
     def read_bytes(self, storage_key: str) -> bytes:
+        self._assert_owned_storage_key(storage_key)
+
         path = Path(storage_key)
         if path.is_file():
             return path.read_bytes()
@@ -88,6 +111,8 @@ class FileStore:
         return self.read_bytes(storage_key).decode(encoding)
 
     def delete(self, storage_key: str) -> None:
+        self._assert_owned_storage_key(storage_key)
+
         path = Path(storage_key)
         if path.is_file():
             path.unlink()
@@ -99,6 +124,11 @@ class FileStore:
             client.storage.from_(config.SUPABASE_STORAGE_BUCKET).remove([key])
 
     def exists(self, storage_key: str) -> bool:
+        try:
+            self._assert_owned_storage_key(storage_key)
+        except PermissionError:
+            return False
+
         path = Path(storage_key)
         if path.is_file():
             return True
@@ -133,6 +163,8 @@ class FileStore:
     def readable_path(self, storage_key: str) -> Iterator[Path]:
         """Yield a local path suitable for libraries that need filesystem access."""
 
+        self._assert_owned_storage_key(storage_key)
+
         if self._backend == "local" and not self._looks_like_storage_key(storage_key):
             path = Path(storage_key)
             if not path.is_file():
@@ -158,8 +190,8 @@ class FileStore:
 
     @staticmethod
     def _looks_like_storage_key(storage_key: str) -> bool:
-        parts = Path(storage_key).parts
-        return len(parts) >= 4 and parts[-3] in FileStore.CATEGORIES
+        parts = storage_key.replace("\\", "/").strip("/").split("/")
+        return len(parts) == 4 and parts[2] in FileStore.CATEGORIES
 
     def _normalize_key(self, storage_key: str) -> str:
         if self._looks_like_storage_key(storage_key):

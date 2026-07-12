@@ -9,6 +9,8 @@ import html
 
 import streamlit as st
 
+from core.auth import get_current_user_id
+from core.tenant_session import ensure_tenant_context
 from core.workspace_context import (
     PROJECT_MODE_LABEL,
     QUICK_REPORT_NAME,
@@ -80,6 +82,8 @@ def is_project_pending() -> bool:
 def initialize_projects() -> None:
     """Load user projects and ensure an active workspace is selected."""
 
+    ensure_tenant_context(get_current_user_id())
+
     if "projects" not in st.session_state:
         _refresh_projects()
 
@@ -112,6 +116,13 @@ def get_user_projects() -> list[dict]:
 
 
 def set_active_workspace(workspace_id: str) -> None:
+    if is_quick_report_workspace(workspace_id):
+        st.session_state[WORKSPACE_ID_KEY] = workspace_id
+        return
+
+    if not _project_service().project_exists(workspace_id):
+        raise ValueError(f"Workspace not found: {workspace_id!r}")
+
     st.session_state[WORKSPACE_ID_KEY] = workspace_id
 
 

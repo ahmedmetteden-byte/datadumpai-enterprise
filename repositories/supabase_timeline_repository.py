@@ -22,6 +22,7 @@ class SupabaseTimelineRepository:
             self._client.table("timeline_events")
             .select("*")
             .eq("project_id", self._project_id)
+            .eq("user_id", self._user_id)
             .order("timestamp")
             .execute(),
             action="load timeline events",
@@ -61,6 +62,7 @@ class SupabaseTimelineRepository:
             self._client.table("timeline_events")
             .delete()
             .eq("project_id", self._project_id)
+            .eq("user_id", self._user_id)
             .execute(),
             action="clear timeline events",
         )

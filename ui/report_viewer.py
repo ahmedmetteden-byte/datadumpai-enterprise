@@ -6,7 +6,6 @@ Report Viewer
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 
 import streamlit as st
 
@@ -42,13 +41,11 @@ def render_report_viewer() -> None:
     project = get_current_project()
 
     try:
-        report_text = Path(report["path"]).read_text(encoding="utf-8")
         report_data = report_service.load_report_data(
             project["id"],
             report.get("filename", ""),
-            markdown_text=report_text,
         )
-    except FileNotFoundError:
+    except (FileNotFoundError, PermissionError):
         st.error("This report file is missing. It may have been deleted.")
         st.session_state.pop("selected_report", None)
         return

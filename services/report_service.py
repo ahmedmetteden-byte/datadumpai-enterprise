@@ -272,6 +272,12 @@ class ReportService:
         return cls._file_store().read_text(path)
 
     @classmethod
+    def load_report_for_project(cls, project_id: str, filename: str) -> str:
+        """Load report markdown after validating project ownership via FileStore."""
+
+        return cls.load_report(cls._report_storage_path(project_id, filename))
+
+    @classmethod
     def load_report_data(
         cls,
         project_id: str,
@@ -284,7 +290,7 @@ class ReportService:
         meta = cls.get_report_metadata(project_id, filename)
 
         if markdown_text is None:
-            markdown_text = cls.load_report(cls._report_storage_path(project_id, filename))
+            markdown_text = cls.load_report_for_project(project_id, filename)
 
         return report_data_from_storage(markdown_text, meta)
 

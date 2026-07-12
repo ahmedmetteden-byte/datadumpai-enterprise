@@ -28,6 +28,14 @@ def render_page() -> None:
         page = "workspace"
 
     if page == "admin":
+        from core.auth import is_admin
+
+        if not is_admin():
+            st.error("You do not have permission to access this page.")
+            set_active_page("workspace")
+            render_workspace()
+            return
+
         from ui.admin.page import render_admin_page
 
         render_admin_page()

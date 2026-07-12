@@ -291,6 +291,12 @@ class ReportPipeline:
         report_data.metadata = {
             **report_data.metadata,
             "section_plan": section_plan.to_dict(),
+            "report_context": {
+                "has_prior_reports": bool(report_context.get("has_prior_reports")),
+                "reporting_period": report_context.get("reporting_period"),
+                "source_documents": list(report_context.get("source_documents") or []),
+            },
+            "source_document_count": source_document_count,
         }
 
         narrative = self._ai_service.generate_report(
@@ -457,6 +463,12 @@ class ReportPipeline:
         report_data.metadata = {
             **report_data.metadata,
             "section_plan": section_plan.to_dict(),
+            "report_context": {
+                "has_prior_reports": bool(report_context.get("has_prior_reports")),
+                "reporting_period": report_context.get("reporting_period"),
+                "source_documents": list(report_context.get("source_documents") or []),
+            },
+            "source_document_count": len(load_result["loaded"]),
         }
 
         narrative = self._ai_service.generate_report(

@@ -282,13 +282,35 @@ def _is_multi_period(
     source_document_count: int | None,
     report_context: dict[str, Any] | None,
 ) -> bool:
+    """True only when the current report synthesizes multiple source documents."""
+
     context = report_context or {}
     count = source_document_count or len(context.get("source_documents") or [])
+    return count > 1
 
-    if count > 1:
-        return True
 
-    return bool(context.get("has_prior_reports"))
+def _exportable_visualization_types() -> frozenset[str]:
+    return frozenset(
+        {
+            VisualizationStrategy.BAR_CHART.value,
+            VisualizationStrategy.LINE_CHART.value,
+            VisualizationStrategy.PIE_CHART.value,
+            VisualizationStrategy.KPI_CARDS.value,
+        }
+    )
+
+
+def charts_have_exportable_visualizations(charts: dict[str, Any] | None) -> bool:
+    """Return True when charts include exportable bar/line/pie/KPI visuals."""
+
+    if not charts:
+        return False
+
+    for block in charts.get("visualizations") or []:
+        if str(block.get("type", "")).upper() in _exportable_visualization_types():
+            return True
+
+    return False
 
 
 def _is_theme_frequency_only(report_data: ReportData, data_profile: Any) -> bool:
@@ -308,9 +330,8 @@ def _predict_visualizations(
     if not include_charts:
         return False
 
-    existing = report_data.charts.get("visualizations")
-    if existing is not None:
-        return bool(existing)
+    if charts_have_exportable_visualizations(report_data.charts):
+        return True
 
     strategies = decide_visualization_strategies(detected_type, data_profile, intent)
     if strategies == [VisualizationStrategy.NONE]:
@@ -407,7 +428,9 @@ def build_report_section_plan(
         multi_period and not theme_frequency_only and report_format == "intelligence"
     )
     include_industry_benchmark = multi_period and report_format == "intelligence"
-    include_trends = multi_period and bool((report_context or {}).get("has_prior_reports"))
+    include_trends = bool((report_context or {}).get("has_prior_reports")) and (
+        report_format == "intelligence"
+    )
     include_visual_summary = has_visualizations
     include_canonical_theme_metrics = has_visualizations and not theme_frequency_only
 
@@ -480,6 +503,80 @@ def build_report_section_plan(
         has_visualizations=has_visualizations,
         multi_period=multi_period,
         theme_frequency_only=theme_frequency_only,
+    )
+
+
+def resolve_section_plan_for_assembly(
+    report_data: ReportData,
+    *,
+    user_report_type: str = "",
+    document_text: str = "",
+    report_context: dict[str, Any] | None = None,
+    include_charts: bool = True,
+    source_document_count: int | None = None,
+    report_format: str = "intelligence",
+) -> SectionPlan:
+    """
+    Return the authoritative section plan for prompt/filter/export assembly.
+
+    Reuses the plan created before AI generation when present. Only visualization
+    export flags are refreshed after chart blocks are attached.
+    """
+
+    stored = report_data.metadata.get("section_plan")
+    if stored:
+        plan = SectionPlan.from_dict(stored)
+    else:
+        plan = build_report_section_plan(
+            report_data,
+            user_report_type=user_report_type,
+            document_text=document_text,
+            report_context=report_context,
+            include_charts=include_charts,
+            source_document_count=source_document_count,
+            report_format=report_format,
+        )
+
+    return sync_section_plan_with_charts(plan, report_data.charts, include_charts=include_charts)
+
+
+def sync_section_plan_with_charts(
+    plan: SectionPlan,
+    charts: dict[str, Any] | None,
+    *,
+    include_charts: bool,
+) -> SectionPlan:
+    """Align visual-summary sections with exportable chart blocks."""
+
+    has_exportable = include_charts and charts_have_exportable_visualizations(charts)
+    allowed_sections = [section for section in plan.allowed_sections if section != "Visual Summary"]
+
+    if has_exportable:
+        allowed_sections.append("Visual Summary")
+
+    suppressed_sections = set(plan.suppressed_sections)
+    suppressed_sections.discard("Visual Summary")
+    if not has_exportable:
+        suppressed_sections.add("Visual Summary")
+
+    return SectionPlan(
+        detected_report_type=plan.detected_report_type,
+        report_intent=plan.report_intent,
+        report_format=plan.report_format,
+        allowed_sections=allowed_sections,
+        suppressed_sections=sorted(suppressed_sections),
+        allowed_dashboard_subsections=list(plan.allowed_dashboard_subsections),
+        suppressed_dashboard_subsections=list(plan.suppressed_dashboard_subsections),
+        include_visual_summary=has_exportable,
+        include_cross_period_themes=plan.include_cross_period_themes,
+        include_period_comparison=plan.include_period_comparison,
+        include_cross_document_intelligence=plan.include_cross_document_intelligence,
+        include_industry_benchmark=plan.include_industry_benchmark,
+        include_trends=plan.include_trends,
+        include_canonical_theme_metrics=plan.include_canonical_theme_metrics,
+        has_visualizations=has_exportable,
+        multi_period=plan.multi_period,
+        theme_frequency_only=plan.theme_frequency_only,
     )
 
 
@@ -562,8 +659,8 @@ def _split_h2_sections(text: str) -> list[tuple[str | None, str]]:
     return sections
 
 
-def _remove_h3_subsections(body: str, suppressed: set[str]) -> str:
-    if not body.strip() or not suppressed:
+def _filter_h3_subsections_whitelist(body: str, allowed: set[str]) -> str:
+    if not body.strip() or not allowed:
         return body
 
     parts = H3_HEADING_PATTERN.split(body)
@@ -574,7 +671,7 @@ def _remove_h3_subsections(body: str, suppressed: set[str]) -> str:
         heading = parts[index].replace("###", "").strip()
         section_body = parts[index + 1] if index + 1 < len(parts) else ""
 
-        if heading.lower() not in suppressed:
+        if heading.lower() in allowed:
             rebuilt.append(f"### {heading}\n{section_body}")
 
         index += 2
@@ -582,53 +679,27 @@ def _remove_h3_subsections(body: str, suppressed: set[str]) -> str:
     return "\n\n".join(part.strip() for part in rebuilt if part and part.strip()).strip()
 
 
-def _is_theme_frequency_section(title: str, body: str) -> bool:
-    if title.lower() != "cross-period themes":
-        return False
-
-    lowered = body.lower()
-    theme_markers = (
-        "frequency:",
-        "of ",
-        " documents",
-        "theme",
-        "appeared in",
-        "keyword",
-    )
-    return any(marker in lowered for marker in theme_markers)
+def _dashboard_section_titles() -> set[str]:
+    return {
+        INTELLIGENCE_DASHBOARD_TITLE.lower(),
+        FULL_REPORT_OVERVIEW_TITLE.lower(),
+    }
 
 
 def filter_report_narrative(narrative: str, section_plan: SectionPlan | None) -> str:
-    """Remove visualization-derived or report-type-irrelevant sections from narrative."""
+    """
+    Assemble the canonical narrative body from allowed sections only.
 
-    if not narrative.strip() or section_plan is None:
+    The section plan is the single authority: anything not listed in
+    allowed_sections (or allowed_dashboard_subsections) is excluded.
+    """
+
+    if not narrative.strip() or section_plan is None or not section_plan.allowed_sections:
         return narrative
 
-    suppressed_h2 = {title.lower() for title in section_plan.suppressed_sections}
-    suppressed_h3 = {title.lower() for title in section_plan.suppressed_dashboard_subsections}
-
-    if not section_plan.has_visualizations:
-        suppressed_h2.add("visual summary")
-        suppressed_h3.update(THEME_FREQUENCY_SUBSECTIONS)
-
-    if not section_plan.include_cross_period_themes:
-        suppressed_h2.add("cross-period themes")
-
-    if not section_plan.include_period_comparison:
-        suppressed_h2.add("period-over-period comparison")
-
-    if not section_plan.include_cross_document_intelligence:
-        suppressed_h2.add("cross-document intelligence")
-
-    if not section_plan.include_industry_benchmark:
-        suppressed_h2.add("industry benchmark")
-
-    if not section_plan.include_trends:
-        suppressed_h2.add("trends")
-
-    if not section_plan.include_visual_summary:
-        suppressed_h2.add("visual summary")
-
+    allowed_h2 = {title.lower() for title in section_plan.allowed_sections}
+    allowed_h3 = {title.lower() for title in section_plan.allowed_dashboard_subsections}
+    dashboard_titles = _dashboard_section_titles()
     rebuilt: list[str] = []
 
     for title, body in _split_h2_sections(narrative):
@@ -638,19 +709,12 @@ def filter_report_narrative(narrative: str, section_plan: SectionPlan | None) ->
             continue
 
         title_lower = title.lower()
-
-        if title_lower in suppressed_h2:
-            continue
-
-        if _is_theme_frequency_section(title, body) and (
-            section_plan.theme_frequency_only or not section_plan.multi_period
-        ):
+        if title_lower not in allowed_h2:
             continue
 
         cleaned_body = body
-
-        if "dashboard" in title_lower or title == INTELLIGENCE_DASHBOARD_TITLE:
-            cleaned_body = _remove_h3_subsections(body, suppressed_h3)
+        if title_lower in dashboard_titles or "dashboard" in title_lower:
+            cleaned_body = _filter_h3_subsections_whitelist(body, allowed_h3)
 
         if cleaned_body.strip():
             rebuilt.append(f"## {title}\n\n{cleaned_body.strip()}")
