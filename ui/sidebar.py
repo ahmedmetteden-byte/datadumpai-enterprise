@@ -5,11 +5,12 @@ Sidebar — project picker and workspace navigation.
 
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 
 import streamlit as st
 
-from config import APP_TAGLINE_SHORT, PLANS
+from config import APP_TAGLINE_SHORT, COMPANY_WEBSITE, PLANS
 from core.auth import get_current_user, is_admin, sign_out
 from core.navigation import get_active_page, set_active_page
 from core.workspace_navigation import (
@@ -24,6 +25,27 @@ from services.notification_service import render_notification_bell
 SIDEBAR_LOGO_PATH = (
     Path(__file__).resolve().parent.parent / "assets" / "logo.png"
 )
+
+
+def _render_sidebar_logo() -> None:
+    """Link the sidebar logo to the public marketing site without signing out."""
+
+    if SIDEBAR_LOGO_PATH.exists():
+        encoded = base64.b64encode(SIDEBAR_LOGO_PATH.read_bytes()).decode()
+        st.markdown(
+            f'<a href="{COMPANY_WEBSITE}" class="dde-sidebar-logo-link" '
+            f'title="Return to the marketing homepage">'
+            f'<img src="data:image/png;base64,{encoded}" alt="DataDumpAI" />'
+            f"</a>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            f'<a href="{COMPANY_WEBSITE}" class="dde-sidebar-logo-link" '
+            f'title="Return to the marketing homepage">'
+            f"<h3>DataDumpAI</h3></a>",
+            unsafe_allow_html=True,
+        )
 
 
 def _open_account_tab(tab_id: str = "profile") -> None:
@@ -86,19 +108,7 @@ def render_sidebar() -> None:
     user = get_current_user()
 
     with st.sidebar:
-        if st.button(
-            "Home",
-            key="sidebar_logo_home",
-            use_container_width=True,
-            help="Return to the marketing homepage",
-        ):
-            set_active_page("landing")
-            st.rerun()
-
-        if SIDEBAR_LOGO_PATH.exists():
-            st.image(str(SIDEBAR_LOGO_PATH), use_container_width=True)
-        else:
-            st.markdown("### DataDumpAI")
+        _render_sidebar_logo()
 
         st.markdown(
             f'<p class="dde-sidebar-wordmark-tagline">{APP_TAGLINE_SHORT}</p>',

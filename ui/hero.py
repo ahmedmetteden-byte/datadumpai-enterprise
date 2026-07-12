@@ -9,9 +9,24 @@ from pathlib import Path
 
 import streamlit as st
 
-from config import APP_TAGLINE
+from config import APP_NAME, APP_TAGLINE, APP_TAGLINE_SHORT
 
 HERO_LOGO_PATH = Path(__file__).resolve().parent.parent / "assets" / "datadump-hero-logo.png"
+
+
+def render_hero_compact() -> None:
+    """Minimal header for AI-first workspace — prompt is the hero."""
+
+    st.markdown(
+        f"""
+<div class="dde-hero-compact">
+<div class="dde-hero-compact-name">{APP_NAME}</div>
+<div class="dde-hero-compact-tagline">{APP_TAGLINE_SHORT}</div>
+<hr class="dde-hero-compact-rule" />
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
 
 def render_hero() -> None:

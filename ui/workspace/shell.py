@@ -10,8 +10,8 @@ import logging
 import streamlit as st
 
 from core.workspace_navigation import get_workspace_section
-from ui.hero import render_hero
-from ui.onboarding import render_onboarding_banner, render_onboarding_wizard
+from ui.hero import render_hero, render_hero_compact
+from ui.onboarding import render_onboarding_wizard
 from ui.project_summary import render_project_summary
 from ui.report_preview import render_report_preview_if_open
 
@@ -56,14 +56,17 @@ def render_workspace_shell() -> None:
     """Render the active workspace section."""
 
     active_section = get_workspace_section()
+    is_ai_workspace = active_section == "documents"
 
-    render_hero()
+    if is_ai_workspace:
+        render_hero_compact()
+    else:
+        render_hero()
 
-    showing_onboarding = render_onboarding_wizard()
-    if not showing_onboarding:
-        render_onboarding_banner()
+    render_onboarding_wizard()
 
-    render_project_summary()
+    if not is_ai_workspace:
+        render_project_summary()
 
     if active_section == "overview":
         renderer = _section_renderer("overview")
@@ -72,7 +75,8 @@ def render_workspace_shell() -> None:
         render_report_preview_if_open()
         return
 
-    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+    if not is_ai_workspace:
+        st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
 
     renderer = _section_renderer(active_section)
 

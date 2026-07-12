@@ -13,7 +13,7 @@ from typing import Any, Callable
 
 import streamlit as st
 
-from ui.document_library import render_document_upload
+from ui.document_library import render_compact_document_attach, render_document_upload
 from ui.projects import (
     get_active_workspace,
     get_user_projects,
@@ -231,6 +231,8 @@ def _render_action_buttons(
 
 
 def _render_prompt_hero(on_action: Callable[[AIWorkspaceAction], None]) -> None:
+    render_compact_document_attach()
+
     st.markdown(
         """
 <div class="dde-ai-prompt-hero">
@@ -255,14 +257,13 @@ def _render_prompt_hero(on_action: Callable[[AIWorkspaceAction], None]) -> None:
             )
 
         with send_col:
-            st.markdown('<div class="dde-ai-send-wrap">', unsafe_allow_html=True)
+            st.markdown('<div class="dde-ai-send-marker"></div>', unsafe_allow_html=True)
             submitted = st.form_submit_button(
                 "+",
                 type="primary",
                 use_container_width=True,
                 help="Run request",
             )
-            st.markdown("</div>", unsafe_allow_html=True)
 
         if submitted:
             st.session_state[AI_WORKSPACE_PROMPT_KEY] = prompt

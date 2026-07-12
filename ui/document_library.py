@@ -26,6 +26,8 @@ SUPPORTED_TYPES = ["pdf", "docx", "xlsx", "pptx", "txt", "csv"]
 PREVIEW_CHAR_LIMIT = 4000
 UPLOADER_STATE_KEY = "document_uploader_key"
 COMPLETED_UPLOAD_BATCH_KEY = "completed_upload_batch"
+AI_WORKSPACE_ATTACH_KEY = "ai_workspace_attach_uploader_key"
+AI_WORKSPACE_ATTACH_BATCH_KEY = "ai_workspace_attach_batch"
 
 
 def _upload_batch_id(uploaded_files: list) -> str:
@@ -40,6 +42,41 @@ def _upload_batch_id(uploaded_files: list) -> str:
 def _init_upload_state() -> None:
     if UPLOADER_STATE_KEY not in st.session_state:
         st.session_state[UPLOADER_STATE_KEY] = 0
+
+
+def _init_attach_upload_state() -> None:
+    if AI_WORKSPACE_ATTACH_KEY not in st.session_state:
+        st.session_state[AI_WORKSPACE_ATTACH_KEY] = 0
+
+
+def _process_uploaded_files(
+    uploaded_files: list,
+    workspace: dict,
+    *,
+    batch_key: str,
+    uploader_state_key: str,
+    replace_existing: bool = False,
+) -> None:
+    batch_id = _upload_batch_id(uploaded_files)
+    if st.session_state.get(batch_key) == batch_id:
+        return
+
+    try:
+        with loading("Uploading documents..."):
+            _, processed_documents = _upload_documents().execute(
+                project=workspace,
+                uploaded_files=uploaded_files,
+                overwrite=replace_existing,
+            )
+
+        st.session_state[batch_key] = batch_id
+        st.session_state[uploader_state_key] += 1
+
+        if processed_documents:
+            show_success(f"Uploaded {len(processed_documents)} document(s).")
+        st.rerun()
+    except Exception as exc:
+        show_error(exc)
 
 
 def _render_upload_zone() -> list:
@@ -84,6 +121,35 @@ def _preview_document(project_id: str, filename: str) -> str:
     return text
 
 
+def render_compact_document_attach() -> None:
+    """Compact attach control shown above the AI Workspace prompt."""
+
+    initialize_projects()
+
+    if is_project_pending():
+        return
+
+    workspace = get_active_workspace()
+    _init_attach_upload_state()
+
+    st.markdown('<div class="dde-ai-attach-row-marker"></div>', unsafe_allow_html=True)
+    uploaded_files = st.file_uploader(
+        "Attach documents",
+        type=SUPPORTED_TYPES,
+        accept_multiple_files=True,
+        key=f"ai_workspace_attach_{st.session_state[AI_WORKSPACE_ATTACH_KEY]}",
+        help="Upload documents to use when generating reports",
+    )
+
+    if uploaded_files:
+        _process_uploaded_files(
+            uploaded_files,
+            workspace,
+            batch_key=AI_WORKSPACE_ATTACH_BATCH_KEY,
+            uploader_state_key=AI_WORKSPACE_ATTACH_KEY,
+        )
+
+
 def render_document_upload() -> None:
     """Upload documents into the active Quick Report or project workspace."""
 
@@ -104,30 +170,13 @@ def render_document_upload() -> None:
         uploaded_files = _render_upload_zone()
 
     if uploaded_files:
-        batch_id = _upload_batch_id(uploaded_files)
-        already_processed = (
-            st.session_state.get(COMPLETED_UPLOAD_BATCH_KEY) == batch_id
+        _process_uploaded_files(
+            uploaded_files,
+            workspace,
+            batch_key=COMPLETED_UPLOAD_BATCH_KEY,
+            uploader_state_key=UPLOADER_STATE_KEY,
+            replace_existing=replace_existing,
         )
-
-        if not already_processed:
-            try:
-                with loading("Uploading documents..."):
-                    _, processed_documents = _upload_documents().execute(
-                        project=workspace,
-                        uploaded_files=uploaded_files,
-                        overwrite=replace_existing,
-                    )
-
-                st.session_state[COMPLETED_UPLOAD_BATCH_KEY] = batch_id
-                st.session_state[UPLOADER_STATE_KEY] += 1
-
-                if processed_documents:
-                    show_success(
-                        f"Uploaded {len(processed_documents)} document(s)."
-                    )
-                st.rerun()
-            except Exception as exc:
-                show_error(exc)
 
 
 def render_document_library() -> None:
