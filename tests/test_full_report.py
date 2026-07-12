@@ -64,7 +64,7 @@ def test_build_full_report_prompt_includes_period_rollup():
 
 
 def test_starter_plan_includes_full_report(isolated_env):
-    usage = UsageService(user_id=TEST_USER_ID)
+    usage = UsageService()
     usage.set_plan("starter")
     plans = PlanService(usage)
 
@@ -74,7 +74,7 @@ def test_starter_plan_includes_full_report(isolated_env):
 
 
 def test_free_plan_locks_full_report(isolated_env):
-    usage = UsageService(user_id=TEST_USER_ID)
+    usage = UsageService()
     plans = PlanService(usage)
 
     assert "Full Report" in plans.locked_report_types()

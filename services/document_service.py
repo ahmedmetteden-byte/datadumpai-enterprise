@@ -9,7 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from core.auth import get_current_user_id
+from core.current_user import CurrentUser, require_current_user
+from core.project_access import assert_project_access
 from services.timeline_service import TimelineService
 from storage.file_store import FileStore
 
@@ -23,13 +24,16 @@ class DocumentService:
 
     def __init__(
         self,
-        projects_root: Path | str | None = None,
-        user_id: str | None = None,
+        *,
         file_store: FileStore | None = None,
+        current_user: CurrentUser | None = None,
     ) -> None:
-        resolved_user_id = user_id or get_current_user_id()
-        self._user_id = resolved_user_id
-        self._file_store = file_store or FileStore(resolved_user_id)
+        self._current_user = current_user or require_current_user()
+        self._file_store = file_store or FileStore(self._current_user)
+
+    @property
+    def current_user(self) -> CurrentUser:
+        return self._current_user
 
     def _utc_now(self) -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -67,6 +71,7 @@ class DocumentService:
         *,
         overwrite: bool = False,
     ) -> dict[str, Any]:
+        assert_project_access(project_id)
         filename = self._safe_filename(uploaded_file.name)
 
         if not overwrite:
@@ -103,7 +108,7 @@ class DocumentService:
         try:
             from services.activity_service import ActivityService
 
-            ActivityService(self._user_id).log(
+            ActivityService().log(
                 "document.uploaded",
                 f"Uploaded {filename}",
                 metadata={"project_id": project_id, "filename": filename},
@@ -114,6 +119,11 @@ class DocumentService:
         return metadata
 
     def get_documents(self, project_id: str) -> list[dict[str, Any]]:
+        try:
+            assert_project_access(project_id)
+        except PermissionError:
+            return []
+
         documents: list[dict[str, Any]] = []
 
         for filename in self._file_store.list_files(project_id, "documents"):
@@ -144,6 +154,7 @@ class DocumentService:
         return documents
 
     def read_document_text(self, project_id: str, filename: str, **kwargs) -> str:
+        assert_project_access(project_id)
         safe_name = self._safe_filename(filename)
         document = next(
             (item for item in self.get_documents(project_id) if item["filename"] == safe_name),
@@ -159,6 +170,7 @@ class DocumentService:
             return DocumentProcessor.extract_text_from_path(str(path), **kwargs)
 
     def delete_document(self, project_id: str, filename: str) -> None:
+        assert_project_access(project_id)
         safe_name = self._safe_filename(filename)
         document = next(
             (item for item in self.get_documents(project_id) if item["filename"] == safe_name),
@@ -171,6 +183,7 @@ class DocumentService:
         self._file_store.delete(document["path"])
 
     def get_document_path(self, project_id: str, filename: str) -> Path:
+        assert_project_access(project_id)
         safe_name = self._safe_filename(filename)
         document = next(
             (item for item in self.get_documents(project_id) if item["filename"] == safe_name),

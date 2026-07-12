@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from core.auth import get_current_user_id
+from core.current_user import CurrentUser, require_current_user
 from repositories.project_repository import ProjectRepository
 from services.document_service import DocumentService
 from services.timeline_service import TimelineService
@@ -33,14 +33,20 @@ class ProjectService:
 
     def __init__(
         self,
-        storage_path: Path | str = "data/projects.json",
+        *,
         document_service: DocumentService | None = None,
-        user_id: str | None = None,
+        current_user: CurrentUser | None = None,
     ) -> None:
-        self._user_id = user_id or get_current_user_id()
-        self.repository = ProjectRepository(user_id=self._user_id)
-        self._document_service = document_service or DocumentService(user_id=self._user_id)
+        self._current_user = current_user or require_current_user()
+        self.repository = ProjectRepository(self._current_user)
+        self._document_service = document_service or DocumentService(
+            current_user=self._current_user,
+        )
         self._ensure_storage_exists()
+
+    @property
+    def current_user(self) -> CurrentUser:
+        return self._current_user
 
     def _ensure_storage_exists(self) -> None:
         """Create the storage directory and file when they do not exist."""
@@ -51,26 +57,6 @@ class ProjectService:
         """Return the current UTC timestamp in ISO 8601 format."""
 
         return datetime.now(timezone.utc).isoformat()
-
-    def _read_projects(self) -> list[dict[str, Any]]:
-        """Load projects from disk."""
-
-        with self._storage_path.open(encoding="utf-8") as file:
-            data = json.load(file)
-
-        if not isinstance(data, list):
-            raise ValueError(
-                f"Expected a list in {self._storage_path}, got {type(data).__name__}."
-            )
-
-        return data
-
-    def _write_projects(self, projects: list[dict[str, Any]]) -> None:
-        """Persist projects to disk."""
-
-        with self._storage_path.open("w", encoding="utf-8") as file:
-            json.dump(projects, file, indent=2)
-            file.write("\n")
 
     def _find_project_index(
         self,
@@ -191,7 +177,7 @@ class ProjectService:
 
         project = {
             "id": str(uuid.uuid4()),
-            "owner_id": self._user_id,
+            "owner_id": self._current_user.id,
             "name": normalized_name,
             "description": "",
             "created_at": timestamp,

@@ -78,7 +78,7 @@ def test_workspace_reports_match_disk(
 
 
 def test_save_report_persists_to_disk(isolated_env):
-    project_id = "test-project"
+    project_id = ProjectService().create_project("Reports Disk Project")["id"]
 
     metadata = ReportService.save_report(
         project_id,

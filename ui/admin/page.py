@@ -7,7 +7,7 @@ from __future__ import annotations
 import streamlit as st
 
 import config
-from core.auth import get_current_user_id
+from core.current_user import current_user_id
 from services.admin_service import AdminService
 
 
@@ -75,7 +75,7 @@ def _render_users(service: AdminService) -> None:
                 service.set_user_plan(
                     user["user_id"],
                     new_plan,
-                    actor_user_id=get_current_user_id(),
+                    actor_user_id=current_user_id(),
                 )
                 st.success(f"Plan updated to {config.PLANS[new_plan]['label']}.")
                 st.rerun()

@@ -9,7 +9,7 @@ bootstrap_system_ssl()
 
 import streamlit as st
 
-from config import LAYOUT, PAGE_ICON, PAGE_TITLE, SIDEBAR_STATE, backend_configuration_warnings
+from config import LAYOUT, PAGE_ICON, PAGE_TITLE, SIDEBAR_STATE, backend_configuration_warnings, validate_production_auth_configuration
 from core.auth import initialize_auth, is_authenticated, is_auth_bootstrap_pending, complete_auth_bootstrap, render_auth_gate
 from core.auth_persistence import cookies_are_ready
 from core.billing_callbacks import handle_billing_return
@@ -52,6 +52,10 @@ load_styles()
 
 for warning in backend_configuration_warnings():
     st.warning(warning)
+
+for fatal in validate_production_auth_configuration():
+    st.error(fatal)
+    st.stop()
 
 if not is_authenticated():
     page = get_active_page()

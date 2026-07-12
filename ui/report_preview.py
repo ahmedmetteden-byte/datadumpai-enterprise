@@ -79,10 +79,6 @@ def _report_preview_dialog() -> None:
         unsafe_allow_html=True,
     )
 
-    st.markdown('<div class="dde-report-preview-body">', unsafe_allow_html=True)
-    render_report_content(report)
-    st.markdown("</div>", unsafe_allow_html=True)
-
     reporting_period = str(
         (draft.get("report") or {}).get("metadata", {}).get("report_context", {}).get(
             "reporting_period",
@@ -93,6 +89,7 @@ def _report_preview_dialog() -> None:
     from ui.report_insights import (
         render_explore_visual_insights,
         render_report_insights_panel,
+        render_visual_insights_charts,
     )
 
     render_report_insights_panel(report, reporting_period=reporting_period)
@@ -108,6 +105,13 @@ def _report_preview_dialog() -> None:
         reporting_period=reporting_period,
         on_report_updated=_update_draft,
     )
+    render_visual_insights_charts(report)
+
+    st.markdown("---")
+
+    st.markdown('<div class="dde-report-preview-body">', unsafe_allow_html=True)
+    render_report_content(report, include_charts=False)
+    st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("---")
 
@@ -134,11 +138,8 @@ def _report_preview_dialog() -> None:
 
     with regen_col:
         if st.button("Regenerate", use_container_width=True, key="draft_regenerate"):
-            from core.auth import get_current_user_id
-
             document_text = _report_pipeline().load_document_text_from_selection(
                 draft["document_selection"],
-                user_id=get_current_user_id(),
             )["combined_text"].strip()
 
             if not document_text:
@@ -172,7 +173,8 @@ def _report_preview_dialog() -> None:
                 show_error(exc)
 
     with discard_col:
-        if st.button("Discard", use_container_width=True, key="draft_discard"):
+        st.markdown('<div class="dde-danger-action-marker"></div>', unsafe_allow_html=True)
+        if st.button("Discard", use_container_width=True, key="draft_discard", type="secondary"):
             clear_draft_report()
             st.rerun()
 

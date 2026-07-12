@@ -84,15 +84,20 @@ def test_onboarding_detects_project_creation(tmp_path, monkeypatch, isolated_env
     monkeypatch.setattr("core.user_paths.get_user_projects_json", lambda uid: base / uid / "projects.json")
     monkeypatch.setattr("core.user_paths.get_user_projects_root", lambda uid: base / uid / "projects")
 
-    onboarding = OnboardingService(user_id)
-    assert onboarding.needs_onboarding() is True
-
+    from core.current_user import current_user_scope
+    from models.user import User
     from services.project_service import ProjectService
 
-    ProjectService(user_id).create_project("First Project")
+    user = User(id=user_id, email="onboarding@example.com", email_verified=True)
 
-    completed = onboarding._detect_completed_steps()
-    assert completed[1] is True
+    with current_user_scope(user):
+        onboarding = OnboardingService()
+        assert onboarding.needs_onboarding() is True
+
+        ProjectService().create_project("First Project")
+
+        completed = onboarding._detect_completed_steps()
+        assert completed[1] is True
 
 
 def test_activity_service_persists_json_entries(tmp_path, monkeypatch, isolated_env):
@@ -102,7 +107,7 @@ def test_activity_service_persists_json_entries(tmp_path, monkeypatch, isolated_
 
     monkeypatch.setattr("core.user_paths.get_user_data_root", lambda uid: base / uid)
 
-    service = ActivityService(user_id)
+    service = ActivityService()
     service.log("user.signed_in", "Signed in")
 
     logs = service.list_recent()

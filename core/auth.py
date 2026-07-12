@@ -132,10 +132,9 @@ def get_current_user() -> User | None:
 
 
 def get_current_user_id() -> str:
-    user = get_current_user()
-    if user is None:
-        raise RuntimeError("No authenticated user is available.")
-    return user.id
+    from core.current_user import current_user_id
+
+    return current_user_id()
 
 
 def get_access_token() -> str | None:
@@ -171,9 +170,15 @@ def _store_session(session: AuthSession, *, remember_me: bool = False) -> None:
 
 def _log_activity(user_id: str, action: str, message: str) -> None:
     try:
+        from core.current_user import bind_current_user, clear_current_user_binding
+        from models.user import User
         from services.activity_service import ActivityService
 
-        ActivityService(user_id).log(action, message)
+        bind_current_user(User(id=user_id, email="", email_verified=True))
+        try:
+            ActivityService().log(action, message)
+        finally:
+            clear_current_user_binding()
     except Exception:
         pass
 
@@ -284,7 +289,7 @@ def is_admin() -> bool:
     try:
         from services.profile_service import ProfileService
 
-        return ProfileService(user.id).get_role() == "admin"
+        return ProfileService().get_role() == "admin"
     except Exception:
         return False
 

@@ -18,6 +18,7 @@ from ui.document_library import (
     SUPPORTED_TYPES,
     process_workspace_uploads,
 )
+from ui.formatting import file_type_info
 from ui.projects import get_active_workspace, initialize_projects
 from ui.ai_workspace_runtime import (
     AIWorkspaceSettings,
@@ -34,7 +35,6 @@ from ui.ai_workspace_runtime import (
 
 AI_WORKSPACE_PROMPT_KEY = "ai_workspace_prompt"
 AI_WORKSPACE_MESSAGES_KEY = "ai_workspace_messages"
-AI_WORKSPACE_ATTACH_OPEN_KEY = "ai_workspace_attach_open"
 AI_WORKSPACE_SETTINGS_PREFIX = "ai_workspace_setting_"
 AI_WORKSPACE_LAST_INFERENCE_KEY = "ai_workspace_last_inference"
 
@@ -59,6 +59,8 @@ SETTING_DEFAULTS: dict[str, object] = {
     "include_charts": True,
     "custom_instructions": "",
 }
+
+MANY_DOCS_THRESHOLD = 5
 
 _INTENT_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bexecutive\b", re.I), "Executive Summary"),
@@ -86,6 +88,10 @@ def _excluded_state_key(workspace_id: str) -> str:
     return f"ai_workspace_excluded_{workspace_id}"
 
 
+def _multiselect_state_key(workspace_id: str) -> str:
+    return f"ai_workspace_selected_{workspace_id}"
+
+
 def get_excluded_filenames(workspace_id: str) -> set[str]:
     return set(st.session_state.get(_excluded_state_key(workspace_id), []))
 
@@ -94,6 +100,22 @@ def exclude_filename(workspace_id: str, filename: str) -> None:
     excluded = get_excluded_filenames(workspace_id)
     excluded.add(filename)
     st.session_state[_excluded_state_key(workspace_id)] = sorted(excluded)
+    _sync_multiselect_state(workspace_id)
+
+
+def set_active_selection(workspace_id: str, selected_filenames: list[str]) -> None:
+    all_filenames = list_workspace_context_filenames({"id": workspace_id})
+    selected = set(selected_filenames)
+    excluded = [filename for filename in all_filenames if filename not in selected]
+    st.session_state[_excluded_state_key(workspace_id)] = sorted(excluded)
+    st.session_state[_multiselect_state_key(workspace_id)] = [
+        filename for filename in all_filenames if filename in selected
+    ]
+
+
+def _sync_multiselect_state(workspace_id: str) -> None:
+    active = active_context_filenames({"id": workspace_id})
+    st.session_state[_multiselect_state_key(workspace_id)] = active
 
 
 def active_context_filenames(workspace: dict) -> list[str]:
@@ -175,12 +197,13 @@ def _handle_prompt_submit(prompt: str, workspace: dict, context_files: list[str]
 
     _append_message("assistant", result.message)
 
-    if result.success:
-        st.session_state[AI_WORKSPACE_ATTACH_OPEN_KEY] = False
-
 
 def _safe_chip_key(filename: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_]", "_", filename)
+
+
+def _file_icon(filename: str) -> str:
+    return file_type_info(filename)[1]
 
 
 def _render_workspace_styles() -> None:
@@ -289,7 +312,7 @@ def _render_workspace_styles() -> None:
     margin: 0 0 12px;
 }
 .dde-ai-composer-marker,
-.dde-ai-attach-open-marker {
+.dde-ai-paperclip-slot {
     display: none;
 }
 [data-testid="stHorizontalBlock"]:has(.dde-ai-composer-marker) .stButton > button {
@@ -297,28 +320,52 @@ def _render_workspace_styles() -> None:
     font-size: 18px;
     padding: 0 12px;
 }
-[data-testid="stVerticalBlock"]:has(.dde-ai-attach-open-marker) [data-testid="stFileUploader"] {
-    margin: 0 0 10px;
-    background: transparent;
-    border: none;
-    padding: 0;
+[data-testid="stHorizontalBlock"]:has(.dde-ai-paperclip-slot) [data-testid="stFileUploader"] {
+    margin: 0;
 }
-[data-testid="stVerticalBlock"]:has(.dde-ai-attach-open-marker) [data-testid="stFileUploader"] label {
-    display: none;
+[data-testid="stHorizontalBlock"]:has(.dde-ai-paperclip-slot) [data-testid="stFileUploader"] section {
+    padding: 0;
+    border: none;
+    background: transparent;
+}
+[data-testid="stHorizontalBlock"]:has(.dde-ai-paperclip-slot) [data-testid="stFileUploader"] button {
+    min-height: 46px;
+    min-width: 46px;
+    border-radius: 12px !important;
+    border: 2px solid #2563EB !important;
+    background: #FFFFFF !important;
+    color: #2563EB !important;
+    font-size: 18px !important;
+    padding: 0 12px !important;
+}
+[data-testid="stHorizontalBlock"]:has(.dde-ai-paperclip-slot) [data-testid="stFileUploader"] button:hover {
+    background: #EFF6FF !important;
+    border-color: #1D4ED8 !important;
+}
+[data-testid="stHorizontalBlock"]:has(.dde-ai-paperclip-slot) [data-testid="stFileUploader"] button p,
+[data-testid="stHorizontalBlock"]:has(.dde-ai-paperclip-slot) [data-testid="stFileUploader"] button span,
+[data-testid="stHorizontalBlock"]:has(.dde-ai-paperclip-slot) [data-testid="stFileUploader"] button div {
+    font-size: 0 !important;
+}
+[data-testid="stHorizontalBlock"]:has(.dde-ai-paperclip-slot) [data-testid="stFileUploader"] button::before {
+    content: "📎";
+    font-size: 18px;
+    line-height: 1;
 }
 [data-testid="stHorizontalBlock"]:has(.dde-ai-chip-row-marker) .stButton > button {
     font-size: 12px;
     min-height: 34px;
     padding: 6px 12px;
     border-radius: 999px !important;
-    background: #EFF6FF !important;
-    border: 1px solid #BFDBFE !important;
-    color: #1E3A8A !important;
+    background: #F8FAFC !important;
+    border: 1px solid #E2E8F0 !important;
+    color: #0F172A !important;
     font-weight: 600;
+    box-shadow: none !important;
 }
 [data-testid="stHorizontalBlock"]:has(.dde-ai-chip-row-marker) .stButton > button:hover {
-    background: #DBEAFE !important;
-    border-color: #93C5FD !important;
+    background: #EFF6FF !important;
+    border-color: #BFDBFE !important;
     color: #1E3A8A !important;
 }
 [data-testid="stHorizontalBlock"]:has(.dde-ai-example-marker) .stButton > button {
@@ -384,22 +431,86 @@ def _render_last_inference() -> None:
     )
 
 
-def _render_context_chips(workspace: dict, filenames: list[str]) -> None:
+def _render_inline_attachment_chips(workspace: dict, filenames: list[str]) -> None:
     if not filenames:
         return
 
     st.markdown('<div class="dde-ai-chip-row-marker"></div>', unsafe_allow_html=True)
-    columns = st.columns(min(len(filenames), 3))
+    columns = st.columns(min(len(filenames), 4))
     for index, filename in enumerate(filenames):
         with columns[index % len(columns)]:
             if st.button(
-                f"📄 {filename}  ✕",
+                f"{_file_icon(filename)} {filename}  ✕",
                 key=f"ai_chip_remove_{_safe_chip_key(filename)}",
                 use_container_width=True,
                 help="Remove from this conversation (keeps the file in your project)",
             ):
                 exclude_filename(workspace["id"], filename)
                 st.rerun()
+
+
+def _render_document_selection_panel(workspace: dict, all_filenames: list[str]) -> None:
+    active_filenames = active_context_filenames(workspace)
+    search_key = f"ai_doc_search_{workspace['id']}"
+    search_query = st.text_input(
+        "Search documents",
+        key=search_key,
+        placeholder="Search documents…",
+        label_visibility="collapsed",
+    )
+
+    filtered = [
+        filename
+        for filename in all_filenames
+        if not search_query or search_query.lower() in filename.lower()
+    ]
+    multiselect_options = sorted(set(filtered) | set(active_filenames))
+
+    select_all_col, clear_col = st.columns(2)
+    with select_all_col:
+        if st.button("Select All", key=f"ai_doc_select_all_{workspace['id']}", use_container_width=True):
+            set_active_selection(workspace["id"], all_filenames)
+            st.rerun()
+    with clear_col:
+        if st.button(
+            "Clear Selection",
+            key=f"ai_doc_clear_{workspace['id']}",
+            use_container_width=True,
+        ):
+            set_active_selection(workspace["id"], [])
+            st.rerun()
+
+    multiselect_key = _multiselect_state_key(workspace["id"])
+    if multiselect_key not in st.session_state:
+        st.session_state[multiselect_key] = active_filenames
+
+    selected = st.multiselect(
+        "Documents in this conversation",
+        options=multiselect_options,
+        key=multiselect_key,
+        label_visibility="collapsed",
+        help="Selected documents are included in your next request.",
+    )
+    if set(selected) != set(active_filenames):
+        set_active_selection(workspace["id"], selected)
+
+
+def _render_attachment_chips(workspace: dict) -> None:
+    all_filenames = list_workspace_context_filenames(workspace)
+    active_filenames = active_context_filenames(workspace)
+
+    if not all_filenames:
+        return
+
+    if len(all_filenames) > MANY_DOCS_THRESHOLD:
+        with st.expander(
+            f"Documents in this conversation ({len(active_filenames)}/{len(all_filenames)})",
+            expanded=bool(active_filenames),
+        ):
+            _render_document_selection_panel(workspace, all_filenames)
+        return
+
+    _render_inline_attachment_chips(workspace, active_filenames)
 
 
 def _render_conversation() -> None:
@@ -430,11 +541,11 @@ def _render_examples(on_select: Callable[[str], None]) -> None:
                     on_select(example)
 
 
-def _render_attach_control(workspace: dict) -> None:
+def _render_paperclip_uploader(workspace: dict) -> None:
     if AI_WORKSPACE_ATTACH_KEY not in st.session_state:
         st.session_state[AI_WORKSPACE_ATTACH_KEY] = 0
 
-    st.markdown('<div class="dde-ai-attach-open-marker"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="dde-ai-paperclip-slot"></div>', unsafe_allow_html=True)
     uploaded_files = st.file_uploader(
         "Attach files",
         type=SUPPORTED_TYPES,
@@ -449,7 +560,6 @@ def _render_attach_control(workspace: dict) -> None:
             batch_key=AI_WORKSPACE_ATTACH_BATCH_KEY,
             uploader_state_key=AI_WORKSPACE_ATTACH_KEY,
         )
-        st.session_state[AI_WORKSPACE_ATTACH_OPEN_KEY] = False
 
 
 def _render_composer(
@@ -471,11 +581,7 @@ def _render_composer(
     attach_col, composer_col = st.columns([0.08, 0.92], gap="small", vertical_alignment="bottom")
 
     with attach_col:
-        if st.button("📎", key="ai_workspace_attach_toggle", help="Attach documents"):
-            st.session_state[AI_WORKSPACE_ATTACH_OPEN_KEY] = not st.session_state.get(
-                AI_WORKSPACE_ATTACH_OPEN_KEY, False
-            )
-            st.rerun()
+        _render_paperclip_uploader(workspace)
 
     with composer_col:
         with st.form("ai_workspace_prompt_form", clear_on_submit=False):
@@ -547,7 +653,6 @@ def render_ai_workspace() -> None:
 
     context_files = active_context_filenames(workspace)
     summary = summarize_workspace_context(workspace, context_files)
-    attach_open = st.session_state.get(AI_WORKSPACE_ATTACH_OPEN_KEY, False)
     pending_prompt = st.session_state.pop(AI_WORKSPACE_PROMPT_KEY, "")
 
     st.markdown('<div class="dde-ai-workspace-shell">', unsafe_allow_html=True)
@@ -555,12 +660,8 @@ def render_ai_workspace() -> None:
     _render_prompt_intro()
     _render_context_panel(summary)
     _render_last_inference()
-    _render_context_chips(workspace, context_files)
+    _render_attachment_chips(workspace)
     _render_conversation()
-
-    if attach_open or not context_files:
-        _render_attach_control(workspace)
-
     _render_examples(_queue_example_prompt)
     _render_composer(workspace, context_files, pending_prompt=pending_prompt)
     _render_advanced_options()
@@ -569,9 +670,9 @@ def render_ai_workspace() -> None:
         if st.button("Clear conversation", key="ai_workspace_clear", type="secondary"):
             st.session_state.pop(AI_WORKSPACE_PROMPT_KEY, None)
             st.session_state[AI_WORKSPACE_MESSAGES_KEY] = []
-            st.session_state[AI_WORKSPACE_ATTACH_OPEN_KEY] = False
             st.session_state.pop(AI_WORKSPACE_LAST_INFERENCE_KEY, None)
             st.session_state[_excluded_state_key(workspace["id"])] = []
+            st.session_state.pop(_multiselect_state_key(workspace["id"]), None)
             st.rerun()
 
     st.markdown("</div>", unsafe_allow_html=True)

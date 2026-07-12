@@ -22,14 +22,8 @@ def test_core_workflow_smoke(isolated_env):
     Verify the main end-to-end workflow without calling external AI APIs.
     """
 
-    project_service = ProjectService(
-        document_service=DocumentService(
-            projects_root=isolated_env["root"]
-        )
-    )
-    document_service = DocumentService(
-        projects_root=isolated_env["root"]
-    )
+    project_service = ProjectService()
+    document_service = DocumentService()
 
     # 1. Create project
     project = project_service.create_project("Smoke Test Project")

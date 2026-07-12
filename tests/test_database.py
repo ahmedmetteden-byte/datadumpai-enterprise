@@ -55,8 +55,9 @@ def test_project_repository_uses_json_backend_by_default(monkeypatch, isolated_e
     monkeypatch.setattr("config.use_database", lambda: False)
 
     from repositories.json_project_repository import JsonProjectRepository
+    from core.current_user import CurrentUser
     from repositories.project_repository import ProjectRepository
 
-    repository = ProjectRepository(user_id=TEST_USER_ID)
+    repository = ProjectRepository(CurrentUser(id=TEST_USER_ID, email=""))
 
     assert isinstance(repository._impl, JsonProjectRepository)

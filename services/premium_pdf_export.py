@@ -57,6 +57,7 @@ from services.report_markdown_renderer import (
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 LOGO_CANDIDATES = (
+    ASSETS_DIR / "logo.png",
     ASSETS_DIR / "datadump-hero-logo.png",
     ASSETS_DIR / "datadump-sidebar-word.png",
 )
@@ -351,18 +352,19 @@ class PremiumPDFBuilder:
         logo = self._logo_path()
 
         if logo:
-            story.append(Image(str(logo), width=2.8 * inch, height=0.9 * inch, kind="proportional"))
-            story.append(Spacer(1, 0.35 * inch))
+            story.append(Image(str(logo), width=1.6 * inch, height=1.6 * inch, kind="proportional"))
+            story.append(Spacer(1, 0.45 * inch))
 
-        story.append(Paragraph(APP_NAME, self.styles["cover_title"]))
         story.append(Paragraph("Executive Intelligence Report", self.styles["cover_subtitle"]))
+        story.append(Spacer(1, 0.35 * inch))
+        story.append(Paragraph("Prepared by", self.styles["cover_meta_label"]))
+        story.append(Paragraph(APP_NAME, self.styles["cover_meta_value"]))
         story.append(Spacer(1, 0.45 * inch))
 
         meta_rows = [
             ("Project", self.metadata.project_name),
             ("Reporting Period", self.metadata.reporting_period),
             ("Generated", datetime.now(timezone.utc).strftime("%d %B %Y")),
-            ("Prepared by", "DataDumpAI Intelligence Engine"),
         ]
 
         for label, value in meta_rows:

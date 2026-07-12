@@ -314,10 +314,8 @@ def evaluate_visualization_decision(
 
 def low_confidence_user_message() -> str:
     return (
-        "No meaningful visualizations were identified. "
-        "This report primarily contains descriptive or narrative information, "
-        "so charts would not improve understanding. "
-        "Visualizations work best with numerical, comparative, or trend-based information."
+        "No meaningful visualizations could be generated because this report is "
+        "primarily narrative or descriptive."
     )
 
 

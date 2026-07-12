@@ -89,6 +89,20 @@ def is_supabase_configured() -> bool:
     return bool(SUPABASE_URL and SUPABASE_ANON_KEY)
 
 
+def validate_production_auth_configuration() -> list[str]:
+    """Return fatal misconfiguration messages for production auth."""
+
+    warnings: list[str] = []
+
+    if AUTH_DEV_BYPASS and is_supabase_configured():
+        warnings.append(
+            "AUTH_DEV_BYPASS cannot be enabled when Supabase is configured. "
+            "Disable AUTH_DEV_BYPASS for multi-user production deployments."
+        )
+
+    return warnings
+
+
 def backend_configuration_warnings() -> list[str]:
     """Return user-visible warnings when production backends are misconfigured."""
 

@@ -120,7 +120,7 @@ def test_explore_visual_insights_returns_friendly_message_for_narrative_reports(
 
     assert decision.level == VisualizationConfidenceLevel.LOW
     assert message is not None
-    assert "No meaningful visualizations were identified" in message
+    assert "No meaningful visualizations could be generated" in message
     assert not has_chart_visuals(updated.charts)
 
 

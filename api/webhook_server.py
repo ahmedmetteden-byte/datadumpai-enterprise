@@ -69,7 +69,7 @@ async def stripe_webhook(request: Request) -> dict[str, str]:
             user_id = find_user_id_by_subscription_id(subscription_id)
 
         if user_id:
-            subscription = SubscriptionService(user_id)
+            subscription = SubscriptionService.for_user_id(user_id)
             status = data_object.get("status")
             if status == "active":
                 plan_id = (data_object.get("metadata") or {}).get("plan_id")
@@ -96,11 +96,11 @@ async def stripe_webhook(request: Request) -> dict[str, str]:
         customer_id = data_object.get("customer")
         user_id = find_user_id_by_customer_id(customer_id)
         if user_id:
-            SubscriptionService(user_id).mark_payment_failed()
+            SubscriptionService.for_user_id(user_id).mark_payment_failed()
             try:
                 from services.notification_service import NotificationService
 
-                NotificationService(user_id).notify_billing_event(
+                NotificationService.for_user_id(user_id).notify_billing_event(
                     subject="Payment failed — action required",
                     body=(
                         "We could not process your latest subscription payment. "
@@ -147,6 +147,6 @@ async def paystack_webhook(request: Request) -> dict[str, str]:
         customer_id = str((data.get("customer") or {}).get("id") or "")
         user_id = find_user_id_by_customer_id(customer_id)
         if user_id:
-            SubscriptionService(user_id).mark_canceled(at_period_end=False)
+            SubscriptionService.for_user_id(user_id).mark_canceled(at_period_end=False)
 
     return {"received": "true"}

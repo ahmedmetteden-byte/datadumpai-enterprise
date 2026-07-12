@@ -14,9 +14,7 @@ def test_document_pipeline_ingest_persists_files(
     project_service: ProjectService,
     text_upload,
 ):
-    document_service = DocumentService(
-        projects_root=isolated_env["root"]
-    )
+    document_service = DocumentService()
     pipeline = DocumentPipeline(
         document_service=document_service,
         project_service=project_service,
@@ -48,9 +46,7 @@ def test_document_pipeline_reuses_existing_file(
     project_service: ProjectService,
     text_upload,
 ):
-    document_service = DocumentService(
-        projects_root=isolated_env["root"]
-    )
+    document_service = DocumentService()
     pipeline = DocumentPipeline(
         document_service=document_service,
         project_service=project_service,
@@ -80,9 +76,7 @@ def test_document_pipeline_overwrite_replaces_file(
 ):
     from tests.conftest import MockUpload
 
-    document_service = DocumentService(
-        projects_root=isolated_env["root"]
-    )
+    document_service = DocumentService()
     pipeline = DocumentPipeline(
         document_service=document_service,
         project_service=project_service,
@@ -122,9 +116,7 @@ def test_document_pipeline_can_skip_text_extraction_on_upload(
     project_service: ProjectService,
     text_upload,
 ):
-    document_service = DocumentService(
-        projects_root=isolated_env["root"]
-    )
+    document_service = DocumentService()
     pipeline = DocumentPipeline(
         document_service=document_service,
         project_service=project_service,

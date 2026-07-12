@@ -8,7 +8,7 @@ from typing import Any
 
 import config
 from config import DEFAULT_PLAN
-from core.auth import get_current_user_id
+from core.current_user import require_current_user
 from core.database import get_database_client, handle_response
 from core.user_paths import get_user_profile_json, get_user_usage_json
 from repositories.billing_repository import merge_billing_fields
@@ -161,17 +161,27 @@ class SupabaseProfileRepository:
         )
 
 
-def get_usage_repository(user_id: str | None = None, *, default: dict[str, Any]):
-    resolved_user_id = user_id or get_current_user_id()
+def get_usage_repository_for_user(user_id: str, *, default: dict[str, Any]):
+    """Internal: load usage for an explicit user (admin tooling only)."""
 
     if config.use_database():
-        return SupabaseUsageRepository(resolved_user_id, default=default)
-    return JsonUsageRepository(resolved_user_id, default=default)
+        return SupabaseUsageRepository(user_id, default=default)
+    return JsonUsageRepository(user_id, default=default)
 
 
-def get_profile_repository(user_id: str | None = None, *, default: dict[str, Any]):
-    resolved_user_id = user_id or get_current_user_id()
+def get_profile_repository_for_user(user_id: str, *, default: dict[str, Any]):
+    """Internal: load profile for an explicit user (admin tooling only)."""
 
     if config.use_database():
-        return SupabaseProfileRepository(resolved_user_id, default=default)
-    return JsonProfileRepository(resolved_user_id, default=default)
+        return SupabaseProfileRepository(user_id, default=default)
+    return JsonProfileRepository(user_id, default=default)
+
+
+def get_usage_repository(*, default: dict[str, Any]):
+    user_id = require_current_user().id
+    return get_usage_repository_for_user(user_id, default=default)
+
+
+def get_profile_repository(*, default: dict[str, Any]):
+    user_id = require_current_user().id
+    return get_profile_repository_for_user(user_id, default=default)

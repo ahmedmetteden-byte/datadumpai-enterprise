@@ -13,7 +13,7 @@ from tests.conftest import TEST_USER_ID
 
 @pytest.fixture
 def plan_service(isolated_env) -> PlanService:
-    usage = UsageService(user_id=TEST_USER_ID)
+    usage = UsageService()
     return PlanService(usage)
 
 
@@ -25,7 +25,7 @@ def test_free_plan_report_types(plan_service: PlanService):
 
 
 def test_professional_plan_unlocks_intelligence(isolated_env):
-    usage = UsageService(user_id=TEST_USER_ID)
+    usage = UsageService()
     usage.set_plan("professional")
     plans = PlanService(usage)
 

@@ -13,7 +13,7 @@ from tests.conftest import TEST_USER_ID
 
 @pytest.fixture
 def usage_service(isolated_env) -> UsageService:
-    return UsageService(user_id=TEST_USER_ID)
+    return UsageService()
 
 
 def test_free_plan_defaults(usage_service: UsageService):
@@ -78,7 +78,7 @@ def test_usage_resets_on_new_period(isolated_env):
     )
     storage.save(storage.load())
 
-    service = UsageService(user_id=TEST_USER_ID)
+    service = UsageService()
     snapshot = service.get_snapshot()
 
     assert snapshot.period != "2020-01"

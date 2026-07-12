@@ -113,10 +113,9 @@ class AskCopilotUseCase:
             )
 
         try:
-            from core.auth import get_current_user_id
             from services.activity_service import ActivityService
 
-            ActivityService(get_current_user_id()).log(
+            ActivityService().log(
                 "copilot.asked",
                 f'Asked AI "{question[:120]}"',
                 metadata={"project_id": project_id},

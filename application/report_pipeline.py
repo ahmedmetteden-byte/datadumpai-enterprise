@@ -63,22 +63,19 @@ class ReportPipeline:
         project_id: str,
         filenames: list[str],
         *,
-        user_id: str | None = None,
         processing_mode: ReportProcessingMode = ReportProcessingMode.COMPREHENSIVE,
     ) -> str:
         """Extract and combine text from selected project documents."""
 
-        from core.auth import get_current_user_id
-
-        resolved_user_id = user_id or get_current_user_id()
         max_pdf_pages, max_tabular_rows = ReportPipeline._document_extraction_limits(
             processing_mode,
         )
         texts: list[str] = []
+        document_service = DocumentService()
 
         for filename in filenames:
             try:
-                text = DocumentService(user_id=resolved_user_id).read_document_text(
+                text = document_service.read_document_text(
                     project_id,
                     filename,
                     max_pdf_pages=max_pdf_pages,
@@ -94,7 +91,6 @@ class ReportPipeline:
     @staticmethod
     def _load_selection_item(
         item: dict[str, str],
-        user_id: str,
         processing_mode: ReportProcessingMode,
     ) -> tuple[str, str | None]:
         """Load one selected document. Returns (filename, chunk or None)."""
@@ -106,7 +102,7 @@ class ReportPipeline:
         )
 
         try:
-            chunk = DocumentService(user_id=user_id).read_document_text(
+            chunk = DocumentService().read_document_text(
                 project_id,
                 filename,
                 max_pdf_pages=max_pdf_pages,
@@ -125,12 +121,9 @@ class ReportPipeline:
         cls,
         selection: list[dict[str, str]],
         *,
-        user_id: str | None = None,
         processing_mode: ReportProcessingMode = ReportProcessingMode.COMPREHENSIVE,
     ) -> dict[str, Any]:
         """Load and combine text from a structured document selection."""
-
-        from core.auth import get_current_user_id
 
         if not selection:
             return {
@@ -142,7 +135,6 @@ class ReportPipeline:
                 "chunk_count": 0,
             }
 
-        resolved_user_id = user_id or get_current_user_id()
         loaded: list[str] = []
         skipped: list[str] = []
         texts: list[str] = []
@@ -154,7 +146,6 @@ class ReportPipeline:
                 executor.map(
                     lambda item: cls._load_selection_item(
                         item,
-                        resolved_user_id,
                         processing_mode,
                     ),
                     selection,
@@ -415,7 +406,6 @@ class ReportPipeline:
         )
         load_result = self.load_document_text_from_selection(
             selection,
-            user_id=self._document_service._user_id,
             processing_mode=processing_mode,
         )
         document_text = load_result["combined_text"].strip()

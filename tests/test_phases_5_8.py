@@ -18,7 +18,7 @@ from tests.conftest import TEST_USER, TEST_USER_ID
 
 
 def test_notification_preferences_round_trip(isolated_env):
-    service = NotificationService(TEST_USER_ID)
+    service = NotificationService()
     saved = service.save_preferences(
         {
             "report_ready": False,
@@ -30,18 +30,18 @@ def test_notification_preferences_round_trip(isolated_env):
 
     assert saved["report_ready"] is False
     assert saved["product_updates"] is True
-    assert NotificationService(TEST_USER_ID).get_preferences()["product_updates"] is True
+    assert NotificationService().get_preferences()["product_updates"] is True
 
 
 def test_profile_timezone_persisted(isolated_env):
-    profile = ProfileService(TEST_USER_ID)
+    profile = ProfileService()
     profile.save({"timezone": "Africa/Lagos"})
     assert profile.load()["timezone"] == "Africa/Lagos"
 
 
 def test_notify_report_ready_skips_when_disabled(isolated_env, monkeypatch):
-    NotificationService(TEST_USER_ID).save_preferences({"report_ready": False})
-    result = NotificationService(TEST_USER_ID).notify_report_ready(
+    NotificationService().save_preferences({"report_ready": False})
+    result = NotificationService().notify_report_ready(
         report_name="Board Pack",
         project_name="Q1",
         email=TEST_USER.email,
@@ -58,7 +58,7 @@ def test_is_admin_by_user_id(isolated_env, monkeypatch):
 
 def test_admin_lists_local_user(isolated_env, monkeypatch):
     monkeypatch.setattr("config.ADMIN_USER_IDS", (TEST_USER_ID,))
-    ProfileService(TEST_USER_ID).save({"full_name": "Admin Tester"})
+    ProfileService().save({"full_name": "Admin Tester"})
 
     users = AdminService().list_users()
     assert any(user["user_id"] == TEST_USER_ID for user in users)
@@ -70,7 +70,7 @@ def test_admin_set_user_plan(isolated_env, monkeypatch):
 
     from services.subscription_service import SubscriptionService
 
-    state = SubscriptionService(TEST_USER_ID).load_state()
+    state = SubscriptionService.for_user_id(TEST_USER_ID).load_state()
     assert state["billing_plan"] == "starter"
 
 

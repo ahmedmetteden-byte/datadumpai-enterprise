@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from config import DEFAULT_PLAN, PLANS, resolve_plan_id
-from core.auth import get_current_user_id
+from core.current_user import CurrentUser, require_current_user
 from repositories.account_repository import get_usage_repository
 from services.subscription_service import SubscriptionService
 
@@ -66,14 +66,16 @@ class UsageSnapshot:
 class UsageService:
     """Track and enforce monthly usage limits per plan."""
 
-    def __init__(self, storage_path: str | None = None, user_id: str | None = None) -> None:
-        resolved_user_id = user_id or get_current_user_id()
-        self._user_id = resolved_user_id
-        self._repository = get_usage_repository(
-            resolved_user_id,
-            default=self._default_state(),
-        )
-        self._subscription = SubscriptionService(resolved_user_id)
+    def __init__(
+        self,
+        *,
+        storage_path: str | None = None,
+        current_user: CurrentUser | None = None,
+    ) -> None:
+        self._current_user = current_user or require_current_user()
+        self._user_id = self._current_user.id
+        self._repository = get_usage_repository(default=self._default_state())
+        self._subscription = SubscriptionService(current_user=self._current_user)
 
     @staticmethod
     def _default_state() -> dict:
@@ -167,7 +169,7 @@ class UsageService:
             try:
                 from services.notification_service import NotificationService
 
-                NotificationService(self._user_id).notify_usage_limit(
+                NotificationService().notify_usage_limit(
                     limit_type="upload",
                     plan_label=PLANS[snapshot.plan]["label"],
                 )
@@ -190,7 +192,7 @@ class UsageService:
             try:
                 from services.notification_service import NotificationService
 
-                NotificationService(self._user_id).notify_usage_limit(
+                NotificationService().notify_usage_limit(
                     limit_type="report",
                     plan_label=PLANS[snapshot.plan]["label"],
                 )

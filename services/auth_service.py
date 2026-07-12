@@ -17,6 +17,12 @@ from config import (
     is_supabase_configured,
 )
 from models.user import User
+from services.email_uniqueness import (
+    DUPLICATE_EMAIL_MESSAGE,
+    EmailUniquenessService,
+    is_duplicate_email_error,
+    normalize_email,
+)
 
 
 class AuthError(Exception):
@@ -114,18 +120,31 @@ class AuthService:
         if not AUTH_DEV_BYPASS:
             raise AuthError("Development auth bypass is disabled.")
 
+        normalized_email = normalize_email(email)
+        if not normalized_email:
+            raise AuthError("Enter a valid email address.")
+
+        if EmailUniquenessService().email_exists(normalized_email):
+            raise AuthError(DUPLICATE_EMAIL_MESSAGE)
+
         resolved_name = full_name.strip() or "Local Developer"
         user = User(
             id=DEV_USER_ID,
-            email=email.strip() or DEV_USER_EMAIL,
+            email=normalized_email,
             full_name=resolved_name,
             email_verified=True,
         )
 
+        EmailUniquenessService().register_email(normalized_email, DEV_USER_ID)
+
         try:
+            from core.current_user import current_user_scope
             from services.profile_service import ProfileService
 
-            ProfileService(DEV_USER_ID).save({"full_name": resolved_name})
+            with current_user_scope(user):
+                ProfileService().save(
+                    {"full_name": resolved_name, "email": normalized_email}
+                )
         except Exception:
             pass
 
@@ -142,22 +161,34 @@ class AuthService:
         *,
         full_name: str = "",
     ) -> AuthSession | None:
+        normalized_email = normalize_email(email)
+        if not normalized_email:
+            raise AuthError("Enter a valid email address.")
+
+        if EmailUniquenessService().email_exists(normalized_email):
+            raise AuthError(DUPLICATE_EMAIL_MESSAGE)
+
         if AUTH_DEV_BYPASS:
-            return self.dev_sign_up(email, full_name=full_name)
+            return self.dev_sign_up(normalized_email, full_name=full_name)
 
         client = self._require_client()
         assert client is not None
 
-        response = client.auth.sign_up(
-            {
-                "email": email.strip(),
-                "password": password,
-                "options": {
-                    "data": {"full_name": full_name.strip()},
-                    "email_redirect_to": AUTH_REDIRECT_URL,
-                },
-            }
-        )
+        try:
+            response = client.auth.sign_up(
+                {
+                    "email": normalized_email,
+                    "password": password,
+                    "options": {
+                        "data": {"full_name": full_name.strip()},
+                        "email_redirect_to": AUTH_REDIRECT_URL,
+                    },
+                }
+            )
+        except Exception as exc:
+            if is_duplicate_email_error(exc):
+                raise AuthError(DUPLICATE_EMAIL_MESSAGE) from exc
+            raise AuthError("Sign up failed. Please try again.") from exc
 
         if response.user is None:
             raise AuthError("Sign up failed. Please try again.")
@@ -166,7 +197,10 @@ class AuthService:
         user = self._user_from_payload(response.user.model_dump())
 
         if session is None:
+            EmailUniquenessService().register_email(normalized_email, user.id)
             return None
+
+        EmailUniquenessService().register_email(normalized_email, user.id)
 
         return AuthSession(
             access_token=session.access_token,
@@ -184,7 +218,7 @@ class AuthService:
 
         from services.lockout_service import LockoutService
 
-        normalized_email = email.strip()
+        normalized_email = normalize_email(email)
         LockoutService().check_allowed(normalized_email)
 
         client = self._require_client()

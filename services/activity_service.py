@@ -11,7 +11,7 @@ from typing import Any
 from uuid import uuid4
 
 import config
-from core.auth import get_current_user_id
+from core.current_user import CurrentUser, require_current_user
 from core.database import get_database_client, handle_response
 from core.user_paths import get_user_data_root
 
@@ -19,8 +19,9 @@ from core.user_paths import get_user_data_root
 class ActivityService:
     """Record and retrieve user-facing activity events."""
 
-    def __init__(self, user_id: str | None = None) -> None:
-        self._user_id = user_id or get_current_user_id()
+    def __init__(self, *, current_user: CurrentUser | None = None) -> None:
+        self._current_user = current_user or require_current_user()
+        self._user_id = self._current_user.id
 
     @staticmethod
     def _utc_now() -> str:

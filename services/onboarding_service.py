@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from core.auth import get_current_user_id
+from core.current_user import require_current_user
 from core.workspace_context import QUICK_REPORT_PROJECT_ID
 from services.profile_service import ProfileService
 from services.project_service import ProjectService
@@ -48,9 +48,9 @@ ONBOARDING_STEPS = (
 class OnboardingService:
     """Track and complete the first-run onboarding wizard."""
 
-    def __init__(self, user_id: str | None = None) -> None:
-        self._user_id = user_id or get_current_user_id()
-        self._profile = ProfileService(self._user_id)
+    def __init__(self) -> None:
+        self._current_user = require_current_user()
+        self._profile = ProfileService()
 
     def needs_onboarding(self) -> bool:
         profile = self._profile.load()
@@ -116,7 +116,7 @@ class OnboardingService:
     def _detect_completed_steps(self) -> dict[int, bool]:
         projects = [
             project
-            for project in ProjectService(self._user_id).get_projects()
+            for project in ProjectService().get_projects()
             if project.get("id") not in {QUICK_REPORT_PROJECT_ID, ""}
         ]
 
@@ -126,7 +126,7 @@ class OnboardingService:
 
         from services.activity_service import ActivityService
 
-        activity = ActivityService(self._user_id).list_recent(limit=100)
+        activity = ActivityService().list_recent(limit=100)
         asked_ai = any(entry.get("action") == "copilot.asked" for entry in activity)
 
         return {

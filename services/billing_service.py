@@ -8,6 +8,7 @@ from typing import Literal
 
 import config
 from core import auth
+from core.current_user import require_current_user
 from services.paystack_billing_service import (
     PaystackBillingError,
     initialize_transaction as paystack_initialize,
@@ -28,9 +29,10 @@ PaymentProvider = Literal["stripe", "paystack"]
 class BillingService:
     """Checkout, portal, and subscription activation for the active user."""
 
-    def __init__(self, user_id: str | None = None) -> None:
-        self._user_id = user_id or auth.get_current_user_id()
-        self._subscription = SubscriptionService(self._user_id)
+    def __init__(self) -> None:
+        self._current_user = require_current_user()
+        self._user_id = self._current_user.id
+        self._subscription = SubscriptionService()
 
     @staticmethod
     def is_enabled() -> bool:
@@ -127,7 +129,7 @@ class BillingService:
 def activate_subscription_for_user(user_id: str, payload: dict) -> dict:
     """Webhook helper — activate plan for a specific user."""
 
-    subscription = SubscriptionService(user_id)
+    subscription = SubscriptionService.for_user_id(user_id)
     return subscription.activate_paid_plan(
         payload["plan_id"],
         provider=payload["provider"],

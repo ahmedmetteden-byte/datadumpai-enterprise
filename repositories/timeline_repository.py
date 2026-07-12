@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import config
-from core.auth import get_current_user_id
+from core.current_user import require_current_user
 from core.user_paths import get_user_projects_root
 from repositories.json_timeline_repository import JsonTimelineRepository
 from repositories.supabase_timeline_repository import SupabaseTimelineRepository
@@ -21,9 +21,9 @@ class TimelineRepository:
         self,
         project_id: str,
         projects_root: Path | str | None = None,
-        user_id: str | None = None,
     ) -> None:
-        resolved_user_id = user_id or get_current_user_id()
+        current_user = require_current_user()
+        resolved_user_id = current_user.id
 
         if config.use_database():
             self._impl = SupabaseTimelineRepository(project_id, user_id=resolved_user_id)

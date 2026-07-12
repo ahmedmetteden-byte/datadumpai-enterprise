@@ -9,7 +9,7 @@ from typing import Any
 
 import config
 from config import DEFAULT_NOTIFICATION_PREFERENCES
-from core.auth import get_current_user_id
+from core.current_user import CurrentUser, require_current_user
 from repositories.account_repository import get_profile_repository
 
 
@@ -32,13 +32,13 @@ class ProfileService:
         "notification_preferences": dict(DEFAULT_NOTIFICATION_PREFERENCES),
     }
 
-    def __init__(self, user_id: str | None = None) -> None:
-        resolved_user_id = user_id or get_current_user_id()
-        self._user_id = resolved_user_id
-        self._repository = get_profile_repository(
-            resolved_user_id,
-            default=self._DEFAULT,
-        )
+    def __init__(self, *, current_user: CurrentUser | None = None) -> None:
+        self._current_user = current_user or require_current_user()
+        self._repository = get_profile_repository(default=self._DEFAULT)
+
+    @property
+    def current_user(self) -> CurrentUser:
+        return self._current_user
 
     def load(self) -> dict[str, Any]:
         return self._repository.load()

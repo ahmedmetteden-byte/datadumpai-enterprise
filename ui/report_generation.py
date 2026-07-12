@@ -344,11 +344,8 @@ def _render_document_multiselect(
 def load_document_text_from_selection(selection: list[dict[str, str]]) -> str:
     """Load and combine text from documents that may span multiple projects."""
 
-    from core.auth import get_current_user_id
-
     return _report_pipeline().load_document_text_from_selection(
         selection,
-        user_id=get_current_user_id(),
     )["combined_text"]
 
 
@@ -681,11 +678,8 @@ def render_documents_page_generation(
             st.warning("Select one or more documents above to generate a report.")
             return
 
-        from core.auth import get_current_user_id
-
         load_result = _report_pipeline().load_document_text_from_selection(
             document_selection,
-            user_id=get_current_user_id(),
             processing_mode=processing_mode,
         )
         document_text = load_result["combined_text"].strip()

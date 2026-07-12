@@ -26,13 +26,37 @@ TENANT_DATA_KEYS = (
     "confirm_delete_document",
     "quick_report_documents",
     "project_report_source_id",
+    "project_report_source_select",
+    "quick_report_source_select",
     "download_report",
     "confirm_delete_report",
     "copilot_question",
     "copilot_answer",
     "copilot_sources",
+    "copilot_web_sources",
+    "copilot_notice",
     "selected_report_type",
     "current_project",
+    "ai_workspace_messages",
+    "ai_workspace_prompt",
+    "ai_workspace_prompt_input",
+    "ai_workspace_last_inference",
+    "ai_workspace_attach_uploader_key",
+    "ai_workspace_attach_batch",
+    "document_uploader_key",
+    "completed_upload_batch",
+    "notifications",
+)
+
+TENANT_KEY_PREFIXES = (
+    "ai_workspace_setting_",
+    "ai_workspace_excluded_",
+    "ai_workspace_selected_",
+    "ai_doc_search_",
+    "ai_workspace_attach_",
+    "project_report_documents_",
+    "viewer_visual_insights_message",
+    "draft_visual_insights_message",
 )
 
 
@@ -43,7 +67,7 @@ def clear_tenant_session() -> None:
         st.session_state.pop(key, None)
 
     for key in list(st.session_state.keys()):
-        if key.startswith("project_report_documents_"):
+        if any(key.startswith(prefix) for prefix in TENANT_KEY_PREFIXES):
             st.session_state.pop(key, None)
 
     st.session_state.pop(TENANT_USER_KEY, None)

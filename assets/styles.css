@@ -2850,10 +2850,59 @@ div[data-testid="stDialog"] .stDownloadButton>button:hover div{
 
 }
 
-.dde-ai-action-row [data-testid="stButton"] button{
 
+.dde-visual-insights-action,
+.dde-report-ask-ai-action{
+    margin:4px 0 12px;
+}
+
+.dde-visual-insights-action [data-testid="stButton"]{
+    width:auto;
+    margin:0 auto;
+}
+
+.dde-visual-insights-action [data-testid="stButton"]>button{
+    width:100%;
     min-height:42px;
+    border-radius:12px !important;
+}
 
-    font-weight:600;
+.dde-report-ask-ai-action [data-testid="stButton"]{
+    width:auto;
+    margin:0 auto;
+}
 
+.dde-visual-insights-charts{
+    margin:0 0 16px;
+}
+
+.dde-download-grid{
+    margin-top:8px;
+}
+
+.dde-download-grid .stDownloadButton>button{
+    min-height:42px;
+}
+
+[data-testid="stStatus"]{
+    border-radius:12px !important;
+    border:1px solid #BFDBFE !important;
+    background:#F8FAFC !important;
+}
+
+[data-testid="stStatus"] [data-testid="stMarkdownContainer"] p{
+    color:#0F172A !important;
+    font-size:14px !important;
+}
+
+[data-testid="stVerticalBlock"]:has(.dde-danger-action-marker) .stButton>button{
+    border:2px solid #DC2626 !important;
+    color:#DC2626 !important;
+    background:#FFFFFF !important;
+}
+
+[data-testid="stVerticalBlock"]:has(.dde-danger-action-marker) .stButton>button:hover{
+    background:#FEF2F2 !important;
+    border-color:#B91C1C !important;
+    color:#B91C1C !important;
 }

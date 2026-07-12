@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from core.current_user import current_user_scope
 from models.user import User
 from services.profile_service import ProfileService
 from services.usage_service import UsageService
@@ -14,26 +15,33 @@ from services.usage_service import UsageService
 def bootstrap_user_account(user: User) -> None:
     """Create or refresh profile and usage records after sign-in."""
 
-    profile_service = ProfileService(user.id)
-    current = profile_service.load()
+    with current_user_scope(user):
+        profile_service = ProfileService()
+        current = profile_service.load()
 
-    updates: dict[str, str] = {}
-    if user.full_name and not current.get("full_name"):
-        updates["full_name"] = user.full_name
-    if user.email:
-        updates["email"] = user.email
+        updates: dict[str, str] = {}
+        if user.full_name and not current.get("full_name"):
+            updates["full_name"] = user.full_name
+        if user.email:
+            updates["email"] = user.email
+            from services.email_uniqueness import EmailUniquenessService, normalize_email
 
-    if updates:
-        current.update(updates)
-        profile_service.save(current)
+            EmailUniquenessService().register_email(normalize_email(user.email), user.id)
 
-    profile_service.record_last_login()
+        if updates:
+            current.update(updates)
+            profile_service.save(current)
 
-    usage_service = UsageService(user_id=user.id)
-    usage_service.get_snapshot()
+        profile_service.record_last_login()
+
+        usage_service = UsageService()
+        usage_service.get_snapshot()
 
 
 def record_last_login(user_id: str) -> None:
     """Update the user's last login timestamp."""
 
-    ProfileService(user_id).record_last_login()
+    from models.user import User
+
+    with current_user_scope(User(id=user_id, email="", email_verified=True)):
+        ProfileService().record_last_login()

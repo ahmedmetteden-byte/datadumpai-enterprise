@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from io import BytesIO
 from typing import Any
 
+from pathlib import Path
+
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.oxml import OxmlElement
@@ -239,12 +241,16 @@ def _append_chart_images(document: Document, chart_data: dict[str, Any]) -> None
 
 
 def _cover_page(document: Document, metadata: DocxExportMetadata) -> None:
-    title = document.add_paragraph()
-    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    title_run = title.add_run(APP_NAME)
-    title_run.bold = True
-    title_run.font.size = Pt(28)
-    title_run.font.color.rgb = COLOR_SLATE
+    assets_dir = Path(__file__).resolve().parent.parent / "assets"
+    logo_path = assets_dir / "logo.png"
+    if not logo_path.is_file():
+        logo_path = assets_dir / "datadump-hero-logo.png"
+
+    if logo_path.is_file():
+        logo_paragraph = document.add_paragraph()
+        logo_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        logo_paragraph.add_run().add_picture(str(logo_path), width=Inches(1.4))
+        document.add_paragraph()
 
     subtitle = document.add_paragraph("Executive Intelligence Report")
     subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -252,11 +258,20 @@ def _cover_page(document: Document, metadata: DocxExportMetadata) -> None:
     subtitle_run.font.size = Pt(16)
     subtitle_run.font.color.rgb = COLOR_BLUE
 
+    prepared_by_label = document.add_paragraph("Prepared by")
+    prepared_by_label.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    prepared_by_label.runs[0].font.size = Pt(10)
+    prepared_by_label.runs[0].font.color.rgb = COLOR_MUTED
+
+    prepared_by_value = document.add_paragraph(APP_NAME)
+    prepared_by_value.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    prepared_by_value.runs[0].bold = True
+    prepared_by_value.runs[0].font.size = Pt(13)
+
     for label, value in [
         ("Project", metadata.project_name),
         ("Reporting Period", metadata.reporting_period),
         ("Generated", datetime.now(timezone.utc).strftime("%d %B %Y")),
-        ("Prepared by", "DataDumpAI Intelligence Engine"),
     ]:
         label_paragraph = document.add_paragraph(label)
         label_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER

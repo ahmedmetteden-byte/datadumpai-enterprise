@@ -47,9 +47,9 @@ class WorkspaceService:
 
     @staticmethod
     def _current_user_id() -> str:
-        from core.auth import get_current_user_id
+        from core.current_user import current_user_id
 
-        return get_current_user_id()
+        return current_user_id()
 
     MEETING_EXTENSIONS = {
         ".mp3",

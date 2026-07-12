@@ -7,8 +7,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from config import DEFAULT_PLAN, PLANS, TRIAL_DAYS, TRIAL_PLAN, resolve_plan_id
-from core.auth import get_current_user_id
-from repositories.account_repository import get_usage_repository
+from core.current_user import CurrentUser, require_current_user
+from repositories.account_repository import (
+    get_usage_repository,
+    get_usage_repository_for_user,
+)
 
 
 class SubscriptionService:
@@ -20,12 +23,23 @@ class SubscriptionService:
     STATUS_CANCELED = "canceled"
     STATUS_EXPIRED = "expired"
 
-    def __init__(self, user_id: str | None = None) -> None:
-        self._user_id = user_id or get_current_user_id()
-        self._repository = get_usage_repository(
-            self._user_id,
-            default=self._default_state(),
+    def __init__(self, *, current_user: CurrentUser | None = None) -> None:
+        self._current_user = current_user or require_current_user()
+        self._user_id = self._current_user.id
+        self._repository = get_usage_repository(default=self._default_state())
+
+    @classmethod
+    def for_user_id(cls, user_id: str) -> SubscriptionService:
+        """Internal: admin operations only."""
+
+        instance = cls.__new__(cls)
+        instance._user_id = user_id
+        instance._current_user = CurrentUser(id=user_id, email="")
+        instance._repository = get_usage_repository_for_user(
+            user_id,
+            default=cls._default_state(),
         )
+        return instance
 
     @staticmethod
     def _default_state() -> dict:

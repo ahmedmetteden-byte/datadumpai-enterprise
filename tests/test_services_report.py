@@ -6,11 +6,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from services.project_service import ProjectService
 from services.report_service import ReportService
 
 
 def test_save_report_persists_to_disk(isolated_env):
-    project_id = "report-service-project"
+    project_id = ProjectService().create_project("Report Service Project")["id"]
 
     metadata = ReportService.save_report(
         project_id,
@@ -31,7 +32,7 @@ def test_save_report_persists_to_disk(isolated_env):
 
 
 def test_load_report_returns_content(isolated_env):
-    project_id = "load-report-project"
+    project_id = ProjectService().create_project("Load Report Project")["id"]
 
     metadata = ReportService.save_report(
         project_id,
@@ -51,7 +52,7 @@ def test_get_reports_empty_when_folder_missing(isolated_env):
 
 
 def test_delete_report_removes_file(isolated_env):
-    project_id = "delete-report-project"
+    project_id = ProjectService().create_project("Delete Report Project")["id"]
 
     metadata = ReportService.save_report(
         project_id,
@@ -65,7 +66,7 @@ def test_delete_report_removes_file(isolated_env):
 
 
 def test_save_report_persists_metadata(isolated_env):
-    project_id = "metadata-report-project"
+    project_id = ProjectService().create_project("Metadata Report Project")["id"]
 
     metadata = ReportService.save_report(
         project_id,
@@ -85,7 +86,7 @@ def test_save_report_persists_metadata(isolated_env):
 
 
 def test_update_report_overwrites_content_and_metadata(isolated_env):
-    project_id = "update-report-project"
+    project_id = ProjectService().create_project("Update Report Project")["id"]
 
     metadata = ReportService.save_report(
         project_id,

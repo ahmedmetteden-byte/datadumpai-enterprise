@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from storage.file_store import FileStore
+from core.project_access import assert_project_access
 from models.report_data import ReportData
 from services.report_document import report_data_from_storage
 
@@ -85,7 +86,15 @@ class ReportService:
 
     @classmethod
     def get_report_metadata(cls, project_id: str, filename: str) -> dict[str, Any]:
+        try:
+            cls._require_project_access(project_id)
+        except PermissionError:
+            return {}
         return cls._load_metadata(project_id, filename)
+
+    @classmethod
+    def _require_project_access(cls, project_id: str) -> str:
+        return assert_project_access(project_id)
 
     @classmethod
     def save_report(
@@ -98,6 +107,7 @@ class ReportService:
         report: ReportData | None = None,
         report_data: dict[str, Any] | None = None,
     ) -> dict:
+        cls._require_project_access(project_id)
         if report is not None:
             report_text = report.to_markdown()
             report_data = report.to_dict()
@@ -142,10 +152,9 @@ class ReportService:
         )
 
         try:
-            from core.auth import get_current_user_id
             from services.activity_service import ActivityService
 
-            ActivityService(get_current_user_id()).log(
+            ActivityService().log(
                 "report.generated",
                 f"Generated {report_name}",
                 metadata={"project_id": project_id, "report_name": report_name},
@@ -183,6 +192,7 @@ class ReportService:
         report: ReportData | None = None,
         report_data: dict[str, Any] | None = None,
     ) -> dict:
+        cls._require_project_access(project_id)
         if report is not None:
             report_text = report.to_markdown()
             report_data = report.to_dict()
@@ -233,6 +243,11 @@ class ReportService:
 
     @classmethod
     def get_reports(cls, project_id: str) -> list[dict]:
+        try:
+            cls._require_project_access(project_id)
+        except PermissionError:
+            return []
+
         reports: list[dict] = []
         store = cls._file_store()
 
@@ -275,6 +290,7 @@ class ReportService:
     def load_report_for_project(cls, project_id: str, filename: str) -> str:
         """Load report markdown after validating project ownership via FileStore."""
 
+        cls._require_project_access(project_id)
         return cls.load_report(cls._report_storage_path(project_id, filename))
 
     @classmethod
@@ -287,6 +303,7 @@ class ReportService:
     ) -> ReportData:
         """Load the canonical ReportData object for a saved report."""
 
+        cls._require_project_access(project_id)
         meta = cls.get_report_metadata(project_id, filename)
 
         if markdown_text is None:
@@ -304,6 +321,7 @@ class ReportService:
 
     @classmethod
     def delete_report(cls, project_id: str, filename: str) -> None:
+        cls._require_project_access(project_id)
         safe_name = Path(filename).name
 
         if not safe_name or safe_name in {".", ".."}:

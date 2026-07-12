@@ -32,17 +32,21 @@ def test_sign_in_uses_dev_bypass(monkeypatch):
     assert session.user.email_verified is True
 
 
-def test_sign_up_uses_dev_bypass(monkeypatch, isolated_env):
+def test_sign_up_uses_dev_bypass(monkeypatch, isolated_env, tmp_path):
     monkeypatch.setattr("services.auth_service.AUTH_DEV_BYPASS", True)
+    monkeypatch.setattr(
+        "services.email_uniqueness.EmailUniquenessService._registry_path",
+        lambda self: tmp_path / "auth_email_registry_signup.json",
+    )
 
     session = AuthService().sign_up(
-        "new.user@example.com",
+        "new.user.signup@example.com",
         "password123",
         full_name="Ada Lovelace",
     )
 
     assert session is not None
-    assert session.user.email == "new.user@example.com"
+    assert session.user.email == "new.user.signup@example.com"
     assert session.user.full_name == "Ada Lovelace"
     assert session.user.email_verified is True
 
@@ -55,7 +59,7 @@ def test_sign_in_rejects_unverified_email(monkeypatch):
         def model_dump(self):
             return {
                 "id": "user-123",
-                "email": "test@example.com",
+                "email": "unverified.user@example.com",
                 "email_confirmed_at": None,
                 "user_metadata": {},
             }
@@ -79,7 +83,7 @@ def test_sign_in_rejects_unverified_email(monkeypatch):
     service._client = FakeClient()
 
     with pytest.raises(AuthError, match="verify your email"):
-        service.sign_in("test@example.com", "password123")
+        service.sign_in("unverified.user@example.com", "password123")
 
 
 def test_bootstrap_user_account_creates_profile(tmp_path, monkeypatch, isolated_env):
@@ -112,9 +116,11 @@ def test_bootstrap_user_account_creates_profile(tmp_path, monkeypatch, isolated_
     )
     bootstrap_user_account(user)
 
+    from core.current_user import current_user_scope
     from services.profile_service import ProfileService
 
-    profile = ProfileService(user_id).load()
+    with current_user_scope(user):
+        profile = ProfileService().load()
     assert profile["email"] == "ada@example.com"
     assert profile["full_name"] == "Ada Lovelace"
     assert profile["last_login"] is not None
@@ -144,17 +150,29 @@ def test_projects_are_isolated_per_user(tmp_path, monkeypatch, isolated_env):
         projects_root_for,
     )
 
-    first_service = ProjectService(user_id=TEST_USER_ID)
-    second_service = ProjectService(user_id=other_user_id)
+    from core.current_user import current_user_scope
+    from models.user import User
+    from tests.conftest import TEST_USER
 
-    first = first_service.create_project("User One Project")
-    second = second_service.create_project("User Two Project")
+    other_user = User(
+        id=other_user_id,
+        email="other@example.com",
+        email_verified=True,
+    )
 
-    assert first_service.get_project(first["id"])["name"] == "User One Project"
-    assert second_service.get_project(second["id"])["name"] == "User Two Project"
+    with current_user_scope(TEST_USER):
+        first_service = ProjectService()
+        first = first_service.create_project("User One Project")
 
-    with pytest.raises(ValueError, match="Project not found"):
-        first_service.get_project(second["id"])
+    with current_user_scope(other_user):
+        second_service = ProjectService()
+        second = second_service.create_project("User Two Project")
+
+    with current_user_scope(TEST_USER):
+        first_service = ProjectService()
+        assert first_service.get_project(first["id"])["name"] == "User One Project"
+        with pytest.raises(ValueError, match="Project not found"):
+            first_service.get_project(second["id"])
 
 
 def test_user_paths_create_directories(tmp_path, monkeypatch):

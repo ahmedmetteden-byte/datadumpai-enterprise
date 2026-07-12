@@ -150,7 +150,7 @@ def enhance_report_markdown(markdown_text: str) -> str:
     return enhanced
 
 
-def render_report_content(report: ReportData | str) -> None:
+def render_report_content(report: ReportData | str, *, include_charts: bool = True) -> None:
     """Render a report with executive intelligence styling when applicable."""
 
     if isinstance(report, str):
@@ -161,7 +161,7 @@ def render_report_content(report: ReportData | str) -> None:
     body = prepared.text
 
     if not report_is_intelligence(report):
-        if chart_data:
+        if include_charts and chart_data:
             render_report_charts(chart_data)
         st.markdown(body)
         return
@@ -173,7 +173,7 @@ def render_report_content(report: ReportData | str) -> None:
     if summary_card:
         st.markdown(_render_summary_card_html(summary_card), unsafe_allow_html=True)
 
-    if chart_data:
+    if include_charts and chart_data:
         render_report_charts(chart_data)
 
     styled = enhance_report_markdown(body)

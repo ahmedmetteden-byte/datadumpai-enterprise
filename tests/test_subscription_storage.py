@@ -9,13 +9,14 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from config import TRIAL_PLAN
+from core.current_user import CurrentUser
 from services.subscription_service import SubscriptionService
 from storage.file_store import FileStore
-from tests.conftest import TEST_USER_ID
+from tests.conftest import TEST_USER, TEST_USER_ID
 
 
 def test_start_trial_grants_professional_access(isolated_env):
-    service = SubscriptionService(TEST_USER_ID)
+    service = SubscriptionService()
     state = service.start_trial()
 
     assert state["subscription_status"] == SubscriptionService.STATUS_TRIALING
@@ -24,7 +25,7 @@ def test_start_trial_grants_professional_access(isolated_env):
 
 
 def test_expired_trial_falls_back_to_free(isolated_env):
-    service = SubscriptionService(TEST_USER_ID)
+    service = SubscriptionService()
     expired = datetime.now(timezone.utc) - timedelta(days=1)
     service.save_state(
         {
@@ -42,7 +43,7 @@ def test_expired_trial_falls_back_to_free(isolated_env):
 
 
 def test_local_file_store_round_trip(isolated_env):
-    store = FileStore(TEST_USER_ID)
+    store = FileStore(CurrentUser.from_user(TEST_USER))
     storage_path = store.write(
         "project-1",
         "documents",

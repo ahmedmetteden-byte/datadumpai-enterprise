@@ -6,7 +6,7 @@ User-facing feedback helpers — loading states and friendly errors.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import Generator
+from typing import Any, Generator
 
 import streamlit as st
 
@@ -93,3 +93,25 @@ def loading(message: str) -> Generator[None, None, None]:
 
     with st.spinner(message):
         yield
+
+
+@contextmanager
+def progressive_generation(
+    *,
+    initial_label: str = "Understanding request...",
+) -> Generator[Any, None, None]:
+    """Show progressive AI status updates during report generation."""
+
+    with st.status(initial_label, expanded=True) as status:
+        yield status
+
+
+def advance_generation_status(
+    status: Any,
+    label: str,
+    *,
+    state: str = "running",
+) -> None:
+    """Update a progressive generation status step."""
+
+    status.update(label=label, state=state)

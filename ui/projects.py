@@ -30,6 +30,33 @@ WORKSPACE_ID_KEY = "current_workspace_id"
 WORKSPACE_MODE_KEY = "workspace_mode"
 ACTIVE_PROJECT_ID_KEY = "active_project_id"
 
+WORKSPACE_CONTENT_KEYS = (
+    "selected_report",
+    "draft_report",
+    "report_for_chat",
+    "viewing_document",
+    "confirm_delete_document",
+    "download_report",
+    "confirm_delete_report",
+    "quick_report_documents",
+    "project_report_source_id",
+    "project_report_source_select",
+    "quick_report_source_select",
+)
+
+
+def _clear_workspace_content_state() -> None:
+    for key in WORKSPACE_CONTENT_KEYS:
+        st.session_state.pop(key, None)
+
+    for key in list(st.session_state.keys()):
+        if key.startswith("project_report_documents_"):
+            st.session_state.pop(key, None)
+        if key.startswith("viewer_visual_insights_message"):
+            st.session_state.pop(key, None)
+        if key.startswith("draft_visual_insights_message"):
+            st.session_state.pop(key, None)
+
 
 def _project_service() -> ProjectService:
     return ProjectService()
@@ -117,21 +144,25 @@ def get_user_projects() -> list[dict]:
 
 def set_active_workspace(workspace_id: str) -> None:
     if is_quick_report_workspace(workspace_id):
+        _clear_workspace_content_state()
         st.session_state[WORKSPACE_ID_KEY] = workspace_id
         return
 
     if not _project_service().project_exists(workspace_id):
         raise ValueError(f"Workspace not found: {workspace_id!r}")
 
+    _clear_workspace_content_state()
     st.session_state[WORKSPACE_ID_KEY] = workspace_id
 
 
 def set_quick_report_mode() -> None:
+    _clear_workspace_content_state()
     st.session_state[WORKSPACE_MODE_KEY] = WORKSPACE_MODE_QUICK
     st.session_state[WORKSPACE_ID_KEY] = QUICK_REPORT_PROJECT_ID
 
 
 def set_project_mode() -> None:
+    _clear_workspace_content_state()
     st.session_state[WORKSPACE_MODE_KEY] = WORKSPACE_MODE_PROJECT
 
     if _has_active_user_project():

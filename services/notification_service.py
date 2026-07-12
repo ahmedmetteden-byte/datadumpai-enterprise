@@ -11,6 +11,7 @@ import streamlit as st
 
 import config
 from core.auth import get_current_user
+from core.current_user import CurrentUser, require_current_user
 from services.email_service import EmailDeliveryError, is_email_configured, send_email
 from services.profile_service import ProfileService
 
@@ -18,8 +19,15 @@ from services.profile_service import ProfileService
 class NotificationService:
     """Manage notification preferences and deliver product emails."""
 
-    def __init__(self, user_id: str | None = None) -> None:
-        self._profile = ProfileService(user_id)
+    def __init__(self, *, current_user: CurrentUser | None = None) -> None:
+        self._current_user = current_user or require_current_user()
+        self._profile = ProfileService(current_user=self._current_user)
+
+    @classmethod
+    def for_user_id(cls, user_id: str) -> NotificationService:
+        """Internal: webhook and background jobs only."""
+
+        return cls(current_user=CurrentUser(id=user_id, email=""))
 
     def get_preferences(self) -> dict[str, bool]:
         profile = self._profile.load()
@@ -40,7 +48,10 @@ class NotificationService:
         if email:
             return email.strip()
         user = get_current_user()
-        return user.email if user else None
+        if user and user.email:
+            return user.email
+        profile_email = (self._profile.load().get("email") or "").strip()
+        return profile_email or None
 
     def _should_send(self, preference_key: str) -> bool:
         return bool(self.get_preferences().get(preference_key, False))

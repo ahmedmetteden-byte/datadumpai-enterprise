@@ -12,10 +12,29 @@ from uuid import uuid4
 
 import config
 from core.database import get_database_client, handle_response
-from repositories.account_repository import get_usage_repository
+from repositories.account_repository import (
+    get_profile_repository_for_user,
+    get_usage_repository_for_user,
+)
 from services.feedback_service import FeedbackService
-from services.profile_service import ProfileService
 from services.subscription_service import SubscriptionService
+
+
+_ADMIN_PROFILE_DEFAULT = {
+    "full_name": "",
+    "email": "",
+    "company": "",
+    "job_title": "",
+    "photo_url": "",
+    "timezone": "UTC",
+    "locale": "en",
+    "role": "user",
+    "last_login": None,
+    "onboarding_completed": False,
+    "onboarding_step": 1,
+    "onboarding_completed_at": None,
+    "notification_preferences": dict(config.DEFAULT_NOTIFICATION_PREFERENCES),
+}
 
 
 class AdminService:
@@ -47,8 +66,11 @@ class AdminService:
                 continue
 
             user_id = user_dir.name
-            profile = ProfileService(user_id).load()
-            usage = SubscriptionService(user_id).load_state()
+            profile = get_profile_repository_for_user(
+                user_id,
+                default=_ADMIN_PROFILE_DEFAULT,
+            ).load()
+            usage = SubscriptionService.for_user_id(user_id).load_state()
             rows.append(self._user_row(user_id, profile, usage))
 
         return rows
@@ -81,7 +103,7 @@ class AdminService:
 
     @staticmethod
     def _user_row(user_id: str, profile: dict[str, Any], usage: dict[str, Any]) -> dict[str, Any]:
-        subscription = SubscriptionService(user_id)
+        subscription = SubscriptionService.for_user_id(user_id)
         effective_plan = subscription.get_effective_plan(usage)
         return {
             "user_id": user_id,
@@ -97,7 +119,7 @@ class AdminService:
         }
 
     def set_user_plan(self, user_id: str, plan_id: str, *, actor_user_id: str | None = None) -> dict:
-        state = SubscriptionService(user_id).set_billing_plan(plan_id)
+        state = SubscriptionService.for_user_id(user_id).set_billing_plan(plan_id)
         self.record_audit(
             actor_user_id=actor_user_id,
             action="admin.set_plan",

@@ -9,13 +9,13 @@ from typing import Any
 
 from application.report_pipeline import ReportPipeline
 from config import FULL_REPORT_PERIODS
-from core.auth import get_current_user_id
+from core.current_user import require_current_user
 from models.report_processing_mode import ReportProcessingMode
 from services.document_service import DocumentService
 from services.executive_report_context import ExecutiveReportContextBuilder
 from services.plan_service import PlanService
 from services.report_service import ReportService
-from ui.feedback import loading, show_error
+from ui.feedback import advance_generation_status, progressive_generation, show_error
 from ui.projects import get_user_projects
 from ui.report_generation import REPORT_TYPE_META, _selection_source_labels
 from ui.report_preview import set_draft_report
@@ -306,47 +306,55 @@ def execute_workspace_request(
     include_charts = settings.include_charts and _plan_service().include_professional_charts()
     reporting_period = FULL_REPORT_PERIODS[0]
 
-    load_result = _report_pipeline().load_document_text_from_selection(
-        document_selection,
-        user_id=get_current_user_id(),
-        processing_mode=processing_mode,
-    )
-    document_text = load_result["combined_text"].strip()
-    source_labels = _selection_source_labels(document_selection, get_user_projects())
-
-    if not document_text:
-        return WorkspaceRequestResult(
-            success=False,
-            message=(
-                f"{_format_inference_message(inference)}\n\n"
-                "Could not read text from the selected documents. "
-                "Try re-uploading readable PDF, Word, or Excel files in **My Documents**."
-            ),
-            inference=inference,
-        )
-
-    report_context = _context_builder.build(
-        workspace_id=workspace["id"],
-        source_documents=source_labels,
-        report_type=report_type,
-        include_prior_reports=(
-            _plan_service().include_cross_document_intelligence()
-            or _plan_service().uses_full_report_format(report_type)
-        ),
-        reporting_period=reporting_period,
-    )
-    report_context["additional_guidance"] = _additional_guidance(
-        settings,
-        cleaned,
-        conversation_messages,
-    )
-
-    loading_message = (
-        f"{inference.display_label} · {len(load_result['loaded'])} document(s)…"
-    )
-
     try:
-        with loading(loading_message):
+        with progressive_generation() as status:
+            advance_generation_status(status, "✓ Understanding request")
+            advance_generation_status(status, "✓ Detecting task")
+
+            load_result = _report_pipeline().load_document_text_from_selection(
+                document_selection,
+                processing_mode=processing_mode,
+            )
+            advance_generation_status(status, "✓ Reading documents")
+
+            document_text = load_result["combined_text"].strip()
+            source_labels = _selection_source_labels(document_selection, get_user_projects())
+
+            if not document_text:
+                advance_generation_status(
+                    status,
+                    "Could not read selected documents",
+                    state="error",
+                )
+                return WorkspaceRequestResult(
+                    success=False,
+                    message=(
+                        f"{_format_inference_message(inference)}\n\n"
+                        "Could not read text from the selected documents. "
+                        "Try re-uploading readable PDF, Word, or Excel files in **My Documents**."
+                    ),
+                    inference=inference,
+                )
+
+            report_context = _context_builder.build(
+                workspace_id=workspace["id"],
+                source_documents=source_labels,
+                report_type=report_type,
+                include_prior_reports=(
+                    _plan_service().include_cross_document_intelligence()
+                    or _plan_service().uses_full_report_format(report_type)
+                ),
+                reporting_period=reporting_period,
+            )
+            report_context["additional_guidance"] = _additional_guidance(
+                settings,
+                cleaned,
+                conversation_messages,
+            )
+
+            advance_generation_status(status, "✓ Extracting evidence")
+            advance_generation_status(status, "✓ Building report")
+
             report = _report_pipeline().generate(
                 document_text=document_text,
                 report_type=report_type,
@@ -357,13 +365,16 @@ def execute_workspace_request(
                 processing_mode=processing_mode,
             )
 
-        set_draft_report(
-            report=report,
-            source_documents=source_labels,
-            workspace=workspace,
-            document_selection=document_selection,
-            processing_mode=processing_mode.value,
-        )
+            advance_generation_status(status, "✓ Creating recommendations")
+            advance_generation_status(status, "✓ Preparing downloads", state="complete")
+
+            set_draft_report(
+                report=report,
+                source_documents=source_labels,
+                workspace=workspace,
+                document_selection=document_selection,
+                processing_mode=processing_mode.value,
+            )
     except Exception as exc:
         show_error(exc)
         return WorkspaceRequestResult(

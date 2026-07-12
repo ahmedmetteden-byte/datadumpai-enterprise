@@ -22,7 +22,7 @@ def billing_env(isolated_env, monkeypatch):
 
 
 def test_activate_paid_plan_persists_billing_fields(isolated_env):
-    subscription = SubscriptionService(TEST_USER_ID)
+    subscription = SubscriptionService()
     state = subscription.activate_paid_plan(
         "starter",
         provider="stripe",
@@ -38,7 +38,7 @@ def test_activate_paid_plan_persists_billing_fields(isolated_env):
     assert state["payment_customer_id"] == "cus_123"
     assert state["payment_subscription_id"] == "sub_456"
 
-    reloaded = SubscriptionService(TEST_USER_ID).load_state()
+    reloaded = SubscriptionService().load_state()
     assert reloaded["payment_reference"] == "cs_789"
     assert reloaded["current_period_end"] == "2026-08-09T00:00:00+00:00"
 
@@ -49,7 +49,7 @@ def test_billing_service_stripe_checkout_url(billing_env, monkeypatch):
         lambda **kwargs: "https://checkout.stripe.test/session",
     )
 
-    url = BillingService(TEST_USER_ID).start_checkout("professional", provider="stripe")
+    url = BillingService().start_checkout("professional", provider="stripe")
     assert url == "https://checkout.stripe.test/session"
 
 
@@ -68,7 +68,7 @@ def test_billing_service_complete_stripe_checkout(billing_env, monkeypatch):
         lambda session_id: payload,
     )
 
-    state = BillingService(TEST_USER_ID).complete_checkout(
+    state = BillingService().complete_checkout(
         provider="stripe",
         session_id="cs_test",
     )
@@ -87,7 +87,7 @@ def test_billing_service_rejects_foreign_checkout(billing_env, monkeypatch):
     )
 
     with pytest.raises(ValueError, match="does not belong"):
-        BillingService(TEST_USER_ID).complete_checkout(
+        BillingService().complete_checkout(
             provider="stripe",
             session_id="cs_test",
         )
@@ -96,7 +96,7 @@ def test_billing_service_rejects_foreign_checkout(billing_env, monkeypatch):
 def test_find_user_by_customer_id_json(isolated_env):
     from repositories.billing_repository import find_user_id_by_customer_id
 
-    subscription = SubscriptionService(TEST_USER_ID)
+    subscription = SubscriptionService()
     subscription.activate_paid_plan(
         "starter",
         provider="stripe",
@@ -148,7 +148,7 @@ def test_stripe_checkout_uses_price_id(mock_stripe, billing_env, monkeypatch):
 
 
 def test_mark_canceled_at_period_end(isolated_env):
-    subscription = SubscriptionService(TEST_USER_ID)
+    subscription = SubscriptionService()
     subscription.activate_paid_plan("starter", provider="stripe", customer_id="cus_1")
     state = subscription.mark_canceled(at_period_end=True)
 

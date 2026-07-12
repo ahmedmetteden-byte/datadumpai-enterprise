@@ -31,6 +31,7 @@ from services.report_markdown_renderer import (
     strip_inline_markdown,
 )
 from storage.file_store import FileStore
+from core.project_access import assert_project_access
 
 
 class ExportService:
@@ -55,6 +56,11 @@ class ExportService:
     }
 
     def get_exports(self, project_id: str) -> list[dict[str, Any]]:
+        try:
+            assert_project_access(project_id)
+        except PermissionError:
+            return []
+
         store = self._file_store()
         exports: list[dict[str, Any]] = []
 
@@ -234,12 +240,11 @@ class ExportService:
         storage_path = self._file_store().write(project_id, "exports", filename, data)
 
         try:
-            from core.auth import get_current_user_id
             from services.activity_service import ActivityService
 
             export_label = (report_name or filename).strip()
             export_format = Path(filename).suffix.lstrip(".").upper() or "FILE"
-            ActivityService(get_current_user_id()).log(
+            ActivityService().log(
                 "export.downloaded",
                 f"Downloaded {export_label} ({export_format})",
                 metadata={"project_id": project_id, "filename": filename},

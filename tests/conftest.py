@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from core.current_user import bind_current_user, clear_current_user_binding
 from models.user import User
 from services.document_service import DocumentService
 from services.project_service import ProjectService
@@ -45,9 +46,12 @@ def auth_context(monkeypatch):
     monkeypatch.setenv("DATABASE_BACKEND", "json")
     monkeypatch.setenv("STORAGE_BACKEND", "local")
     monkeypatch.setattr("config.use_database", lambda: False)
-    monkeypatch.setattr("core.auth.get_current_user_id", lambda: TEST_USER_ID)
+    monkeypatch.setattr("services.auth_service.is_supabase_configured", lambda: False)
     monkeypatch.setattr("core.auth.get_current_user", lambda: TEST_USER)
     monkeypatch.setattr("core.auth.is_authenticated", lambda: True)
+    bind_current_user(TEST_USER)
+    yield
+    clear_current_user_binding()
 
 
 @pytest.fixture
@@ -95,21 +99,12 @@ def isolated_env(tmp_path, monkeypatch):
 
 @pytest.fixture
 def project_service(isolated_env) -> ProjectService:
-    return ProjectService(
-        user_id=TEST_USER_ID,
-        document_service=DocumentService(
-            projects_root=isolated_env["root"],
-            user_id=TEST_USER_ID,
-        ),
-    )
+    return ProjectService()
 
 
 @pytest.fixture
 def document_service(isolated_env) -> DocumentService:
-    return DocumentService(
-        projects_root=isolated_env["root"],
-        user_id=TEST_USER_ID,
-    )
+    return DocumentService()
 
 
 @pytest.fixture

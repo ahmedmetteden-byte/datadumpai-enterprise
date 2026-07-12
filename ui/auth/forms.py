@@ -16,6 +16,7 @@ from core.auth import (
     sign_up,
 )
 from services.auth_service import AuthError, AuthService
+from services.email_uniqueness import DUPLICATE_EMAIL_MESSAGE
 from ui.feedback import show_error, show_success
 
 
@@ -92,7 +93,19 @@ def render_sign_up_form() -> None:
                 else:
                     st.rerun()
             except AuthError as exc:
-                show_error(exc)
+                if str(exc) == DUPLICATE_EMAIL_MESSAGE:
+                    st.error(DUPLICATE_EMAIL_MESSAGE)
+                    sign_in_col, forgot_col = st.columns(2)
+                    with sign_in_col:
+                        if st.button("Sign In", use_container_width=True, key="signup_existing_sign_in"):
+                            st.session_state[AUTH_VIEW_KEY] = "sign_in"
+                            st.rerun()
+                    with forgot_col:
+                        if st.button("Forgot Password", use_container_width=True, key="signup_existing_forgot"):
+                            st.session_state[AUTH_VIEW_KEY] = "forgot_password"
+                            st.rerun()
+                else:
+                    show_error(exc)
 
     st.markdown(
         '<p class="dde-auth-switch">Already have an account?</p>',

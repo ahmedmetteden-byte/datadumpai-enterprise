@@ -5,7 +5,7 @@ Report insights panel and Explore Visual Insights action.
 from __future__ import annotations
 
 import html
-from typing import Any, Callable
+from typing import Callable
 
 import streamlit as st
 
@@ -19,6 +19,12 @@ from services.visualization_decision import (
     evaluate_visualization_decision,
 )
 from ui.feedback import loading
+from ui.report_charts import render_report_charts
+
+NOT_CHARTABLE_MESSAGE = (
+    "No meaningful visualizations could be generated because this report is "
+    "primarily narrative or descriptive."
+)
 
 
 def _plan_service() -> PlanService:
@@ -44,6 +50,10 @@ def _resolve_decision(report: ReportData, *, reporting_period: str = "") -> Visu
         document_text=report.narrative,
         reporting_period=reporting_period,
     )
+
+
+def _visualization_count(report: ReportData) -> int:
+    return len((report.charts or {}).get("visualizations") or [])
 
 
 def render_report_insights_panel(
@@ -90,6 +100,18 @@ def render_report_insights_panel(
     )
 
 
+def render_visual_insights_charts(report: ReportData) -> None:
+    """Render generated charts beneath the insights section."""
+
+    chart_data = report.charts
+    if not has_chart_visuals(chart_data):
+        return
+
+    st.markdown('<div class="dde-visual-insights-charts">', unsafe_allow_html=True)
+    render_report_charts(chart_data or {})
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
 def render_explore_visual_insights(
     report: ReportData,
     *,
@@ -105,26 +127,36 @@ def render_explore_visual_insights(
     stored_message = st.session_state.pop(message_key, None)
 
     if stored_message:
-        st.info(stored_message)
+        if stored_message == NOT_CHARTABLE_MESSAGE:
+            st.warning(stored_message)
+        else:
+            st.info(stored_message)
 
     if not _plan_service().include_professional_charts():
         st.caption("Visual insights are available on the Professional plan.")
         return report
 
     has_charts = has_chart_visuals(report.charts)
+    prior_count = _visualization_count(report)
     button_label = (
-        "Explore More Visual Insights"
+        "📊 Explore More Visual Insights"
         if has_charts
-        else "Explore Visual Insights"
+        else "📊 Explore Visual Insights"
     )
 
-    if st.button(
-        button_label,
-        use_container_width=True,
-        key=f"{key_prefix}_explore_visual_insights",
-    ):
+    st.markdown('<div class="dde-visual-insights-action"></div>', unsafe_allow_html=True)
+    _, button_col, _ = st.columns([2.2, 1.4, 2.2])
+    with button_col:
+        explore_clicked = st.button(
+            button_label,
+            type="primary",
+            use_container_width=True,
+            key=f"{key_prefix}_explore_visual_insights",
+        )
+
+    if explore_clicked:
         with loading("Analysing report for visual insights…"):
-            updated, decision, message = explore_visual_insights(
+            updated, _decision, message = explore_visual_insights(
                 report,
                 user_report_type=report.report_type,
                 document_text=report.narrative,
@@ -132,16 +164,17 @@ def render_explore_visual_insights(
                 append_only=has_charts,
             )
 
-        if message:
+        new_count = _visualization_count(updated)
+        charts_added = new_count > prior_count
+
+        if charts_added:
+            st.session_state[message_key] = (
+                "Visual insights were generated and are shown below."
+            )
+        elif message:
             st.session_state[message_key] = message
-        elif decision.level == VisualizationConfidenceLevel.HIGH and has_charts:
-            st.session_state[message_key] = (
-                "Additional visual insights were added where they improve understanding."
-            )
         else:
-            st.session_state[message_key] = (
-                "Visual insights were added to this report."
-            )
+            st.session_state[message_key] = NOT_CHARTABLE_MESSAGE
 
         if on_report_updated:
             on_report_updated(updated)

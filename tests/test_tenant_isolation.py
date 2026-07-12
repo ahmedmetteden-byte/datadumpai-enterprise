@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from core.current_user import CurrentUser, bind_current_user
 from core.tenant_session import (
     TENANT_DATA_KEYS,
     TENANT_USER_KEY,
@@ -91,8 +92,8 @@ def user_a_data(two_user_env, monkeypatch):
 
     _as_user(monkeypatch, USER_A)
 
-    project_service = ProjectService(user_id=USER_A_ID)
-    document_service = DocumentService(user_id=USER_A_ID)
+    project_service = ProjectService()
+    document_service = DocumentService()
 
     project = project_service.create_project("User A Confidential")
     project_id = project["id"]
@@ -118,7 +119,7 @@ def user_a_data(two_user_env, monkeypatch):
 
 
 def _as_user(monkeypatch, user: User) -> None:
-    monkeypatch.setattr("core.auth.get_current_user_id", lambda: user.id)
+    bind_current_user(user)
     monkeypatch.setattr("core.auth.get_current_user", lambda: user)
 
 
@@ -139,7 +140,7 @@ def test_user_b_cannot_list_user_a_projects(
     user_a_data,
     as_user_b,
 ):
-    service = ProjectService(user_id=USER_B_ID)
+    service = ProjectService()
     projects = service.get_projects()
 
     assert projects == []
@@ -154,7 +155,7 @@ def test_user_b_cannot_read_user_a_documents(
     user_a_data,
     as_user_b,
 ):
-    documents = DocumentService(user_id=USER_B_ID).get_documents(
+    documents = DocumentService().get_documents(
         user_a_data["project_id"],
     )
 
@@ -179,7 +180,7 @@ def test_user_b_cannot_load_user_a_report_by_path(
     foreign_path = user_a_data["report"]["path"]
 
     with pytest.raises(PermissionError):
-        FileStore(USER_B_ID).read_text(foreign_path)
+        FileStore(CurrentUser.from_user(USER_B)).read_text(foreign_path)
 
     with pytest.raises(PermissionError):
         ReportService.load_report(foreign_path)
@@ -201,7 +202,7 @@ def test_file_store_rejects_foreign_storage_key(two_user_env, as_user_b):
     foreign_key = f"{USER_A_ID}/proj-1/reports/secret.md"
 
     with pytest.raises(PermissionError):
-        FileStore(USER_B_ID).read_bytes(foreign_key)
+        FileStore(CurrentUser.from_user(USER_B)).read_bytes(foreign_key)
 
 
 def test_file_store_rejects_foreign_local_path(
@@ -212,7 +213,7 @@ def test_file_store_rejects_foreign_local_path(
     foreign_path = user_a_data["report"]["path"]
 
     with pytest.raises(PermissionError):
-        FileStore(USER_B_ID).read_bytes(foreign_path)
+        FileStore(CurrentUser.from_user(USER_B)).read_bytes(foreign_path)
 
 
 def test_search_does_not_find_other_user_data(
@@ -221,7 +222,7 @@ def test_search_does_not_find_other_user_data(
     as_user_b,
 ):
     search = SearchService(
-        project_repository=ProjectRepository(user_id=USER_B_ID),
+        project_repository=ProjectRepository(),
     )
 
     for query in ("Confidential", "secret_board_pack", "User A", "42M"):
@@ -258,8 +259,8 @@ def test_user_a_data_not_visible_in_user_b_project_list(
     user_a_data,
     as_user_b,
 ):
-    own_project = ProjectService(user_id=USER_B_ID).create_project("User B Workspace")
-    projects = ProjectService(user_id=USER_B_ID).get_projects()
+    own_project = ProjectService().create_project("User B Workspace")
+    projects = ProjectService().get_projects()
 
     assert len(projects) == 1
     assert projects[0]["id"] == own_project["id"]
@@ -267,12 +268,12 @@ def test_user_a_data_not_visible_in_user_b_project_list(
 
 
 def test_user_a_can_access_own_data(two_user_env, user_a_data, as_user_a):
-    project_service = ProjectService(user_id=USER_A_ID)
+    project_service = ProjectService()
     project = project_service.get_project(user_a_data["project_id"])
 
     assert project["name"] == user_a_data["project_name"]
 
-    documents = DocumentService(user_id=USER_A_ID).get_documents(
+    documents = DocumentService().get_documents(
         user_a_data["project_id"],
     )
     assert len(documents) == 1
