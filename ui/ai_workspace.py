@@ -230,6 +230,43 @@ def _render_action_buttons(
     st.markdown("</div>", unsafe_allow_html=True)
 
 
+def _render_run_request_button_styles() -> None:
+  """Style the prompt form submit button to match platform primary blue."""
+
+  st.markdown(
+    """
+<style>
+[data-testid="stForm"]:has(input[aria-label="What would you like DataDumpAI to do?"])
+[data-testid="stFormSubmitButton"] button {
+    background: #2563EB !important;
+    border: 2px solid #1D4ED8 !important;
+    color: #FFFFFF !important;
+    box-shadow: 0 8px 20px rgba(37, 99, 235, 0.28) !important;
+    min-height: 38px;
+    font-size: 22px;
+    line-height: 1;
+    padding: 0;
+}
+[data-testid="stForm"]:has(input[aria-label="What would you like DataDumpAI to do?"])
+[data-testid="stFormSubmitButton"] button:hover {
+    background: #1D4ED8 !important;
+    border-color: #1E40AF !important;
+    color: #FFFFFF !important;
+}
+[data-testid="stForm"]:has(input[aria-label="What would you like DataDumpAI to do?"])
+[data-testid="stFormSubmitButton"] button p,
+[data-testid="stForm"]:has(input[aria-label="What would you like DataDumpAI to do?"])
+[data-testid="stFormSubmitButton"] button span,
+[data-testid="stForm"]:has(input[aria-label="What would you like DataDumpAI to do?"])
+[data-testid="stFormSubmitButton"] button div {
+    color: #FFFFFF !important;
+}
+</style>
+""",
+    unsafe_allow_html=True,
+  )
+
+
 def _render_prompt_hero(on_action: Callable[[AIWorkspaceAction], None]) -> None:
     render_compact_document_attach()
 
@@ -244,6 +281,8 @@ def _render_prompt_hero(on_action: Callable[[AIWorkspaceAction], None]) -> None:
 
     prompt_value = st.session_state.get(AI_WORKSPACE_PROMPT_KEY, "")
 
+    _render_run_request_button_styles()
+
     with st.form("ai_workspace_prompt_form", clear_on_submit=False):
         input_col, send_col = st.columns([8, 1], gap="small", vertical_alignment="bottom")
 
@@ -257,12 +296,10 @@ def _render_prompt_hero(on_action: Callable[[AIWorkspaceAction], None]) -> None:
             )
 
         with send_col:
-            st.markdown('<div class="dde-ai-send-marker"></div>', unsafe_allow_html=True)
             submitted = st.form_submit_button(
                 "+",
                 type="primary",
                 use_container_width=True,
-                help="Run request",
             )
 
         if submitted:
