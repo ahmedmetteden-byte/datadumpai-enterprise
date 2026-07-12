@@ -19,17 +19,20 @@ class WorkspaceSection:
     id: str
     title: str
     icon: str
+    subtitle: str = ""
     enabled: bool = True
     is_primary: bool = False
+    show_in_nav: bool = True
 
 
 WORKSPACE_SECTIONS: list[WorkspaceSection] = [
-    WorkspaceSection("overview", "Overview", "📊", is_primary=True),
-    WorkspaceSection("documents", "Documents", "📁"),
-    WorkspaceSection("library", "Document Library", "📚"),
-    WorkspaceSection("reports", "Saved Reports", "📑"),
+    WorkspaceSection("overview", "Overview", "🏠", is_primary=True),
+    WorkspaceSection("documents", "AI Workspace", "✨", subtitle="Ask & create"),
+    WorkspaceSection("library", "My Documents", "📂", subtitle="Dump Box"),
+    WorkspaceSection("reports", "My Reports", "📄", subtitle="View completed reports"),
     WorkspaceSection("copilot", "Ask AI", "🤖"),
-    WorkspaceSection("settings", "Settings", "⚙️"),
+    WorkspaceSection("account", "Account", "👤", show_in_nav=False),
+    WorkspaceSection("settings", "Settings", "⚙️", show_in_nav=False),
 ]
 
 DEFAULT_SECTION = "overview"
@@ -38,16 +41,23 @@ LEGACY_PAGE_ALIASES: dict[str, str] = {
     "dashboard": "overview",
     "overview": "overview",
     "documents": "documents",
+    "report_studio": "documents",
+    "ai_workspace": "documents",
     "library": "library",
     "document_library": "library",
     "reports": "reports",
     "generate": "documents",
     "copilot": "copilot",
     "settings": "settings",
+    "account": "account",
+    "profile": "account",
     "history": "reports",
     "knowledge": "documents",
     "analytics": "overview",
 }
+
+
+REPORT_STUDIO_SECTION = "documents"
 
 
 def initialize_workspace_navigation() -> None:
@@ -58,9 +68,19 @@ def initialize_workspace_navigation() -> None:
 
 
 def get_workspace_sections() -> list[WorkspaceSection]:
-    """Return every workspace section."""
+    """Return every enabled workspace section."""
 
     return [section for section in WORKSPACE_SECTIONS if section.enabled]
+
+
+def get_sidebar_workspace_sections() -> list[WorkspaceSection]:
+    """Return workspace sections shown in the primary sidebar navigation."""
+
+    return [
+        section
+        for section in WORKSPACE_SECTIONS
+        if section.enabled and section.show_in_nav
+    ]
 
 
 def get_workspace_section() -> str:
@@ -87,6 +107,22 @@ def set_workspace_section(section_id: str) -> None:
 
     if section_id in valid_ids:
         st.session_state.workspace_section = section_id
+
+
+REPORT_STUDIO_SECTION = "documents"
+AI_WORKSPACE_SECTION = "documents"
+
+
+def navigate_to_ai_workspace() -> None:
+    """Open AI Workspace — conversational report and analysis."""
+
+    set_workspace_section(AI_WORKSPACE_SECTION)
+
+
+def navigate_to_report_studio() -> None:
+    """Backward-compatible alias for AI Workspace."""
+
+    navigate_to_ai_workspace()
 
 
 def resolve_workspace_section(page_id: str) -> str | None:

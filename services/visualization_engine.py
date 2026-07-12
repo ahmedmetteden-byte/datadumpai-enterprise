@@ -271,6 +271,7 @@ REPORT_TYPE_KEYWORDS: dict[ReportType, tuple[str, ...]] = {
 }
 
 USER_REPORT_TYPE_HINTS: dict[str, ReportType] = {
+    "annual statistics": ReportType.FINANCIAL,
     "financial analysis": ReportType.FINANCIAL,
     "regulatory compliance report": ReportType.REGULATORY,
     "risk assessment report": ReportType.RISK,
@@ -861,24 +862,73 @@ def apply_visualizations(
     user_report_type: str = "",
     document_text: str = "",
     include_charts: bool = True,
+    force_generate: bool = False,
+    append_only: bool = False,
+    reporting_period: str = "",
 ) -> ReportData:
     """
-    Classify the report, decide visualization strategy, and attach visualization blocks.
+    Classify the report, score visualization confidence, and attach blocks when appropriate.
 
-    Internal theme-frequency analytics remain in report_data.charts but are suppressed
-    from export when visualization blocks are generated.
+    High-confidence reports auto-generate charts. Medium and low confidence reports
+    store the decision for the Explore Visual Insights flow unless force_generate=True.
     """
 
-    if not include_charts:
-        return report_data
+    from services.visualization_decision import (
+        evaluate_visualization_decision,
+        low_confidence_user_message,
+    )
+
+    resolved_type = user_report_type or report_data.report_type
+    decision = evaluate_visualization_decision(
+        report_data,
+        user_report_type=resolved_type,
+        document_text=document_text,
+        reporting_period=reporting_period,
+    )
 
     detected_type = classify_report_type(
         report_data,
         document_text=document_text,
-        user_report_type=user_report_type or report_data.report_type,
+        user_report_type=resolved_type,
     )
-    intent = classify_report_intent(user_report_type or report_data.report_type)
+    intent = classify_report_intent(resolved_type)
     data_profile = build_data_profile(report_data, document_text=document_text)
+
+    charts = dict(report_data.charts)
+    metadata = dict(report_data.metadata)
+    charts["visualization_decision"] = decision.to_dict()
+    charts["detected_report_type"] = detected_type.value
+    charts["report_intent"] = intent.value
+    charts["data_profile"] = data_profile.to_dict()
+    metadata["detected_report_type"] = detected_type.value
+    metadata["report_intent"] = intent.value
+    metadata["data_profile"] = data_profile.to_dict()
+    metadata["visualization_decision"] = decision.to_dict()
+
+    should_generate = include_charts and (force_generate or decision.auto_generate)
+
+    if not should_generate:
+        charts["_suppress_theme_charts"] = True
+        if force_generate and not decision.suggested_visualizations:
+            decision.user_message = low_confidence_user_message()
+            charts["visualization_decision"] = decision.to_dict()
+            metadata["visualization_decision"] = decision.to_dict()
+
+        return ReportData(
+            report_type=report_data.report_type,
+            title=report_data.title,
+            narrative=report_data.narrative,
+            metadata=metadata,
+            metrics=dict(report_data.metrics),
+            charts=charts,
+            kpis=dict(report_data.kpis),
+            source_documents=list(report_data.source_documents),
+            executive_summary=dict(report_data.executive_summary),
+            sections=list(report_data.sections),
+            recommendations=list(report_data.recommendations),
+            citations=list(report_data.citations),
+        )
+
     strategies = decide_visualization_strategies(detected_type, data_profile, intent)
     blocks = build_visualization_blocks(
         detected_type,
@@ -887,20 +937,57 @@ def apply_visualizations(
         report_data,
         document_text=document_text,
     )
+    block_dicts = [block.to_dict() for block in blocks]
+
+    if append_only:
+        existing_titles = {
+            str(item.get("title", "")).strip().lower()
+            for item in charts.get("visualizations") or []
+        }
+        merged = list(charts.get("visualizations") or [])
+        for block in block_dicts:
+            title = str(block.get("title", "")).strip().lower()
+            if title and title in existing_titles:
+                continue
+            merged.append(block)
+            if title:
+                existing_titles.add(title)
+        block_dicts = merged
+
+    if force_generate and not block_dicts:
+        decision.user_message = low_confidence_user_message()
+        charts["_suppress_theme_charts"] = True
+        charts["visualization_decision"] = {
+            **decision.to_dict(),
+            "explored": True,
+        }
+        metadata["visualization_decision"] = charts["visualization_decision"]
+        return ReportData(
+            report_type=report_data.report_type,
+            title=report_data.title,
+            narrative=report_data.narrative,
+            metadata=metadata,
+            metrics=dict(report_data.metrics),
+            charts=charts,
+            kpis=dict(report_data.kpis),
+            source_documents=list(report_data.source_documents),
+            executive_summary=dict(report_data.executive_summary),
+            sections=list(report_data.sections),
+            recommendations=list(report_data.recommendations),
+            citations=list(report_data.citations),
+        )
 
     dashboard = _build_executive_dashboard(detected_type, report_data, blocks)
-    charts = dict(report_data.charts)
-    charts["visualizations"] = [block.to_dict() for block in blocks]
+    charts["visualizations"] = block_dicts
     charts["executive_dashboard"] = dashboard.to_dict()
-    charts["detected_report_type"] = detected_type.value
-    charts["report_intent"] = intent.value
-    charts["data_profile"] = data_profile.to_dict()
     charts["_suppress_theme_charts"] = True
-
-    metadata = dict(report_data.metadata)
-    metadata["detected_report_type"] = detected_type.value
-    metadata["report_intent"] = intent.value
-    metadata["data_profile"] = data_profile.to_dict()
+    charts["visualization_decision"] = {
+        **decision.to_dict(),
+        "explored": force_generate,
+        "auto_generate": decision.auto_generate,
+    }
+    metadata["visualization_decision"] = charts["visualization_decision"]
+    metadata["include_charts"] = bool(block_dicts)
 
     return ReportData(
         report_type=report_data.report_type,

@@ -79,6 +79,7 @@ def compose_report_data(
         user_report_type=report_type,
         document_text=cleaned_narrative,
         include_charts=include_charts,
+        reporting_period=str(report_context.get("reporting_period") or ""),
     )
 
     section_plan = resolve_section_plan_for_assembly(

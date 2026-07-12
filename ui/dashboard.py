@@ -122,63 +122,65 @@ def render_recent_reports(workspace: Workspace) -> None:
                 st.rerun()
 
 
-def render_workspace_health(workspace: Workspace) -> None:
-    """Display instant workspace health guidance."""
-
-    st.subheader("Workspace Health")
-
-    st.caption(
-        "Instant assessment of what is complete and what still needs attention."
-    )
-
-    for indicator in workspace.health:
-        st.markdown(
-            f"{indicator.icon} {indicator.message}"
-        )
-
-
 def render_project_statistics(workspace: Workspace) -> None:
-    """Display live workspace statistics."""
+    """Display live workspace statistics inside a collapsed panel by default."""
 
-    documents_col, reports_col, exports_col, storage_col, activity_col = st.columns(5)
+    with st.expander("Workspace metrics", expanded=False):
+        documents_col, reports_col, exports_col, storage_col, activity_col = st.columns(5)
 
-    with documents_col:
-        st.metric(
-            "Documents",
-            workspace.document_count,
-        )
+        with documents_col:
+            st.metric(
+                "Documents",
+                workspace.document_count,
+            )
 
-    with reports_col:
-        st.metric(
-            "Reports",
-            workspace.report_count,
-        )
+        with reports_col:
+            st.metric(
+                "Reports",
+                workspace.report_count,
+            )
 
-    with exports_col:
-        st.metric(
-            "Exports",
-            workspace.export_count,
-        )
+        with exports_col:
+            st.metric(
+                "Exports",
+                workspace.export_count,
+            )
 
-    with storage_col:
-        st.metric(
-            "Storage Used",
-            _format_storage(workspace.storage),
-        )
+        with storage_col:
+            st.metric(
+                "Storage Used",
+                _format_storage(workspace.storage),
+            )
 
-    with activity_col:
-        st.metric(
-            "Last Activity",
-            _format_timestamp(workspace.last_activity),
-        )
+        with activity_col:
+            st.metric(
+                "Last Activity",
+                _format_timestamp(workspace.last_activity),
+            )
 
-    st.caption(f"AI: {workspace.ai.status}")
-
-    render_workspace_health(workspace)
+        st.caption(f"AI: {workspace.ai.status}")
 
     render_recent_documents(workspace)
 
     render_recent_reports(workspace)
+
+
+def render_recent_activity() -> None:
+    """Display recent account activity on the overview."""
+
+    from services.activity_service import ActivityService
+
+    st.subheader("Recent Activity")
+
+    logs = ActivityService().list_recent(limit=8)
+    if not logs:
+        st.caption("No activity recorded yet.")
+        return
+
+    for entry in logs:
+        created_at = str(entry.get("created_at", ""))[:16].replace("T", " ")
+        message = entry.get("message") or entry.get("action", "Activity")
+        st.markdown(f"**{created_at}** — {message}")
 
 
 def render_overview() -> None:
@@ -192,15 +194,11 @@ def render_overview() -> None:
 
     st.caption(workspace.name)
 
-    from services.usage_service import UsageService
-
-    usage = UsageService().get_snapshot()
-    u1, u2, u3 = st.columns(3)
-    u1.metric("Plan", usage.plan.title())
-    u2.metric("Reports used", f"{usage.reports_used}" + (f" / {usage.reports_limit}" if usage.reports_limit else ""))
-    u3.metric("Uploads used", f"{usage.uploads_used}" + (f" / {usage.uploads_limit}" if usage.uploads_limit else ""))
-
     render_project_statistics(workspace)
+
+    st.divider()
+
+    render_recent_activity()
 
 
 def render_analytics() -> None:

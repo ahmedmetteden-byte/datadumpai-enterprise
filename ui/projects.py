@@ -262,7 +262,7 @@ def render_project_manager() -> None:
 def _render_create_dialog() -> None:
     st.markdown("---")
     st.markdown("**Create project**")
-    st.caption("Name your project, then upload documents on the Documents page.")
+    st.caption("Name your project, then upload documents to your Dump Box or AI Workspace.")
 
     new_name = st.text_input(
         "Project name",

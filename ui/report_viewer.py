@@ -78,6 +78,32 @@ def render_report_viewer() -> None:
 
     st.markdown("---")
     render_report_content(report_data)
+
+    reporting_period = str(
+        (report_data.metadata or {}).get("report_context", {}).get("reporting_period", "")
+    )
+
+    from ui.report_insights import (
+        render_explore_visual_insights,
+        render_report_insights_panel,
+    )
+
+    render_report_insights_panel(report_data, reporting_period=reporting_period)
+
+    def _save_explored_report(updated_report) -> None:
+        ReportService.update_report(
+            project["id"],
+            report.get("filename", ""),
+            report=updated_report,
+        )
+
+    report_data = render_explore_visual_insights(
+        report_data,
+        key_prefix="viewer",
+        reporting_period=reporting_period,
+        on_report_updated=_save_explored_report,
+    )
+
     st.divider()
 
     render_premium_downloads(

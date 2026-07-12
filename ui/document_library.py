@@ -136,7 +136,8 @@ def render_document_library() -> None:
     initialize_projects()
     workspace = get_active_workspace()
 
-    st.markdown("## Document Library")
+    st.markdown("## My Documents")
+    st.caption("Your **Dump Box** — uploaded files for this workspace.")
 
     if workspace.get("is_pending"):
         st.caption("Create a project in the sidebar to manage project documents.")
@@ -150,12 +151,12 @@ def render_document_library() -> None:
     if workspace.get("is_quick_report"):
         st.caption(
             "Quick Report files uploaded without a project. "
-            "Upload new documents from **Documents** while Quick Report is selected."
+            "Upload new documents from **AI Workspace** or your **Dump Box** while Quick Report is selected."
         )
     else:
         st.caption(
             f"Files uploaded to **{workspace['name']}**. "
-            "Upload new documents from **Documents** while this project is selected."
+            "Upload new documents from **AI Workspace** or your **Dump Box** while this project is selected."
         )
 
     documents = _document_service().get_documents(workspace["id"])
@@ -167,7 +168,7 @@ def render_document_library() -> None:
             icon="📁",
             title="No documents yet",
             message=(
-                "Upload your first file from **Documents** while "
+                "Upload your first file from **AI Workspace** or your **Dump Box** while "
                 f"{'Quick Report' if workspace.get('is_quick_report') else workspace['name']} "
                 "is selected in the sidebar."
             ),

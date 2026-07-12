@@ -105,7 +105,7 @@ class NotificationService:
             f"Hi,\n\n"
             f"You are approaching or have reached your {limit_type} limit "
             f"on the {plan_label} plan.\n\n"
-            f"Upgrade in Settings → Plan & Usage: {config.AUTH_REDIRECT_URL}\n"
+            f"Upgrade in Account → Subscription: {config.AUTH_REDIRECT_URL}\n"
         )
         try:
             return send_email(to_email=recipient, subject=subject, body_text=body)

@@ -5,15 +5,17 @@ Project Workspace Shell
 
 from __future__ import annotations
 
+import inspect
+import logging
 import streamlit as st
 
 from core.workspace_navigation import get_workspace_section
 from ui.hero import render_hero
-from ui.project_summary import render_project_summary
-from ui.recent_reports import render_recent_reports
-from ui.report_preview import render_report_preview_if_open
-from ui.report_viewer import render_report_viewer
 from ui.onboarding import render_onboarding_banner, render_onboarding_wizard
+from ui.project_summary import render_project_summary
+from ui.report_preview import render_report_preview_if_open
+
+logger = logging.getLogger(__name__)
 
 
 def _section_renderer(section_id: str):
@@ -43,6 +45,10 @@ def _section_renderer(section_id: str):
         from ui.workspace.sections import settings as section
 
         return section.render
+    if section_id == "account":
+        from ui.workspace.sections import account as section
+
+        return section.render
     return None
 
 
@@ -66,17 +72,19 @@ def render_workspace_shell() -> None:
         render_report_preview_if_open()
         return
 
-    if active_section == "documents":
-        render_recent_reports()
-
-        if st.session_state.get("selected_report"):
-            render_report_viewer()
-
     st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
 
     renderer = _section_renderer(active_section)
 
     if renderer:
+        renderer_module = inspect.getmodule(renderer)
+        module_path = getattr(renderer_module, "__file__", renderer.__module__)
+        logger.info(
+            "Workspace section %r rendered by %s (%s)",
+            active_section,
+            renderer.__module__,
+            module_path,
+        )
         renderer()
     else:
         st.info("This section is not available.")

@@ -981,6 +981,20 @@ section[data-testid="stSidebar"] .dde-sidebar-tagline{
 
     font-size:12px;
 
+    color:#E2E8F0;
+
+    font-weight:600;
+
+    line-height:1.3;
+
+}
+
+.dde-user-plan{
+
+    margin-top:2px;
+
+    font-size:11px;
+
     color:#94A3B8;
 
     line-height:1.3;
@@ -2436,5 +2450,279 @@ div[data-testid="stDialog"] .stDownloadButton>button:hover div{
     color:__MUTED__;
 
     margin-bottom:8px;
+
+}
+
+.dde-nav-subtitle{
+
+    margin:-6px 0 10px 4px;
+
+    font-size:11px;
+
+    line-height:1.3;
+
+    color:#64748B;
+
+}
+
+.dde-nav-subtitle-active{
+
+    color:#94A3B8;
+
+}
+
+.dde-account-profile{
+
+    padding:4px 0 8px;
+
+}
+
+.dde-account-profile-header{
+
+    display:flex;
+
+    align-items:center;
+
+    gap:16px;
+
+    margin-bottom:18px;
+
+}
+
+.dde-account-avatar{
+
+    width:56px;
+
+    height:56px;
+
+    font-size:18px;
+
+}
+
+.dde-account-name{
+
+    font-size:26px;
+
+    font-weight:800;
+
+    color:#F8FAFC;
+
+    line-height:1.2;
+
+}
+
+.dde-account-plan{
+
+    margin-top:4px;
+
+    font-size:14px;
+
+    font-weight:600;
+
+    color:#60A5FA;
+
+}
+
+.dde-account-details{
+
+    display:grid;
+
+    gap:10px;
+
+    padding:14px 0 4px;
+
+}
+
+.dde-account-details > div{
+
+    font-size:14px;
+
+    color:#E2E8F0;
+
+    line-height:1.4;
+
+}
+
+.dde-account-label{
+
+    display:inline-block;
+
+    min-width:88px;
+
+    margin-right:8px;
+
+    font-size:12px;
+
+    font-weight:700;
+
+    letter-spacing:.04em;
+
+    text-transform:uppercase;
+
+    color:#94A3B8;
+
+}
+
+.dde-report-insights{
+
+    margin:12px 0 16px;
+
+    padding:16px 18px;
+
+    border:1px solid rgba(255,255,255,.08);
+
+    border-radius:14px;
+
+    background:rgba(255,255,255,.03);
+
+}
+
+.dde-report-insights-title{
+
+    font-size:15px;
+
+    font-weight:800;
+
+    color:#F8FAFC;
+
+    margin-bottom:12px;
+
+}
+
+.dde-report-insights-grid{
+
+    display:grid;
+
+    gap:10px;
+
+    margin-bottom:12px;
+
+}
+
+.dde-report-insights-grid > div,
+.dde-report-insights-recommended{
+
+    font-size:14px;
+
+    color:#E2E8F0;
+
+    line-height:1.45;
+
+}
+
+.dde-report-insights-label{
+
+    display:block;
+
+    font-size:11px;
+
+    font-weight:700;
+
+    letter-spacing:.08em;
+
+    text-transform:uppercase;
+
+    color:#94A3B8;
+
+    margin-bottom:4px;
+
+}
+
+.dde-report-insights-recommended ul{
+
+    margin:6px 0 0;
+
+    padding-left:18px;
+
+}
+
+.dde-ai-action-grid{
+
+    margin:8px 0 16px;
+
+}
+
+.dde-ai-empty-state{
+
+    padding:18px 16px;
+
+    border:1px dashed rgba(255,255,255,.12);
+
+    border-radius:14px;
+
+    margin-bottom:14px;
+
+    background:rgba(255,255,255,.02);
+
+}
+
+.dde-ai-empty-title{
+
+    font-size:16px;
+
+    font-weight:700;
+
+    color:#F8FAFC;
+
+}
+
+.dde-ai-empty-copy{
+
+    margin-top:6px;
+
+    font-size:14px;
+
+    color:#94A3B8;
+
+    line-height:1.45;
+
+}
+
+.dde-ai-thread{
+
+    display:grid;
+
+    gap:10px;
+
+    margin-bottom:14px;
+
+}
+
+.dde-ai-message-user,
+.dde-ai-message-assistant{
+
+    padding:12px 14px;
+
+    border-radius:12px;
+
+    font-size:14px;
+
+    line-height:1.5;
+
+}
+
+.dde-ai-message-user{
+
+    background:rgba(37,99,235,.16);
+
+    border:1px solid rgba(96,165,250,.22);
+
+    color:#EFF6FF;
+
+}
+
+.dde-ai-message-assistant{
+
+    background:rgba(255,255,255,.04);
+
+    border:1px solid rgba(255,255,255,.08);
+
+    color:#E2E8F0;
+
+}
+
+.dde-ai-composer{
+
+    margin-top:8px;
 
 }

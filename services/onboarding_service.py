@@ -26,7 +26,7 @@ ONBOARDING_STEPS = (
         "title": "Upload documents",
         "description": "Add PDFs, Word files, Excel sheets, or PowerPoint decks.",
         "section": "documents",
-        "cta": "Upload documents",
+        "cta": "Open AI Workspace",
     },
     {
         "step": 3,

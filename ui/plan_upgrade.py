@@ -52,7 +52,7 @@ def render_upgrade_prompt(feature: str) -> None:
         feature,
         "This capability is available on the **Professional** plan.",
     )
-    st.info(f"{message} See **Settings → Plan & Usage** to compare plans.")
+    st.info(f"{message} See **Account → Subscription** to compare plans.")
 
 
 def render_professional_cta() -> None:
@@ -61,5 +61,5 @@ def render_professional_cta() -> None:
     label = PLANS["professional"]["label"]
     st.markdown(
         f"**Upgrade to {label}** — move from an assistant to an analyst. "
-        "Compare plans in **Settings → Plan & Usage**."
+        "Compare plans in **Account → Subscription**."
     )

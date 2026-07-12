@@ -43,12 +43,16 @@ def render_page() -> None:
 
     if page in {
         "documents",
+        "report_studio",
+        "ai_workspace",
         "library",
         "document_library",
         "reports",
         "generate",
         "copilot",
         "settings",
+        "account",
+        "profile",
         "dashboard",
         "overview",
         "history",

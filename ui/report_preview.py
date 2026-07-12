@@ -83,6 +83,32 @@ def _report_preview_dialog() -> None:
     render_report_content(report)
     st.markdown("</div>", unsafe_allow_html=True)
 
+    reporting_period = str(
+        (draft.get("report") or {}).get("metadata", {}).get("report_context", {}).get(
+            "reporting_period",
+            "",
+        )
+    )
+
+    from ui.report_insights import (
+        render_explore_visual_insights,
+        render_report_insights_panel,
+    )
+
+    render_report_insights_panel(report, reporting_period=reporting_period)
+
+    def _update_draft(updated_report: ReportData) -> None:
+        current = st.session_state.get(DRAFT_REPORT_KEY, {})
+        current["report"] = updated_report.to_dict()
+        st.session_state[DRAFT_REPORT_KEY] = current
+
+    report = render_explore_visual_insights(
+        report,
+        key_prefix="draft",
+        reporting_period=reporting_period,
+        on_report_updated=_update_draft,
+    )
+
     st.markdown("---")
 
     save_col, regen_col, discard_col = st.columns(3)
@@ -100,7 +126,7 @@ def _report_preview_dialog() -> None:
 
                 clear_draft_report()
                 st.session_state.selected_report = metadata
-                show_success(f"{report_type} saved to **Saved Reports**.")
+                show_success(f"{report_type} saved to **My Reports**.")
                 set_workspace_section("reports")
                 st.rerun()
             except Exception as exc:

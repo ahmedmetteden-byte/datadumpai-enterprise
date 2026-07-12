@@ -58,9 +58,9 @@ def render_reports() -> None:
     project = get_current_project()
     reports = report_service.get_reports(project["id"])
 
-    st.markdown("## Saved Reports")
+    st.markdown("## My Reports")
     st.caption(
-        "All generated reports for this project. "
+        "Completed reports for this workspace. "
         "Open one to read, regenerate from its sources, download, or delete."
     )
 
@@ -69,7 +69,7 @@ def render_reports() -> None:
             icon="📑",
             title="No saved reports yet",
             message=(
-                "Go to Documents, select the files you want to use, "
+                "Go to AI Workspace, select the files you want to use, "
                 "and generate your first report there."
             ),
         )

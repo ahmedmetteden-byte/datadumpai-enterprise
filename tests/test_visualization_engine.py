@@ -85,6 +85,7 @@ def test_legal_reports_generate_timeline_not_theme_charts():
         user_report_type="Executive Summary",
         document_text=LEGAL_DOCUMENT,
         include_charts=True,
+        force_generate=True,
     )
 
     assert enriched.charts["detected_report_type"] == ReportType.LEGAL.value
@@ -110,6 +111,7 @@ def test_meeting_reports_generate_action_summary():
         user_report_type="Meeting Intelligence Report",
         document_text=MEETING_DOCUMENT,
         include_charts=True,
+        force_generate=True,
     )
 
     assert enriched.charts["detected_report_type"] == ReportType.MEETING.value
@@ -144,6 +146,7 @@ def test_risk_reports_generate_risk_matrix():
         user_report_type="Risk Assessment Report",
         document_text=RISK_DOCUMENT,
         include_charts=True,
+        force_generate=True,
     )
 
     assert enriched.charts["detected_report_type"] == ReportType.RISK.value
@@ -242,6 +245,7 @@ def test_executive_dashboard_metadata_is_attached():
         user_report_type="Meeting Intelligence Report",
         document_text=MEETING_DOCUMENT,
         include_charts=True,
+        force_generate=True,
     )
 
     dashboard = enriched.charts["executive_dashboard"]

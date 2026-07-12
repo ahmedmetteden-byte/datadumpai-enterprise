@@ -1,5 +1,5 @@
 """
-Project Workspace — Document Library
+Project Workspace — My Documents
 """
 
 from __future__ import annotations

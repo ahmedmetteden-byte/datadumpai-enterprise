@@ -1,6 +1,6 @@
 """
 DataDumpAI v1.0
-Report generation UI — used on the Documents page.
+Report generation UI — used in AI Workspace.
 """
 
 from __future__ import annotations
@@ -407,7 +407,7 @@ def render_document_source_selection(
                         _clear_selection(QUICK_REPORT_KEY)
                         st.caption(
                             "No Quick Report documents yet. "
-                            "Stay on **Quick Report** in the sidebar and upload files in **Documents**."
+                            "Stay on **Quick Report** in the sidebar and upload files in **AI Workspace** or your **Dump Box**."
                         )
                 else:
                     _clear_selection(QUICK_REPORT_KEY)
@@ -462,7 +462,7 @@ def render_document_source_selection(
                         _clear_selection(project_docs_key)
                         st.caption(
                             f"No documents in {selected_project_name} yet. "
-                            "Select that project in the sidebar and upload files in **Documents**."
+                            "Select that project in the sidebar and upload files in **AI Workspace** or your **Dump Box**."
                         )
                 else:
                     st.session_state.pop(PROJECT_SOURCE_KEY, None)
@@ -512,8 +512,8 @@ def render_report_type_picker() -> str:
                         use_container_width=True,
                         type="secondary",
                     ):
-                        st.session_state["settings_tab"] = "plan"
-                        set_workspace_section("settings")
+                        st.session_state["account_tab"] = "subscription"
+                        set_workspace_section("account")
                         st.rerun()
                 elif st.button(
                     f"Select {report_type}",
@@ -599,7 +599,7 @@ def render_documents_page_generation(
     projects: list[dict[str, Any]],
     document_selection: list[dict[str, str]],
 ) -> None:
-    """Generate a report from the selected documents without leaving the Documents page."""
+    """Generate a report from the selected documents without leaving AI Workspace."""
 
     if not document_selection:
         quick_active = (

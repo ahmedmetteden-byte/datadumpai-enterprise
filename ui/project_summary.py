@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 import streamlit as st
 
 from core.workspace import Workspace
+from core.workspace_navigation import navigate_to_ai_workspace, set_workspace_section
 from ui.formatting import format_relative_time
 from ui.projects import get_active_workspace
 
@@ -36,14 +37,19 @@ def _latest_activity(*timestamps: str | None) -> str | None:
     return max(parsed).isoformat()
 
 
-def _status_message(document_count: int, report_count: int) -> str:
+def _stats_line(document_count: int, report_count: int) -> str:
+    document_label = "document" if document_count == 1 else "documents"
+    report_label = "report" if report_count == 1 else "reports"
+    return (
+        f"{document_count} {document_label} uploaded · "
+        f"{report_count} {report_label} generated"
+    )
+
+
+def _primary_action_label(document_count: int) -> str:
     if document_count == 0:
-        return "Upload documents to get started"
-
-    if report_count == 0:
-        return "Ready to generate reports"
-
-    return "Ready to generate more reports"
+        return "Upload to Dump Box"
+    return "Open AI Workspace"
 
 
 def render_project_summary() -> None:
@@ -74,8 +80,8 @@ def render_project_summary() -> None:
 
     document_count = workspace.document_count
     report_count = workspace.report_count
-    document_label = "document" if document_count == 1 else "documents"
-    report_label = "report" if report_count == 1 else "reports"
+    stats_line = _stats_line(document_count, report_count)
+    action_label = _primary_action_label(document_count)
 
     last_activity = _latest_activity(
         active_workspace.get("last_activity"),
@@ -96,27 +102,41 @@ def render_project_summary() -> None:
         if last_activity
         else "No activity yet"
     )
-    status = _status_message(document_count, report_count)
     label = "Workspace" if active_workspace.get("is_quick_report") else "Project"
 
     st.markdown('<div class="dde-project-summary-wrap">', unsafe_allow_html=True)
 
     with st.container(border=True):
-        st.markdown(
-            f"""
+        summary_col, action_col = st.columns([3, 1], gap="medium")
+
+        with summary_col:
+            st.markdown(
+                f"""
 <div class="dde-project-summary">
 <div class="dde-project-summary-label">{label}</div>
 <div class="dde-project-summary-name">{workspace.name}</div>
-<div class="dde-project-summary-stats">
-{document_count} {document_label} · {report_count} {report_label}
-</div>
+<div class="dde-project-summary-stats">{stats_line}</div>
 <div class="dde-project-summary-meta">
 <span><strong>Last activity:</strong> {activity_text}</span>
-<span class="dde-project-summary-status">{status}</span>
 </div>
 </div>
 """,
-            unsafe_allow_html=True,
-        )
+                unsafe_allow_html=True,
+            )
+
+        with action_col:
+            st.markdown('<div class="dde-summary-actions">', unsafe_allow_html=True)
+            if st.button(
+                action_label,
+                type="primary",
+                use_container_width=True,
+                key="project_summary_primary_action",
+            ):
+                if document_count == 0:
+                    set_workspace_section("library")
+                else:
+                    navigate_to_ai_workspace()
+                st.rerun()
+            st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("</div>", unsafe_allow_html=True)
