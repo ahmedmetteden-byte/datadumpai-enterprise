@@ -14,6 +14,7 @@ from services.report_chart_data import (
     prepare_report_for_output,
     strip_chart_data,
 )
+from services.visualization_engine import apply_visualizations
 
 
 def compose_report_data(
@@ -28,7 +29,7 @@ def compose_report_data(
 
     cleaned_narrative = strip_chart_data(narrative).strip()
 
-    return ReportData(
+    composed = ReportData(
         report_type=report_type,
         title=title or report_type,
         narrative=cleaned_narrative,
@@ -46,6 +47,12 @@ def compose_report_data(
         sections=list(base.sections),
         recommendations=list(base.recommendations),
         citations=list(base.citations),
+    )
+
+    return apply_visualizations(
+        composed,
+        user_report_type=report_type,
+        include_charts=include_charts,
     )
 
 

@@ -9,6 +9,7 @@ from typing import Any
 import streamlit as st
 
 from services.report_chart_figures import build_report_chart_figures
+from services.visualization_engine import dashboard_section_heading
 
 
 def render_report_charts(chart_data: dict[str, Any]) -> None:
@@ -19,7 +20,7 @@ def render_report_charts(chart_data: dict[str, Any]) -> None:
     if not figures:
         return
 
-    st.markdown("#### Visual Analytics")
+    st.markdown(f"#### {dashboard_section_heading(chart_data)}")
 
     titles = [title for title, _ in figures]
     has_trends = "Theme Trends" in titles

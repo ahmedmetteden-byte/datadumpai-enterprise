@@ -25,6 +25,7 @@ from services.export_chart_blocks import get_export_chart_images
 from models.report_data import ReportData
 from services.report_chart_data import prepare_report_for_output
 from services.report_document import prepare_report_view, report_data_from_markdown
+from services.visualization_engine import dashboard_section_heading
 from services.report_markdown_renderer import (
     parse_markdown_blocks,
     strip_inline_markdown,
@@ -139,7 +140,7 @@ class ExportService:
         if not chart_export.images and not chart_export.unavailable_note:
             return
 
-        story.append(Paragraph("Visual Analytics", heading_style))
+        story.append(Paragraph(dashboard_section_heading(chart_data), heading_style))
 
         if chart_export.images:
             self._append_pdf_charts(story, chart_export.images, body_style)
@@ -153,7 +154,7 @@ class ExportService:
         if not chart_export.images and not chart_export.unavailable_note:
             return
 
-        document.add_heading("Visual Analytics", level=2)
+        document.add_heading(dashboard_section_heading(chart_data), level=2)
 
         if chart_export.images:
             self._append_docx_charts(document, chart_export.images)
