@@ -38,13 +38,23 @@ class MockUpload:
         self._pos = position
 
 
+def enable_dev_auth_bypass(monkeypatch) -> None:
+    """Enable legacy dev auth only for tests that explicitly exercise it."""
+
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("AUTH_DEV_BYPASS", "true")
+    monkeypatch.setattr("config.auth_dev_bypass_enabled", lambda: True)
+
+
 @pytest.fixture(autouse=True)
 def auth_context(monkeypatch):
     """Provide a signed-in test user and keep tests on the JSON backend."""
 
-    monkeypatch.setenv("AUTH_DEV_BYPASS", "true")
+    monkeypatch.setenv("ENVIRONMENT", "test")
+    monkeypatch.setenv("AUTH_DEV_BYPASS", "false")
     monkeypatch.setenv("DATABASE_BACKEND", "json")
     monkeypatch.setenv("STORAGE_BACKEND", "local")
+    monkeypatch.setattr("config.auth_dev_bypass_enabled", lambda: False)
     monkeypatch.setattr("config.use_database", lambda: False)
     monkeypatch.setattr("services.auth_service.is_supabase_configured", lambda: False)
     monkeypatch.setattr("core.auth.get_current_user", lambda: TEST_USER)

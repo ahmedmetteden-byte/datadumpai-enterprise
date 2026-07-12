@@ -46,14 +46,28 @@ SIDEBAR_STATE = "expanded"
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip()
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "").strip()
 AUTH_REDIRECT_URL = os.getenv("AUTH_REDIRECT_URL", "http://localhost:8501").strip()
-AUTH_DEV_BYPASS = os.getenv("AUTH_DEV_BYPASS", "false").lower() in {
+
+# deployment environment: development | staging | production
+ENVIRONMENT = os.getenv("ENVIRONMENT", "production").strip().lower()
+
+# Explicit opt-in for legacy single-user dev auth (development only).
+_AUTH_DEV_BYPASS_REQUESTED = os.getenv("AUTH_DEV_BYPASS", "false").lower() in {
     "1",
     "true",
     "yes",
 }
 
+# Legacy constant — raw env flag only. Use auth_dev_bypass_enabled() at runtime.
+AUTH_DEV_BYPASS = _AUTH_DEV_BYPASS_REQUESTED
+
 DEV_USER_ID = "00000000-0000-4000-8000-000000000001"
 DEV_USER_EMAIL = "dev@localhost"
+
+
+def auth_dev_bypass_enabled() -> bool:
+    """Return True only when ENVIRONMENT=development and AUTH_DEV_BYPASS is set."""
+
+    return ENVIRONMENT == "development" and _AUTH_DEV_BYPASS_REQUESTED
 
 
 # ==========================================================
@@ -94,10 +108,17 @@ def validate_production_auth_configuration() -> list[str]:
 
     warnings: list[str] = []
 
-    if AUTH_DEV_BYPASS and is_supabase_configured():
+    if _AUTH_DEV_BYPASS_REQUESTED and ENVIRONMENT != "development":
         warnings.append(
-            "AUTH_DEV_BYPASS cannot be enabled when Supabase is configured. "
-            "Disable AUTH_DEV_BYPASS for multi-user production deployments."
+            "AUTH_DEV_BYPASS=true is only permitted when ENVIRONMENT=development. "
+            f"Current ENVIRONMENT={ENVIRONMENT!r}. Disable AUTH_DEV_BYPASS or set "
+            "ENVIRONMENT=development for local single-user mode."
+        )
+
+    if not auth_dev_bypass_enabled() and not is_supabase_configured():
+        warnings.append(
+            "Supabase Auth is required for multi-user mode. Set SUPABASE_URL and "
+            "SUPABASE_ANON_KEY in your environment."
         )
 
     return warnings

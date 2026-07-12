@@ -37,10 +37,12 @@ else
 fi
 
 AUTH_DEV_BYPASS=false
+ENVIRONMENT=production
 if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
   if [ "$STAGING_MODE" = "true" ]; then
+    ENVIRONMENT=development
     AUTH_DEV_BYPASS=true
-    echo "WARNING: Supabase not configured. Staging mode enabled (AUTH_DEV_BYPASS=true)."
+    echo "WARNING: Supabase not configured. Staging dev auth enabled (ENVIRONMENT=development, AUTH_DEV_BYPASS=true)."
   else
     echo "ERROR: SUPABASE_URL and SUPABASE_ANON_KEY are required for production."
     exit 2
@@ -51,6 +53,7 @@ cat > "$TARGET_ENV" <<EOF
 # DataDumpAI Enterprise v1.0 — production
 OPENAI_API_KEY=${OPENAI_API_KEY}
 
+ENVIRONMENT=${ENVIRONMENT}
 SUPABASE_URL=${SUPABASE_URL}
 SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
 SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}

@@ -39,7 +39,7 @@ def test_lockout_resets_after_success(tmp_path, monkeypatch):
 
 
 def test_sign_in_records_lockout_failure(monkeypatch):
-    monkeypatch.setattr("services.auth_service.AUTH_DEV_BYPASS", False)
+    monkeypatch.setattr("config.auth_dev_bypass_enabled", lambda: False)
     monkeypatch.setattr("services.auth_service.is_supabase_configured", lambda: False)
 
     failures: list[str] = []

@@ -9,7 +9,8 @@ from functools import lru_cache
 
 import streamlit as st
 
-from config import AUTH_DEV_BYPASS, DEBUG
+import config
+from config import DEBUG
 
 AUTH_COOKIE_NAME = "datadumpai_auth"
 AUTH_COOKIES_LOADED_KEY = "auth_cookies_loaded"
@@ -25,7 +26,7 @@ def _cookie_manager():
 def cookies_are_ready() -> bool:
     """Return True once the browser cookie jar has been read."""
 
-    if AUTH_DEV_BYPASS:
+    if config.auth_dev_bypass_enabled():
         return True
 
     if st.session_state.get(AUTH_COOKIES_LOADED_KEY):
@@ -42,7 +43,7 @@ def cookies_are_ready() -> bool:
 def persist_auth_tokens(access_token: str, refresh_token: str) -> None:
     """Store tokens in a secure, SameSite cookie."""
 
-    if AUTH_DEV_BYPASS:
+    if config.auth_dev_bypass_enabled():
         return
 
     payload = json.dumps({"access": access_token, "refresh": refresh_token})
@@ -58,7 +59,7 @@ def persist_auth_tokens(access_token: str, refresh_token: str) -> None:
 def restore_persisted_tokens() -> tuple[str, str] | None:
     """Read persisted tokens from cookies, if present."""
 
-    if AUTH_DEV_BYPASS or not cookies_are_ready():
+    if config.auth_dev_bypass_enabled() or not cookies_are_ready():
         return None
 
     raw = _cookie_manager().get(AUTH_COOKIE_NAME)
@@ -82,7 +83,7 @@ def restore_persisted_tokens() -> tuple[str, str] | None:
 def clear_persisted_tokens() -> None:
     """Remove persisted auth tokens from the browser."""
 
-    if AUTH_DEV_BYPASS:
+    if config.auth_dev_bypass_enabled():
         return
 
     _cookie_manager().delete(AUTH_COOKIE_NAME)

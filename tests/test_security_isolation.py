@@ -58,7 +58,7 @@ class _SessionState(dict):
 @pytest.fixture
 def two_user_env(tmp_path, monkeypatch):
     monkeypatch.setattr("config.use_database", lambda: False)
-    monkeypatch.setattr("services.auth_service.AUTH_DEV_BYPASS", False)
+    monkeypatch.setattr("config.auth_dev_bypass_enabled", lambda: False)
 
     def user_data_root(user_id: str) -> Path:
         return tmp_path / "users" / user_id
@@ -130,7 +130,9 @@ def as_user_b(monkeypatch):
 
 
 def test_duplicate_email_registration_rejected(monkeypatch, isolated_env, tmp_path):
-    monkeypatch.setattr("services.auth_service.AUTH_DEV_BYPASS", True)
+    from tests.conftest import enable_dev_auth_bypass
+
+    enable_dev_auth_bypass(monkeypatch)
     monkeypatch.setattr("services.auth_service.is_supabase_configured", lambda: False)
     monkeypatch.setattr(
         "services.email_uniqueness.EmailUniquenessService._registry_path",

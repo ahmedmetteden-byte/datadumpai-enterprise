@@ -10,6 +10,7 @@ bootstrap_system_ssl()
 import streamlit as st
 
 from config import LAYOUT, PAGE_ICON, PAGE_TITLE, SIDEBAR_STATE, backend_configuration_warnings, validate_production_auth_configuration
+from core.runtime_investigation import investigation_enabled, log_startup_configuration
 from core.auth import initialize_auth, is_authenticated, is_auth_bootstrap_pending, complete_auth_bootstrap, render_auth_gate
 from core.auth_persistence import cookies_are_ready
 from core.billing_callbacks import handle_billing_return
@@ -49,6 +50,10 @@ initialize_auth()
 initialize_navigation()
 initialize_workspace_navigation()
 load_styles()
+
+if investigation_enabled():
+    for fatal in log_startup_configuration():
+        st.error(fatal)
 
 for warning in backend_configuration_warnings():
     st.warning(warning)

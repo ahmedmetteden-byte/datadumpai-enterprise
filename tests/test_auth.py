@@ -11,11 +11,12 @@ import pytest
 from core.user_paths import get_user_projects_json, get_user_projects_root
 from services.project_service import ProjectService
 from services.auth_service import AuthError, AuthService
-from tests.conftest import TEST_USER_ID
+from services.email_uniqueness import DUPLICATE_EMAIL_MESSAGE
+from tests.conftest import TEST_USER_ID, enable_dev_auth_bypass
 
 
 def test_dev_sign_in_returns_stable_user(monkeypatch):
-    monkeypatch.setattr("services.auth_service.AUTH_DEV_BYPASS", True)
+    enable_dev_auth_bypass(monkeypatch)
 
     session = AuthService().dev_sign_in()
 
@@ -25,7 +26,7 @@ def test_dev_sign_in_returns_stable_user(monkeypatch):
 
 
 def test_sign_in_uses_dev_bypass(monkeypatch):
-    monkeypatch.setattr("services.auth_service.AUTH_DEV_BYPASS", True)
+    enable_dev_auth_bypass(monkeypatch)
 
     session = AuthService().sign_in("anyone@example.com", "any-password")
 
@@ -33,7 +34,7 @@ def test_sign_in_uses_dev_bypass(monkeypatch):
 
 
 def test_sign_up_uses_dev_bypass(monkeypatch, isolated_env, tmp_path):
-    monkeypatch.setattr("services.auth_service.AUTH_DEV_BYPASS", True)
+    enable_dev_auth_bypass(monkeypatch)
     monkeypatch.setattr(
         "services.email_uniqueness.EmailUniquenessService._registry_path",
         lambda self: tmp_path / "auth_email_registry_signup.json",
@@ -52,8 +53,20 @@ def test_sign_up_uses_dev_bypass(monkeypatch, isolated_env, tmp_path):
 
 
 def test_sign_in_rejects_unverified_email(monkeypatch):
-    monkeypatch.setattr("services.auth_service.AUTH_DEV_BYPASS", False)
+    monkeypatch.setattr("config.auth_dev_bypass_enabled", lambda: False)
     monkeypatch.setattr("services.auth_service.is_supabase_configured", lambda: False)
+
+    class FakeLockout:
+        def check_allowed(self, email):
+            return None
+
+        def record_failure(self, email):
+            pass
+
+        def record_success(self, email):
+            pass
+
+    monkeypatch.setattr("services.lockout_service.LockoutService", lambda: FakeLockout())
 
     class FakeUser:
         def model_dump(self):
@@ -84,6 +97,122 @@ def test_sign_in_rejects_unverified_email(monkeypatch):
 
     with pytest.raises(AuthError, match="verify your email"):
         service.sign_in("unverified.user@example.com", "password123")
+
+
+def test_supabase_sign_up_returns_distinct_user_ids(monkeypatch):
+    monkeypatch.setattr("config.auth_dev_bypass_enabled", lambda: False)
+    monkeypatch.setattr("services.auth_service.is_supabase_configured", lambda: False)
+
+    user_ids = {
+        "ahmed@example.com": "550e8400-e29b-41d4-a716-446655440001",
+        "john@example.com": "550e8400-e29b-41d4-a716-446655440002",
+    }
+
+    class FakeUser:
+        def __init__(self, email: str) -> None:
+            self._email = email
+
+        def model_dump(self):
+            return {
+                "id": user_ids[self._email],
+                "email": self._email,
+                "email_confirmed_at": "2026-01-01T00:00:00Z",
+                "user_metadata": {"full_name": self._email.split("@")[0].title()},
+            }
+
+    class FakeSession:
+        def __init__(self, email: str) -> None:
+            self.access_token = f"access-{email}"
+            self.refresh_token = f"refresh-{email}"
+
+    class FakeResponse:
+        def __init__(self, email: str) -> None:
+            self.session = FakeSession(email)
+            self.user = FakeUser(email)
+
+    class FakeAuth:
+        def sign_up(self, payload):
+            return FakeResponse(payload["email"])
+
+        def sign_in_with_password(self, credentials):
+            return FakeResponse(credentials["email"])
+
+    class FakeClient:
+        auth = FakeAuth()
+
+    service = AuthService()
+    service._client = FakeClient()
+
+    ahmed = service.sign_up("Ahmed@example.com", "password123", full_name="Ahmed")
+    john = service.sign_up("John@example.com", "password123", full_name="John")
+
+    assert ahmed is not None
+    assert john is not None
+    assert ahmed.user.id != john.user.id
+
+    ahmed_sign_in = service.sign_in("Ahmed@example.com", "password123")
+    john_sign_in = service.sign_in("John@example.com", "password123")
+
+    assert ahmed_sign_in.user.id == ahmed.user.id
+    assert john_sign_in.user.id == john.user.id
+    assert ahmed_sign_in.user.id != john_sign_in.user.id
+
+
+def test_supabase_duplicate_sign_up_returns_error(monkeypatch):
+    monkeypatch.setattr("config.auth_dev_bypass_enabled", lambda: False)
+    monkeypatch.setattr("services.auth_service.is_supabase_configured", lambda: False)
+
+    class FakeAuth:
+        def sign_up(self, _payload):
+            raise Exception("User already registered")
+
+    class FakeClient:
+        auth = FakeAuth()
+
+    service = AuthService()
+    service._client = FakeClient()
+
+    with pytest.raises(AuthError, match=DUPLICATE_EMAIL_MESSAGE):
+        service.sign_up("ahmed@example.com", "password123")
+
+
+def test_restore_session_uses_supabase_tokens(monkeypatch):
+    monkeypatch.setattr("config.auth_dev_bypass_enabled", lambda: False)
+    monkeypatch.setattr("services.auth_service.is_supabase_configured", lambda: False)
+
+    class FakeUser:
+        def model_dump(self):
+            return {
+                "id": "550e8400-e29b-41d4-a716-446655440099",
+                "email": "ahmed@example.com",
+                "email_confirmed_at": "2026-01-01T00:00:00Z",
+                "user_metadata": {},
+            }
+
+    class FakeSession:
+        access_token = "restored-access"
+        refresh_token = "restored-refresh"
+
+    class FakeResponse:
+        session = FakeSession()
+        user = FakeUser()
+
+    class FakeAuth:
+        def set_session(self, access_token, refresh_token):
+            assert access_token == "stored-access"
+            assert refresh_token == "stored-refresh"
+            return FakeResponse()
+
+    class FakeClient:
+        auth = FakeAuth()
+
+    service = AuthService()
+    service._client = FakeClient()
+
+    session = service.restore_session("stored-access", "stored-refresh")
+
+    assert session.user.id == "550e8400-e29b-41d4-a716-446655440099"
+    assert session.access_token == "restored-access"
 
 
 def test_bootstrap_user_account_creates_profile(tmp_path, monkeypatch, isolated_env):
@@ -197,3 +326,15 @@ def test_user_paths_create_directories(tmp_path, monkeypatch):
 
     assert projects_json.parent == Path(base / user_id)
     assert projects_root.is_dir()
+
+
+def test_auth_dev_bypass_blocked_outside_development(monkeypatch):
+    monkeypatch.setattr("config.ENVIRONMENT", "production")
+    monkeypatch.setattr("config._AUTH_DEV_BYPASS_REQUESTED", True)
+
+    from config import auth_dev_bypass_enabled, validate_production_auth_configuration
+
+    assert auth_dev_bypass_enabled() is False
+
+    warnings = validate_production_auth_configuration()
+    assert any("ENVIRONMENT=development" in message for message in warnings)

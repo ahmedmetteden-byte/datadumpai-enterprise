@@ -120,6 +120,30 @@ class DocumentService:
 
     def get_documents(self, project_id: str) -> list[dict[str, Any]]:
         try:
+            from core.runtime_investigation import log_document_load
+
+            store = self._file_store
+            try:
+                if store._backend == "local":
+                    filesystem_path = str(store._local_root(project_id) / "documents")
+                else:
+                    filesystem_path = f"{store._user_id}/{project_id}/documents"
+                raw_filenames = store.list_files(project_id, "documents")
+            except Exception:
+                filesystem_path = f"(unresolved:{project_id})"
+                raw_filenames = []
+
+            log_document_load(
+                user_id=self._current_user.id,
+                project_id=project_id,
+                filesystem_path=filesystem_path,
+                document_count=len(raw_filenames),
+                filenames=list(raw_filenames),
+            )
+        except Exception:
+            pass
+
+        try:
             assert_project_access(project_id)
         except PermissionError:
             return []

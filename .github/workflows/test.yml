@@ -34,7 +34,8 @@ jobs:
 
       - name: Run pytest
         env:
-          AUTH_DEV_BYPASS: "true"
+          ENVIRONMENT: test
+          AUTH_DEV_BYPASS: "false"
           DATABASE_BACKEND: json
           STORAGE_BACKEND: local
         run: pytest -q --tb=short

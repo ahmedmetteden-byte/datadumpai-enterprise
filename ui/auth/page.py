@@ -8,7 +8,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from config import APP_NAME, APP_TAGLINE, AUTH_DEV_BYPASS, DEBUG, is_supabase_configured
+from config import APP_NAME, APP_TAGLINE
 from core.auth import (
     AUTH_RECOVERY_MODE_KEY,
     AUTH_VIEW_KEY,
@@ -49,17 +49,11 @@ def render_auth_page() -> None:
             unsafe_allow_html=True,
         )
 
-        if AUTH_DEV_BYPASS and not is_supabase_configured() and DEBUG:
-            st.info(
-                "Development mode: authentication bypass is enabled. "
-                "Sign in with any email and password."
-            )
-
         if not auth_is_configured():
             st.error(
                 "Authentication is not configured. Add `SUPABASE_URL` and "
-                "`SUPABASE_ANON_KEY` to your `.env` file, or set "
-                "`AUTH_DEV_BYPASS=true` for local development only."
+                "`SUPABASE_ANON_KEY` to your `.env` file to enable "
+                "multi-user sign-in."
             )
             return
 

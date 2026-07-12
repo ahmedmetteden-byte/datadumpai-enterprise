@@ -98,7 +98,22 @@ class ProjectService:
         accidentally mutating persisted state.
         """
 
-        return deepcopy(self.repository.all())
+        projects = deepcopy(self.repository.all())
+
+        try:
+            from core.runtime_investigation import log_project_load
+            from core.user_paths import get_user_projects_root
+
+            log_project_load(
+                user_id=self._current_user.id,
+                project_count=len(projects),
+                project_ids=[str(p.get("id", "")) for p in projects],
+                filesystem_root=str(get_user_projects_root(self._current_user.id)),
+            )
+        except Exception:
+            pass
+
+        return projects
 
     def get_statistics(self) -> dict[str, int]:
         """

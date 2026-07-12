@@ -244,6 +244,33 @@ class ReportService:
     @classmethod
     def get_reports(cls, project_id: str) -> list[dict]:
         try:
+            from core.runtime_investigation import log_report_load
+
+            store = cls._file_store()
+            try:
+                if store._backend == "local":
+                    filesystem_path = str(store._local_root(project_id) / "reports")
+                else:
+                    filesystem_path = f"{store._user_id}/{project_id}/reports"
+                raw_filenames = [
+                    name for name in store.list_files(project_id, "reports")
+                    if name.endswith(".md")
+                ]
+            except Exception:
+                filesystem_path = f"(unresolved:{project_id})"
+                raw_filenames = []
+
+            log_report_load(
+                user_id=store._user_id,
+                project_id=project_id,
+                filesystem_path=filesystem_path,
+                report_count=len(raw_filenames),
+                filenames=raw_filenames,
+            )
+        except Exception:
+            pass
+
+        try:
             cls._require_project_access(project_id)
         except PermissionError:
             return []

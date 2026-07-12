@@ -7,8 +7,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import config
 from config import (
-    AUTH_DEV_BYPASS,
     AUTH_REDIRECT_URL,
     DEV_USER_EMAIL,
     DEV_USER_ID,
@@ -50,10 +50,10 @@ class AuthService:
 
     @property
     def is_configured(self) -> bool:
-        return self._client is not None or AUTH_DEV_BYPASS
+        return self._client is not None or config.auth_dev_bypass_enabled()
 
     def _require_client(self):
-        if AUTH_DEV_BYPASS:
+        if config.auth_dev_bypass_enabled():
             return None
         if self._client is None:
             raise AuthError(
@@ -96,7 +96,9 @@ class AuthService:
         )
 
     def dev_sign_in(self) -> AuthSession:
-        if not AUTH_DEV_BYPASS:
+        """Legacy development-only sign-in. Never used in production paths."""
+
+        if not config.auth_dev_bypass_enabled():
             raise AuthError("Development auth bypass is disabled.")
 
         user = User(
@@ -117,7 +119,9 @@ class AuthService:
         *,
         full_name: str = "",
     ) -> AuthSession:
-        if not AUTH_DEV_BYPASS:
+        """Legacy development-only sign-up. Never used in production paths."""
+
+        if not config.auth_dev_bypass_enabled():
             raise AuthError("Development auth bypass is disabled.")
 
         normalized_email = normalize_email(email)
@@ -165,10 +169,7 @@ class AuthService:
         if not normalized_email:
             raise AuthError("Enter a valid email address.")
 
-        if EmailUniquenessService().email_exists(normalized_email):
-            raise AuthError(DUPLICATE_EMAIL_MESSAGE)
-
-        if AUTH_DEV_BYPASS:
+        if config.auth_dev_bypass_enabled():
             return self.dev_sign_up(normalized_email, full_name=full_name)
 
         client = self._require_client()
@@ -197,10 +198,7 @@ class AuthService:
         user = self._user_from_payload(response.user.model_dump())
 
         if session is None:
-            EmailUniquenessService().register_email(normalized_email, user.id)
             return None
-
-        EmailUniquenessService().register_email(normalized_email, user.id)
 
         return AuthSession(
             access_token=session.access_token,
@@ -213,12 +211,13 @@ class AuthService:
         email: str,
         password: str,
     ) -> AuthSession:
-        if AUTH_DEV_BYPASS:
+        normalized_email = normalize_email(email)
+
+        if config.auth_dev_bypass_enabled():
             return self.dev_sign_in()
 
         from services.lockout_service import LockoutService
 
-        normalized_email = normalize_email(email)
         LockoutService().check_allowed(normalized_email)
 
         client = self._require_client()
@@ -262,7 +261,7 @@ class AuthService:
         access_token: str | None = None,
         refresh_token: str | None = None,
     ) -> None:
-        if AUTH_DEV_BYPASS:
+        if config.auth_dev_bypass_enabled():
             return
 
         client = self._require_client()
@@ -278,7 +277,7 @@ class AuthService:
         access_token: str,
         refresh_token: str,
     ) -> AuthSession:
-        if AUTH_DEV_BYPASS:
+        if config.auth_dev_bypass_enabled():
             return self.dev_sign_in()
 
         client = self._require_client()
@@ -289,7 +288,7 @@ class AuthService:
         return self._session_from_response(response)
 
     def refresh_session(self, refresh_token: str) -> AuthSession:
-        if AUTH_DEV_BYPASS:
+        if config.auth_dev_bypass_enabled():
             return self.dev_sign_in()
 
         client = self._require_client()

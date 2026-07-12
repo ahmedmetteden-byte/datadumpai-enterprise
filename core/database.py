@@ -7,8 +7,8 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
+import config
 from config import (
-    AUTH_DEV_BYPASS,
     SUPABASE_ANON_KEY,
     SUPABASE_SERVICE_ROLE_KEY,
     SUPABASE_URL,
@@ -62,7 +62,7 @@ def get_database_client(*, access_token: str | None = None):
 
     token = access_token or get_access_token()
 
-    if AUTH_DEV_BYPASS:
+    if config.auth_dev_bypass_enabled():
         return _service_role_client()
 
     if not token:

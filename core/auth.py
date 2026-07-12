@@ -7,7 +7,8 @@ from __future__ import annotations
 import streamlit as st
 
 import config
-from config import AUTH_DEV_BYPASS, is_supabase_configured
+import config
+from config import is_supabase_configured
 from core.telemetry import identify, track
 from models.user import User
 from services.auth_service import AuthError, AuthService, AuthSession
@@ -58,7 +59,7 @@ def initialize_auth() -> None:
 def _restore_persisted_session() -> None:
     """Restore a session from browser cookies when Remember me was enabled."""
 
-    if AUTH_DEV_BYPASS:
+    if config.auth_dev_bypass_enabled():
         return
 
     from core.auth_persistence import cookies_are_ready, restore_persisted_tokens
@@ -167,6 +168,17 @@ def _store_session(session: AuthSession, *, remember_me: bool = False) -> None:
     track("user_signed_in", user_id=session.user.id)
     _log_activity(session.user.id, "user.signed_in", "Signed in")
 
+    try:
+        from core.runtime_investigation import log_authenticated_user
+
+        log_authenticated_user(
+            action="login_or_session_store",
+            user_id=session.user.id,
+            email=session.user.email,
+        )
+    except Exception:
+        pass
+
 
 def _log_activity(user_id: str, action: str, message: str) -> None:
     try:
@@ -233,6 +245,16 @@ def clear_auth_session() -> None:
 
     if user is not None:
         _log_activity(user.id, "user.signed_out", "Signed out")
+        try:
+            from core.runtime_investigation import log_authenticated_user
+
+            log_authenticated_user(
+                action="logout",
+                user_id=user.id,
+                email=user.email,
+            )
+        except Exception:
+            pass
 
     st.session_state[AUTH_USER_KEY] = None
     st.session_state[AUTH_ACCESS_TOKEN_KEY] = None
@@ -252,7 +274,59 @@ def sign_in(email: str, password: str, *, remember_me: bool = False) -> User:
 
 
 def sign_up(email: str, password: str, *, full_name: str = "") -> User | None:
-    session = AuthService().sign_up(email, password, full_name=full_name)
+    from services.email_uniqueness import EmailUniquenessService, normalize_email
+
+    normalized = normalize_email(email)
+    existing = EmailUniquenessService().email_exists(normalized)
+
+    try:
+        session = AuthService().sign_up(email, password, full_name=full_name)
+    except AuthError as exc:
+        try:
+            from core.runtime_investigation import log_registration_decision
+
+            log_registration_decision(
+                raw_email=email,
+                normalized_email=normalized,
+                existing_user=existing,
+                allowed=False,
+                reason=str(exc),
+            )
+        except Exception:
+            pass
+        raise
+
+    try:
+        from core.runtime_investigation import (
+            log_authenticated_user,
+            log_registration_decision,
+        )
+
+        if session is None:
+            log_registration_decision(
+                raw_email=email,
+                normalized_email=normalized,
+                existing_user=existing,
+                allowed=True,
+                reason="sign_up pending email verification",
+                assigned_user_id=None,
+            )
+        else:
+            log_registration_decision(
+                raw_email=email,
+                normalized_email=normalized,
+                existing_user=existing,
+                allowed=True,
+                reason="sign_up completed with session",
+                assigned_user_id=session.user.id,
+            )
+            log_authenticated_user(
+                action="registration",
+                user_id=session.user.id,
+                email=session.user.email,
+            )
+    except Exception:
+        pass
 
     if session is None:
         st.session_state[AUTH_PENDING_EMAIL_KEY] = email.strip()
@@ -270,7 +344,7 @@ def sign_out() -> None:
 
 
 def auth_is_configured() -> bool:
-    return is_supabase_configured() or AUTH_DEV_BYPASS
+    return is_supabase_configured() or config.auth_dev_bypass_enabled()
 
 
 def is_admin() -> bool:
