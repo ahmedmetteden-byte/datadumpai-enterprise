@@ -16,9 +16,19 @@ AUTH_COOKIE_NAME = "datadumpai_auth"
 AUTH_COOKIES_LOADED_KEY = "auth_cookies_loaded"
 
 
+_COOKIE_MANAGER_MISSING_MSG = (
+    "Authentication dependency is missing. "
+    "Run: pip install extra-streamlit-components"
+)
+
+
 @lru_cache(maxsize=1)
 def _cookie_manager():
-    from extra_streamlit_components import CookieManager
+    try:
+        from extra_streamlit_components import CookieManager
+    except ImportError:
+        st.error(_COOKIE_MANAGER_MISSING_MSG)
+        st.stop()
 
     return CookieManager()
 
