@@ -2,11 +2,184 @@
 Global application configuration.
 """
 
+from __future__ import annotations
+
+import logging
 import os
+import sys
+from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
-load_dotenv()
+logger = logging.getLogger(__name__)
+
+_PROJECT_ROOT = Path(__file__).resolve().parent
+
+
+def _resolve_env_file_path() -> Path:
+    """Resolve the .env file path (override via DATADUMPAI_ENV_FILE for tests)."""
+
+    override = os.getenv("DATADUMPAI_ENV_FILE", "").strip()
+    if override:
+        return Path(override).resolve()
+    return (_PROJECT_ROOT / ".env").resolve()
+
+
+_ENV_FILE_PATH = _resolve_env_file_path()
+
+# Keys checked for OS vs .env conflicts during bootstrap.
+_CONFIG_TRACKED_KEYS = ("ENVIRONMENT", "AUTH_DEV_BYPASS")
+
+_RUNNING_LOCALLY = False
+_CONFIG_SOURCE: dict[str, str] = {}
+_ENV_LOAD_CONFLICTS: list[tuple[str, str, str, str]] = []
+_STARTUP_DIAGNOSTICS_PRINTED = False
+
+
+def running_in_docker() -> bool:
+    """Return True when the process is running inside a Docker container."""
+
+    return Path("/.dockerenv").exists() or os.getenv("RUNNING_IN_DOCKER", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+def running_locally() -> bool:
+    """
+    Return True when the project .env should override the OS environment.
+
+    Local mode is enabled when:
+    - DATADUMPAI_LOCAL_DEV=true, or
+    - not running in Docker and ENVIRONMENT is development (OS or .env peek), or
+    - not running in Docker and no explicit production signal (default host dev)
+
+    Set DATADUMPAI_LOCAL_DEV=false on a host to force production-style precedence.
+    """
+
+    explicit = os.getenv("DATADUMPAI_LOCAL_DEV", "").strip().lower()
+    if explicit in {"1", "true", "yes"}:
+        return True
+    if explicit in {"0", "false", "no"}:
+        return False
+    if running_in_docker():
+        return False
+
+    os_environment = os.getenv("ENVIRONMENT", "").strip().lower()
+    if os_environment == "development":
+        return True
+
+    if _ENV_FILE_PATH.is_file():
+        file_environment = (dotenv_values(_ENV_FILE_PATH).get("ENVIRONMENT") or "").strip().lower()
+        if file_environment == "development":
+            return True
+
+    return True
+
+
+def _resolve_config_source(
+    key: str,
+    os_before: dict[str, str],
+    file_values: dict[str, str | None],
+    *,
+    local: bool,
+) -> str:
+    in_os = key in os_before
+    in_file = key in file_values and file_values[key] is not None
+
+    if local:
+        return ".env" if in_file else ("OS Environment" if in_os else "default")
+    return "OS Environment" if in_os else (".env" if in_file else "default")
+
+
+def _bootstrap_environment() -> None:
+    """Load .env with local/production precedence and record configuration sources."""
+
+    global _RUNNING_LOCALLY, _CONFIG_SOURCE, _ENV_LOAD_CONFLICTS, _ENV_FILE_PATH
+
+    _ENV_FILE_PATH = _resolve_env_file_path()
+    local = running_locally()
+    _RUNNING_LOCALLY = local
+
+    os_before = {key: os.environ[key] for key in _CONFIG_TRACKED_KEYS if key in os.environ}
+    file_values = dotenv_values(_ENV_FILE_PATH) if _ENV_FILE_PATH.is_file() else {}
+
+    for key in _CONFIG_TRACKED_KEYS:
+        os_val = os_before.get(key)
+        file_val = file_values.get(key)
+        if os_val is None or file_val is None:
+            continue
+        if str(os_val).strip().lower() == str(file_val).strip().lower():
+            continue
+        using = ".env" if local else "OS Environment"
+        _ENV_LOAD_CONFLICTS.append((key, os_val, file_val, using))
+        scope = "local" if local else "production"
+        logger.warning(
+            "WARNING\n\n%s differs\n\nOS:\n%s\n\n.env:\n%s\n\nUsing:\n%s\n\n(%s)",
+            key,
+            os_val,
+            file_val,
+            using,
+            scope,
+        )
+
+    load_dotenv(_ENV_FILE_PATH, override=local)
+
+    for key in _CONFIG_TRACKED_KEYS:
+        _CONFIG_SOURCE[key] = _resolve_config_source(key, os_before, file_values, local=local)
+
+
+_bootstrap_environment()
+
+
+def config_source(key: str) -> str:
+    """Return whether a tracked setting came from .env, OS Environment, or default."""
+
+    return _CONFIG_SOURCE.get(key, "default")
+
+
+def is_running_locally() -> bool:
+    """Return True when .env overrides OS environment during bootstrap."""
+
+    return _RUNNING_LOCALLY
+
+
+def print_startup_configuration_diagnostics() -> None:
+    """Print configuration diagnostics once in development or debug mode."""
+
+    global _STARTUP_DIAGNOSTICS_PRINTED
+
+    if _STARTUP_DIAGNOSTICS_PRINTED:
+        return
+
+    debug_mode = os.getenv("DEBUG", "false").lower() in {"1", "true", "yes"}
+    if ENVIRONMENT != "development" and not debug_mode:
+        return
+
+    _STARTUP_DIAGNOSTICS_PRINTED = True
+
+    auth_source = config_source("AUTH_DEV_BYPASS")
+    lines = [
+        "Configuration",
+        "",
+        "Environment:",
+        ENVIRONMENT,
+        "",
+        "Loaded .env:",
+        str(_ENV_FILE_PATH),
+        "",
+        "AUTH_DEV_BYPASS:",
+        str(AUTH_DEV_BYPASS).lower(),
+        "",
+        "Source:",
+        auth_source,
+        "",
+        f"Local mode: {is_running_locally()}",
+        f"Docker: {running_in_docker()}",
+    ]
+    print("\n".join(lines), file=sys.stderr)
+
 
 # ==========================================================
 # APPLICATION
@@ -110,9 +283,11 @@ def validate_production_auth_configuration() -> list[str]:
 
     if _AUTH_DEV_BYPASS_REQUESTED and ENVIRONMENT != "development":
         warnings.append(
-            "AUTH_DEV_BYPASS=true is only permitted when ENVIRONMENT=development. "
-            f"Current ENVIRONMENT={ENVIRONMENT!r}. Disable AUTH_DEV_BYPASS or set "
-            "ENVIRONMENT=development for local single-user mode."
+            "Configuration Error\n\n"
+            f"ENVIRONMENT:\n{ENVIRONMENT}\n\n"
+            f"AUTH_DEV_BYPASS:\n{str(_AUTH_DEV_BYPASS_REQUESTED).lower()}\n\n"
+            "Reason\n\n"
+            "Development authentication cannot be enabled in production."
         )
 
     if not auth_dev_bypass_enabled() and not is_supabase_configured():

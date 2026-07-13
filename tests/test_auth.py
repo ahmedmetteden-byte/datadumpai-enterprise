@@ -337,4 +337,5 @@ def test_auth_dev_bypass_blocked_outside_development(monkeypatch):
     assert auth_dev_bypass_enabled() is False
 
     warnings = validate_production_auth_configuration()
-    assert any("ENVIRONMENT=development" in message for message in warnings)
+    assert any("Configuration Error" in message for message in warnings)
+    assert any("Development authentication cannot be enabled in production." in message for message in warnings)

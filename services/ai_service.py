@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import os
 
-from dotenv import load_dotenv
 from openai import OpenAI
 
 from config import (
@@ -29,8 +28,6 @@ from services.full_report_prompt import build_full_report_prompt, is_full_report
 from services.report_assembler import canonical_metrics_prompt
 from services.report_section_templates import SectionPlan
 from models.report_data import ReportData
-
-load_dotenv()
 
 
 class AIService:
