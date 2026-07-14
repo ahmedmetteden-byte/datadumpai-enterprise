@@ -39,6 +39,12 @@ def initialize_navigation() -> None:
     if "active_page" not in st.session_state:
         st.session_state.active_page = DEFAULT_PAGE
 
+    page = st.query_params.get("active_page")
+    if isinstance(page, list):
+        page = page[0] if page else None
+    if page in (*PUBLIC_PAGES, DEFAULT_PAGE, "admin"):
+        st.session_state.active_page = page
+
 
 def get_navigation() -> list[NavigationItem]:
     """Return every navigation item."""

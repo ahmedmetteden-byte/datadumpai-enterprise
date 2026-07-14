@@ -11,12 +11,13 @@ from core.auth import (
     AUTH_RECOVERY_MODE_KEY,
     AUTH_VIEW_KEY,
     get_access_token,
+    get_refresh_token,
     sign_in,
     sign_out,
     sign_up,
 )
-from services.auth_service import AuthError, AuthService
-from services.email_uniqueness import DUPLICATE_EMAIL_MESSAGE
+from services.auth_service import AuthError, AuthService, SignUpDuplicateError
+from services.email_uniqueness import SIGN_UP_VERIFIED_DUPLICATE_MESSAGE
 from ui.feedback import show_error, show_success
 
 
@@ -92,20 +93,33 @@ def render_sign_up_form() -> None:
                     st.rerun()
                 else:
                     st.rerun()
-            except AuthError as exc:
-                if str(exc) == DUPLICATE_EMAIL_MESSAGE:
-                    st.error(DUPLICATE_EMAIL_MESSAGE)
+            except SignUpDuplicateError as exc:
+                if exc.verification_status == "unverified":
+                    st.session_state[AUTH_PENDING_EMAIL_KEY] = email.strip()
+                    st.session_state[AUTH_VIEW_KEY] = "verify_email"
+                    st.session_state.auth_error = str(exc)
+                    st.rerun()
+                else:
+                    st.error(SIGN_UP_VERIFIED_DUPLICATE_MESSAGE)
                     sign_in_col, forgot_col = st.columns(2)
                     with sign_in_col:
-                        if st.button("Sign In", use_container_width=True, key="signup_existing_sign_in"):
+                        if st.button(
+                            "Sign In",
+                            use_container_width=True,
+                            key="signup_existing_sign_in",
+                        ):
                             st.session_state[AUTH_VIEW_KEY] = "sign_in"
                             st.rerun()
                     with forgot_col:
-                        if st.button("Forgot Password", use_container_width=True, key="signup_existing_forgot"):
+                        if st.button(
+                            "Forgot Password",
+                            use_container_width=True,
+                            key="signup_existing_forgot",
+                        ):
                             st.session_state[AUTH_VIEW_KEY] = "forgot_password"
                             st.rerun()
-                else:
-                    show_error(exc)
+            except AuthError as exc:
+                show_error(exc)
 
     st.markdown(
         '<p class="dde-auth-switch">Already have an account?</p>',
@@ -173,10 +187,12 @@ def render_reset_password_form() -> None:
             st.warning("Password must be at least 8 characters.")
         else:
             access_token = get_access_token()
-            refresh_token = st.session_state.get("auth_refresh_token")
+            refresh_token = get_refresh_token()
 
             if not access_token or not refresh_token:
                 st.warning("Your reset session has expired. Request a new link.")
+            elif not st.session_state.get(AUTH_RECOVERY_MODE_KEY):
+                st.warning("Open the password reset link from your email to continue.")
             else:
                 try:
                     AuthService().update_password(
@@ -200,10 +216,14 @@ def render_verify_email_notice() -> None:
     st.markdown("### Verify your email")
 
     pending_email = st.session_state.get(AUTH_PENDING_EMAIL_KEY, "your inbox")
-    st.info(
-        f"We sent a verification link to **{pending_email}**. "
-        "Open it to activate your account, then sign in."
-    )
+    auth_error = st.session_state.pop("auth_error", None)
+    if auth_error:
+        st.warning(auth_error)
+    else:
+        st.info(
+            f"We sent a verification link to **{pending_email}**. "
+            "Open it to activate your account, then sign in."
+        )
 
     if st.button("Resend verification email", type="primary", use_container_width=True):
         try:

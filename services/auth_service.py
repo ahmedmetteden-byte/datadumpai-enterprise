@@ -4,8 +4,10 @@ Supabase authentication service.
 
 from __future__ import annotations
 
+import logging
+from contextlib import suppress
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import config
 from config import (
@@ -20,6 +22,8 @@ from models.user import User
 from services.email_uniqueness import (
     DUPLICATE_EMAIL_MESSAGE,
     EmailUniquenessService,
+    SIGN_UP_UNVERIFIED_DUPLICATE_MESSAGE,
+    SIGN_UP_VERIFIED_DUPLICATE_MESSAGE,
     is_duplicate_email_error,
     normalize_email,
 )
@@ -27,6 +31,66 @@ from services.email_uniqueness import (
 
 class AuthError(Exception):
     """Raised when an authentication action fails."""
+
+    def __init__(self, message: str, *, title: str | None = None) -> None:
+        super().__init__(message)
+        self.title = title
+
+
+PASSWORD_RESET_RATE_LIMIT_TITLE = "Too many password reset requests"
+PASSWORD_RESET_RATE_LIMIT_MESSAGE = (
+    "You've requested too many password reset emails. "
+    "Please wait a few minutes before trying again. "
+    "If you've already requested one, check your inbox and spam folder "
+    "before requesting another."
+)
+PASSWORD_RESET_GENERIC_MESSAGE = (
+    "We couldn't send the password reset email right now. Please try again later."
+)
+
+logger = logging.getLogger(__name__)
+
+
+def _is_password_reset_rate_limit_error(exc: Exception) -> bool:
+    from supabase_auth.errors import AuthApiError
+
+    if not isinstance(exc, AuthApiError):
+        return False
+
+    code = getattr(exc, "code", None)
+    if code in {"over_email_send_rate_limit", "over_request_rate_limit"}:
+        return True
+
+    if getattr(exc, "status", None) == 429:
+        return True
+
+    message = str(exc).lower()
+    return "rate limit" in message or "too many" in message
+
+
+def _is_password_reset_network_error(exc: Exception) -> bool:
+    try:
+        import httpx
+
+        network_types = (
+            httpx.HTTPError,
+            httpx.TransportError,
+            ConnectionError,
+            TimeoutError,
+            OSError,
+        )
+    except ImportError:
+        network_types = (ConnectionError, TimeoutError, OSError)
+
+    return isinstance(exc, network_types)
+
+
+class SignUpDuplicateError(AuthError):
+    """Raised when sign-up targets an email that already has an account."""
+
+    def __init__(self, message: str, *, verification_status: str) -> None:
+        super().__init__(message)
+        self.verification_status = verification_status
 
 
 @dataclass(frozen=True)
@@ -44,9 +108,15 @@ class AuthService:
     def __init__(self) -> None:
         self._client = None
         if is_supabase_configured():
-            from supabase import create_client
+            from supabase import ClientOptions, create_client
 
-            self._client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+            # PKCE so password-recovery (and other email) links return ?code=...
+            # instead of #access_token=... implicit fragments.
+            self._client = create_client(
+                SUPABASE_URL,
+                SUPABASE_ANON_KEY,
+                options=ClientOptions(flow_type="pkce"),
+            )
 
     @property
     def is_configured(self) -> bool:
@@ -158,6 +228,84 @@ class AuthService:
             user=user,
         )
 
+    @staticmethod
+    def _is_duplicate_sign_up_user(user: Any) -> bool:
+        payload = user.model_dump() if hasattr(user, "model_dump") else user
+        identities = payload.get("identities")
+        if identities is None:
+            return False
+        return len(identities) == 0
+
+    def _lookup_auth_user_by_email(self, email: str) -> Any | None:
+        if not config.is_supabase_configured():
+            return None
+
+        try:
+            from core.database import get_service_role_client
+            from supabase_auth.helpers import model_validate
+            from supabase_auth.types import UserList
+
+            client = get_service_role_client()
+            response = client.auth.admin._request(
+                "GET",
+                "admin/users",
+                query={"filter": email, "page": 1, "per_page": 1},
+            )
+            users = model_validate(UserList, response.content).users
+            if not users:
+                return None
+            return users[0]
+        except Exception:
+            return None
+
+    def _existing_account_verification_status(
+        self,
+        client,
+        email: str,
+        password: str,
+    ) -> Literal["verified", "unverified"]:
+        existing = self._lookup_auth_user_by_email(email)
+        if existing is not None:
+            if existing.email_confirmed_at or existing.confirmed_at:
+                return "verified"
+            return "unverified"
+
+        try:
+            response = client.auth.sign_in_with_password(
+                {"email": email, "password": password}
+            )
+        except Exception as exc:
+            message = str(exc).lower()
+            if "verify" in message or "confirm" in message:
+                return "unverified"
+            return "verified"
+
+        if response.session is None or response.user is None:
+            return "verified"
+
+        user = self._user_from_payload(response.user.model_dump())
+        with suppress(*self._benign_logout_errors()):
+            client.auth.sign_out()
+
+        return "verified" if user.email_verified else "unverified"
+
+    def _raise_duplicate_sign_up_error(
+        self,
+        client,
+        email: str,
+        password: str,
+    ) -> None:
+        status = self._existing_account_verification_status(client, email, password)
+        if status == "unverified":
+            raise SignUpDuplicateError(
+                SIGN_UP_UNVERIFIED_DUPLICATE_MESSAGE,
+                verification_status="unverified",
+            )
+        raise SignUpDuplicateError(
+            SIGN_UP_VERIFIED_DUPLICATE_MESSAGE,
+            verification_status="verified",
+        )
+
     def sign_up(
         self,
         email: str,
@@ -188,11 +336,14 @@ class AuthService:
             )
         except Exception as exc:
             if is_duplicate_email_error(exc):
-                raise AuthError(DUPLICATE_EMAIL_MESSAGE) from exc
+                self._raise_duplicate_sign_up_error(client, normalized_email, password)
             raise AuthError("Sign up failed. Please try again.") from exc
 
         if response.user is None:
             raise AuthError("Sign up failed. Please try again.")
+
+        if self._is_duplicate_sign_up_user(response.user):
+            self._raise_duplicate_sign_up_error(client, normalized_email, password)
 
         session = response.session
         user = self._user_from_payload(response.user.model_dump())
@@ -256,6 +407,18 @@ class AuthService:
             user=user,
         )
 
+    @staticmethod
+    def _benign_logout_errors():
+        from supabase_auth.errors import AuthError as SupabaseAuthError
+
+        return (SupabaseAuthError,)
+
+    def _revoke_remote_session(self, client, access_token: str) -> None:
+        """Revoke the Supabase session when the client has no in-memory session."""
+
+        with suppress(*self._benign_logout_errors()):
+            client.auth.admin.sign_out(access_token)
+
     def sign_out(
         self,
         access_token: str | None = None,
@@ -267,10 +430,20 @@ class AuthService:
         client = self._require_client()
         assert client is not None
 
-        if access_token and refresh_token:
-            client.auth.set_session(access_token, refresh_token)
+        existing_session = None
+        with suppress(*self._benign_logout_errors()):
+            existing_session = client.auth.get_session()
 
-        client.auth.sign_out()
+        if existing_session is not None:
+            with suppress(*self._benign_logout_errors()):
+                client.auth.sign_out()
+            return
+
+        if access_token:
+            self._revoke_remote_session(client, access_token)
+
+        with suppress(*self._benign_logout_errors()):
+            client.auth.sign_out()
 
     def restore_session(
         self,
@@ -299,13 +472,41 @@ class AuthService:
         return self._session_from_response(response)
 
     def send_password_reset(self, email: str) -> None:
+        from supabase_auth.errors import AuthApiError, AuthRetryableError
+
         client = self._require_client()
         assert client is not None
 
-        client.auth.reset_password_for_email(
-            email.strip(),
-            {"redirect_to": AUTH_REDIRECT_URL},
-        )
+        try:
+            client.auth.reset_password_for_email(
+                email.strip(),
+                {"redirect_to": AUTH_REDIRECT_URL},
+            )
+        except Exception as exc:
+            if _is_password_reset_rate_limit_error(exc):
+                raise AuthError(
+                    PASSWORD_RESET_RATE_LIMIT_MESSAGE,
+                    title=PASSWORD_RESET_RATE_LIMIT_TITLE,
+                ) from exc
+
+            if isinstance(exc, AuthApiError):
+                logger.warning(
+                    "Password reset Supabase auth error (%s): %s",
+                    getattr(exc, "code", None),
+                    exc,
+                )
+                raise AuthError(PASSWORD_RESET_GENERIC_MESSAGE) from exc
+
+            if isinstance(exc, AuthRetryableError):
+                logger.warning("Password reset retryable auth error: %s", exc)
+                raise AuthError(PASSWORD_RESET_GENERIC_MESSAGE) from exc
+
+            if _is_password_reset_network_error(exc):
+                logger.warning("Password reset network error: %s", exc)
+                raise AuthError(PASSWORD_RESET_GENERIC_MESSAGE) from exc
+
+            logger.exception("Unexpected password reset error")
+            raise AuthError(PASSWORD_RESET_GENERIC_MESSAGE) from exc
 
     def update_password(
         self,
@@ -337,10 +538,41 @@ class AuthService:
     def exchange_auth_code(self, code: str) -> AuthSession:
         """Exchange a Supabase email link code for a session."""
 
+        from core.recovery_callback_trace import log_supabase_exchange
+
         client = self._require_client()
         assert client is not None
 
-        response = client.auth.exchange_code_for_session({"auth_code": code})
+        try:
+            response = client.auth.exchange_code_for_session({"auth_code": code})
+        except AuthError as exc:
+            log_supabase_exchange(
+                operation="exchange_code_for_session",
+                branch="pkce",
+                success=False,
+                error=str(exc),
+                exception_type=type(exc).__name__,
+            )
+            raise
+        except Exception as exc:
+            log_supabase_exchange(
+                operation="exchange_code_for_session",
+                branch="pkce",
+                success=False,
+                error=str(exc),
+                exception_type=type(exc).__name__,
+            )
+            raise AuthError("This link is invalid or has expired.") from exc
+
+        session_returned = response.session is not None
+        user_returned = response.user is not None
+        log_supabase_exchange(
+            operation="exchange_code_for_session",
+            branch="pkce",
+            success=session_returned and user_returned,
+            session_returned=session_returned,
+            user_returned=user_returned,
+        )
 
         if response.session is None or response.user is None:
             raise AuthError("This link is invalid or has expired.")
@@ -355,3 +587,60 @@ class AuthService:
 
     def exchange_recovery_code(self, code: str) -> AuthSession:
         return self.exchange_auth_code(code)
+
+    def exchange_recovery_token_hash(self, token_hash: str) -> AuthSession:
+        """Establish a recovery session from a Supabase email token hash."""
+
+        from core.recovery_callback_trace import log_supabase_exchange
+
+        client = self._require_client()
+        assert client is not None
+
+        try:
+            response = client.auth.verify_otp(
+                {
+                    "type": "recovery",
+                    "token_hash": token_hash,
+                }
+            )
+        except AuthError as exc:
+            log_supabase_exchange(
+                operation="verify_otp",
+                branch="otp",
+                success=False,
+                error=str(exc),
+                exception_type=type(exc).__name__,
+            )
+            raise
+        except Exception as exc:
+            log_supabase_exchange(
+                operation="verify_otp",
+                branch="otp",
+                success=False,
+                error=str(exc),
+                exception_type=type(exc).__name__,
+            )
+            raise AuthError(
+                "This password reset link is invalid or has expired."
+            ) from exc
+
+        session_returned = response.session is not None
+        user_returned = response.user is not None
+        log_supabase_exchange(
+            operation="verify_otp",
+            branch="otp",
+            success=session_returned and user_returned,
+            session_returned=session_returned,
+            user_returned=user_returned,
+        )
+
+        if response.session is None or response.user is None:
+            raise AuthError("This password reset link is invalid or has expired.")
+
+        user = self._user_from_payload(response.user.model_dump())
+
+        return AuthSession(
+            access_token=response.session.access_token,
+            refresh_token=response.session.refresh_token,
+            user=user,
+        )

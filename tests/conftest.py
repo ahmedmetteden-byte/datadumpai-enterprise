@@ -56,6 +56,7 @@ def auth_context(monkeypatch):
     monkeypatch.setenv("STORAGE_BACKEND", "local")
     monkeypatch.setattr("config.auth_dev_bypass_enabled", lambda: False)
     monkeypatch.setattr("config.use_database", lambda: False)
+    monkeypatch.setattr("config.use_supabase_storage", lambda: False)
     monkeypatch.setattr("services.auth_service.is_supabase_configured", lambda: False)
     monkeypatch.setattr("core.auth.get_current_user", lambda: TEST_USER)
     monkeypatch.setattr("core.auth.is_authenticated", lambda: True)

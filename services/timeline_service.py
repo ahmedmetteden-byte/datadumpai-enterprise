@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from models.timeline_event import TimelineEvent
+from core.workspace_context import is_quick_report
 from repositories.timeline_repository import TimelineRepository
 
 
@@ -142,27 +143,30 @@ class TimelineService:
         from services.project_service import ProjectService
         from services.report_service import ReportService
 
-        try:
-            project = ProjectService().get_project(project_id)
-        except ValueError:
-            return []
-
         events: list[dict[str, Any]] = []
 
-        created_at = project.get("created_at", "")
+        if is_quick_report(project_id):
+            created_at = None
+        else:
+            try:
+                project = ProjectService().get_project(project_id)
+            except ValueError:
+                return []
 
-        if created_at:
-            events.append(
-                self._to_dict(
-                    TimelineEvent(
-                        id=str(uuid.uuid4()),
-                        timestamp=created_at,
-                        action=self.ACTION_PROJECT_CREATED,
-                        message="Project created",
-                        metadata={},
+            created_at = project.get("created_at", "")
+
+            if created_at:
+                events.append(
+                    self._to_dict(
+                        TimelineEvent(
+                            id=str(uuid.uuid4()),
+                            timestamp=created_at,
+                            action=self.ACTION_PROJECT_CREATED,
+                            message="Project created",
+                            metadata={},
+                        )
                     )
                 )
-            )
 
         for document in DocumentService().get_documents(project_id):
             uploaded_at = document.get("uploaded_at", "")

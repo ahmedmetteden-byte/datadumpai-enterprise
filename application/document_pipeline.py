@@ -11,7 +11,7 @@ from typing import Any
 from services.document_processor import DocumentProcessor
 from services.document_service import DocumentService
 from services.project_service import ProjectService
-from core.workspace_context import is_quick_report_workspace
+from core.workspace_context import is_quick_report
 
 
 class DocumentPipeline:
@@ -101,7 +101,7 @@ class DocumentPipeline:
             for document in project["documents"]
         )
 
-        if not is_quick_report_workspace(project["id"]):
+        if not is_quick_report(project["id"]):
             self.projects.update_project(project)
 
         return "\n\n".join(extracted), processed_documents, new_upload_count

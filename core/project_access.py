@@ -5,7 +5,7 @@ Fail-closed project access checks for multi-tenant isolation.
 from __future__ import annotations
 
 from core.current_user import require_current_user
-from core.workspace_context import is_quick_report_workspace
+from core.workspace_context import is_quick_report
 
 
 class ProjectAccessError(PermissionError):
@@ -31,6 +31,19 @@ def validate_project_id(project_id: str) -> str:
     return cleaned
 
 
+def require_real_project_uuid(project_id: str) -> str:
+    """
+    Reject Quick Report and other non-UUID workspace ids before PostgreSQL queries.
+    """
+
+    safe_project_id = validate_project_id(project_id)
+    if is_quick_report(safe_project_id):
+        raise ProjectAccessError(
+            f"Quick Report is not a database project: {safe_project_id!r}"
+        )
+    return safe_project_id
+
+
 def assert_project_access(project_id: str) -> str:
     """
     Verify the authenticated user may access a project workspace.
@@ -41,7 +54,7 @@ def assert_project_access(project_id: str) -> str:
     require_current_user()
     safe_project_id = validate_project_id(project_id)
 
-    if is_quick_report_workspace(safe_project_id):
+    if is_quick_report(safe_project_id):
         return safe_project_id
 
     from services.project_service import ProjectService

@@ -26,6 +26,10 @@ AUTH_BOOTSTRAP_PENDING_KEY = "auth_bootstrap_pending"
 def initialize_auth() -> None:
     """Restore an existing session and handle auth deep links."""
 
+    from core.recovery_callback_trace import log_recovery_trace
+
+    log_recovery_trace("initialize_auth.enter")
+
     if AUTH_USER_KEY not in st.session_state:
         st.session_state[AUTH_USER_KEY] = None
     if AUTH_ACCESS_TOKEN_KEY not in st.session_state:
@@ -37,9 +41,26 @@ def initialize_auth() -> None:
     if AUTH_RECOVERY_MODE_KEY not in st.session_state:
         st.session_state[AUTH_RECOVERY_MODE_KEY] = False
 
-    _handle_auth_query_params()
+    from core.auth_callbacks import (
+        handle_auth_callback_query_params,
+        handle_email_verification_query_params,
+    )
+
+    if not st.session_state.get(AUTH_RECOVERY_MODE_KEY):
+        handled = handle_auth_callback_query_params()
+        log_recovery_trace("initialize_auth.callback_handled", recovery_callback_handled=handled)
+        handle_email_verification_query_params()
+
+    if st.session_state.get(AUTH_RECOVERY_MODE_KEY):
+        log_recovery_trace(
+            "initialize_auth.exit",
+            reason="recovery_mode_active",
+            auth_recovery_mode=True,
+        )
+        return
 
     if st.session_state[AUTH_USER_KEY] is not None:
+        log_recovery_trace("initialize_auth.exit", reason="user_already_authenticated")
         return
 
     access_token = st.session_state.get(AUTH_ACCESS_TOKEN_KEY)
@@ -83,48 +104,27 @@ def _restore_persisted_session() -> None:
 
 
 def _handle_auth_query_params() -> None:
-    """Handle Supabase email links for verification and password recovery."""
+    """Backward-compatible wrapper for auth callback handling."""
 
-    params = st.query_params
-    auth_type = params.get("type")
-    code = params.get("code")
+    from core.auth_callbacks import (
+        handle_auth_callback_query_params,
+        handle_email_verification_query_params,
+    )
 
-    if not code:
-        return
-
-    if auth_type == "recovery":
-        try:
-            session = AuthService().exchange_recovery_code(code)
-            _store_session(session, remember_me=False)
-            st.session_state[AUTH_RECOVERY_MODE_KEY] = True
-            st.session_state[AUTH_VIEW_KEY] = "reset_password"
-            st.query_params.clear()
-        except AuthError:
-            st.session_state[AUTH_VIEW_KEY] = "sign_in"
-            st.session_state.auth_error = (
-                "This password reset link is invalid or has expired."
-            )
-        return
-
-    if auth_type in {"signup", "email", "magiclink"}:
-        try:
-            session = AuthService().exchange_auth_code(code)
-            _store_session(session, remember_me=True)
-            st.session_state[AUTH_VIEW_KEY] = "sign_in"
-            st.session_state.auth_success = (
-                "Email verified. Welcome to DataDumpAI."
-            )
-            st.query_params.clear()
-        except AuthError:
-            st.session_state[AUTH_VIEW_KEY] = "sign_in"
-            st.session_state.auth_error = (
-                "This verification link is invalid or has expired."
-            )
+    handle_auth_callback_query_params()
+    handle_email_verification_query_params()
 
 
 def is_authenticated() -> bool:
     initialize_auth()
+    if st.session_state.get(AUTH_RECOVERY_MODE_KEY):
+        return False
     return st.session_state.get(AUTH_USER_KEY) is not None
+
+
+def is_password_recovery_pending() -> bool:
+    initialize_auth()
+    return bool(st.session_state.get(AUTH_RECOVERY_MODE_KEY))
 
 
 def get_current_user() -> User | None:
@@ -141,6 +141,35 @@ def get_current_user_id() -> str:
 def get_access_token() -> str | None:
     initialize_auth()
     return st.session_state.get(AUTH_ACCESS_TOKEN_KEY)
+
+
+def get_refresh_token() -> str | None:
+    initialize_auth()
+    return st.session_state.get(AUTH_REFRESH_TOKEN_KEY)
+
+
+def _store_recovery_session(session: AuthSession) -> None:
+    """Store a temporary recovery session for the reset-password form only."""
+
+    from core.navigation import set_active_page
+    from core.recovery_callback_trace import log_recovery_trace
+
+    st.session_state[AUTH_USER_KEY] = session.user
+    st.session_state[AUTH_ACCESS_TOKEN_KEY] = session.access_token
+    st.session_state[AUTH_REFRESH_TOKEN_KEY] = session.refresh_token
+    st.session_state[AUTH_RECOVERY_MODE_KEY] = True
+    st.session_state[AUTH_VIEW_KEY] = "reset_password"
+    st.session_state[AUTH_BOOTSTRAP_PENDING_KEY] = False
+    st.session_state[AUTH_REMEMBER_ME_KEY] = False
+    set_active_page("auth")
+
+    log_recovery_trace(
+        "store_recovery_session",
+        auth_recovery_mode=True,
+        auth_view="reset_password",
+        active_page="auth",
+        user_id=session.user.id,
+    )
 
 
 def _store_session(session: AuthSession, *, remember_me: bool = False) -> None:
@@ -234,27 +263,15 @@ def clear_auth_session() -> None:
     user = st.session_state.get(AUTH_USER_KEY)
     access_token = st.session_state.get(AUTH_ACCESS_TOKEN_KEY)
     refresh_token = st.session_state.get(AUTH_REFRESH_TOKEN_KEY)
+    user_id = user.id if user is not None else None
+    user_email = user.email if user is not None else None
 
     try:
         AuthService().sign_out(access_token, refresh_token)
-    except AuthError:
+    except Exception:
         pass
 
     clear_persisted_tokens()
-    clear_tenant_session()
-
-    if user is not None:
-        _log_activity(user.id, "user.signed_out", "Signed out")
-        try:
-            from core.runtime_investigation import log_authenticated_user
-
-            log_authenticated_user(
-                action="logout",
-                user_id=user.id,
-                email=user.email,
-            )
-        except Exception:
-            pass
 
     st.session_state[AUTH_USER_KEY] = None
     st.session_state[AUTH_ACCESS_TOKEN_KEY] = None
@@ -263,7 +280,22 @@ def clear_auth_session() -> None:
     st.session_state[AUTH_BOOTSTRAP_PENDING_KEY] = False
     st.session_state[AUTH_REMEMBER_ME_KEY] = False
     st.session_state[AUTH_VIEW_KEY] = "sign_in"
+
+    clear_tenant_session()
     set_active_page(PUBLIC_DEFAULT_PAGE)
+
+    if user_id is not None:
+        _log_activity(user_id, "user.signed_out", "Signed out")
+        try:
+            from core.runtime_investigation import log_authenticated_user
+
+            log_authenticated_user(
+                action="logout",
+                user_id=user_id,
+                email=user_email or "",
+            )
+        except Exception:
+            pass
 
 
 def sign_in(email: str, password: str, *, remember_me: bool = False) -> User:
@@ -274,10 +306,9 @@ def sign_in(email: str, password: str, *, remember_me: bool = False) -> User:
 
 
 def sign_up(email: str, password: str, *, full_name: str = "") -> User | None:
-    from services.email_uniqueness import EmailUniquenessService, normalize_email
+    from services.email_uniqueness import normalize_email
 
     normalized = normalize_email(email)
-    existing = EmailUniquenessService().email_exists(normalized)
 
     try:
         session = AuthService().sign_up(email, password, full_name=full_name)
@@ -288,7 +319,7 @@ def sign_up(email: str, password: str, *, full_name: str = "") -> User | None:
             log_registration_decision(
                 raw_email=email,
                 normalized_email=normalized,
-                existing_user=existing,
+                existing_user=True,
                 allowed=False,
                 reason=str(exc),
             )
@@ -306,7 +337,7 @@ def sign_up(email: str, password: str, *, full_name: str = "") -> User | None:
             log_registration_decision(
                 raw_email=email,
                 normalized_email=normalized,
-                existing_user=existing,
+                existing_user=False,
                 allowed=True,
                 reason="sign_up pending email verification",
                 assigned_user_id=None,
@@ -315,7 +346,7 @@ def sign_up(email: str, password: str, *, full_name: str = "") -> User | None:
             log_registration_decision(
                 raw_email=email,
                 normalized_email=normalized,
-                existing_user=existing,
+                existing_user=False,
                 allowed=True,
                 reason="sign_up completed with session",
                 assigned_user_id=session.user.id,

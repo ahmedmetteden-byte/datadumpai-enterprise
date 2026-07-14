@@ -23,14 +23,28 @@ _COOKIE_MANAGER_MISSING_MSG = (
 
 
 @lru_cache(maxsize=1)
-def _cookie_manager():
+def _try_cookie_manager():
+    """Return a cookie manager when available; never stop the app."""
+
     try:
         from extra_streamlit_components import CookieManager
     except ImportError:
+        return None
+
+    try:
+        return CookieManager()
+    except Exception:
+        return None
+
+
+@lru_cache(maxsize=1)
+def _cookie_manager():
+    manager = _try_cookie_manager()
+    if manager is None:
         st.error(_COOKIE_MANAGER_MISSING_MSG)
         st.stop()
 
-    return CookieManager()
+    return manager
 
 
 def cookies_are_ready() -> bool:
@@ -91,9 +105,18 @@ def restore_persisted_tokens() -> tuple[str, str] | None:
 
 
 def clear_persisted_tokens() -> None:
-    """Remove persisted auth tokens from the browser."""
+    """Remove persisted auth tokens from the browser (best-effort)."""
 
     if config.auth_dev_bypass_enabled():
         return
 
-    _cookie_manager().delete(AUTH_COOKIE_NAME)
+    manager = _try_cookie_manager()
+    if manager is None:
+        return
+
+    try:
+        manager.delete(AUTH_COOKIE_NAME)
+    except KeyError:
+        return
+    except Exception:
+        return

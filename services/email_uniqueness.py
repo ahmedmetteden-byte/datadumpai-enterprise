@@ -11,7 +11,18 @@ from typing import Any
 import config
 
 
-DUPLICATE_EMAIL_MESSAGE = "An account already exists with this email address."
+SIGN_UP_VERIFIED_DUPLICATE_MESSAGE = (
+    "An account already exists with this email address. "
+    "Please sign in or reset your password."
+)
+
+SIGN_UP_UNVERIFIED_DUPLICATE_MESSAGE = (
+    "An account with this email already exists but hasn't been verified. "
+    "Please check your inbox for the verification email or click "
+    "'Resend verification email'."
+)
+
+DUPLICATE_EMAIL_MESSAGE = SIGN_UP_VERIFIED_DUPLICATE_MESSAGE
 
 
 def normalize_email(email: str) -> str:

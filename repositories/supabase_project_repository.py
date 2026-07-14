@@ -7,6 +7,8 @@ from __future__ import annotations
 from typing import Any
 
 from core.database import get_database_client, handle_response
+from core.project_access import require_real_project_uuid
+from core.workspace_context import is_quick_report
 
 
 class SupabaseProjectRepository:
@@ -53,11 +55,14 @@ class SupabaseProjectRepository:
             self._delete_project(project_id)
 
         for project in projects:
+            if is_quick_report(str(project.get("id", ""))):
+                continue
             self._upsert_project(project)
 
     def _assemble_project(self, row: dict[str, Any], project_id: str) -> dict[str, Any]:
+        safe_project_id = require_real_project_uuid(project_id)
         return {
-            "id": project_id,
+            "id": safe_project_id,
             "owner_id": str(row["user_id"]),
             "name": row["name"],
             "description": row.get("description", ""),
@@ -65,16 +70,17 @@ class SupabaseProjectRepository:
             "updated_at": row["updated_at"],
             "last_activity": row["last_activity"],
             "storage_used": int(row.get("storage_used", 0)),
-            "documents": self._load_documents(project_id),
-            "reports": self._load_reports(project_id),
-            "exports": self._load_exports(project_id),
+            "documents": self._load_documents(safe_project_id),
+            "reports": self._load_reports(safe_project_id),
+            "exports": self._load_exports(safe_project_id),
         }
 
     def _load_documents(self, project_id: str) -> list[dict[str, Any]]:
+        safe_project_id = require_real_project_uuid(project_id)
         response = handle_response(
             self._client.table("documents")
             .select("*")
-            .eq("project_id", project_id)
+            .eq("project_id", safe_project_id)
             .eq("user_id", self._user_id)
             .order("uploaded_at")
             .execute(),
@@ -92,10 +98,11 @@ class SupabaseProjectRepository:
         ]
 
     def _load_reports(self, project_id: str) -> list[dict[str, Any]]:
+        safe_project_id = require_real_project_uuid(project_id)
         response = handle_response(
             self._client.table("reports")
             .select("*")
-            .eq("project_id", project_id)
+            .eq("project_id", safe_project_id)
             .eq("user_id", self._user_id)
             .order("created_at")
             .execute(),
@@ -120,10 +127,11 @@ class SupabaseProjectRepository:
         return reports
 
     def _load_exports(self, project_id: str) -> list[dict[str, Any]]:
+        safe_project_id = require_real_project_uuid(project_id)
         response = handle_response(
             self._client.table("exports")
             .select("*")
-            .eq("project_id", project_id)
+            .eq("project_id", safe_project_id)
             .eq("user_id", self._user_id)
             .order("exported_at")
             .execute(),
@@ -143,17 +151,18 @@ class SupabaseProjectRepository:
         ]
 
     def _delete_project(self, project_id: str) -> None:
+        safe_project_id = require_real_project_uuid(project_id)
         handle_response(
             self._client.table("projects")
             .delete()
-            .eq("id", project_id)
+            .eq("id", safe_project_id)
             .eq("user_id", self._user_id)
             .execute(),
             action="delete project",
         )
 
     def _upsert_project(self, project: dict[str, Any]) -> None:
-        project_id = str(project["id"])
+        project_id = require_real_project_uuid(str(project["id"]))
         row = {
             "id": project_id,
             "user_id": self._user_id,
@@ -179,10 +188,11 @@ class SupabaseProjectRepository:
         project_id: str,
         documents: list[dict[str, Any]],
     ) -> None:
+        safe_project_id = require_real_project_uuid(project_id)
         existing = handle_response(
             self._client.table("documents")
             .select("filename")
-            .eq("project_id", project_id)
+            .eq("project_id", safe_project_id)
             .eq("user_id", self._user_id)
             .execute(),
             action="list documents",
@@ -194,7 +204,7 @@ class SupabaseProjectRepository:
             handle_response(
                 self._client.table("documents")
                 .delete()
-                .eq("project_id", project_id)
+                .eq("project_id", safe_project_id)
                 .eq("user_id", self._user_id)
                 .eq("filename", filename)
                 .execute(),
@@ -203,7 +213,7 @@ class SupabaseProjectRepository:
 
         for document in documents:
             row = {
-                "project_id": project_id,
+                "project_id": safe_project_id,
                 "user_id": self._user_id,
                 "filename": document["filename"],
                 "size": int(document.get("size", 0)),
@@ -222,10 +232,11 @@ class SupabaseProjectRepository:
         project_id: str,
         reports: list[dict[str, Any]],
     ) -> None:
+        safe_project_id = require_real_project_uuid(project_id)
         existing = handle_response(
             self._client.table("reports")
             .select("filename")
-            .eq("project_id", project_id)
+            .eq("project_id", safe_project_id)
             .eq("user_id", self._user_id)
             .execute(),
             action="list reports",
@@ -237,7 +248,7 @@ class SupabaseProjectRepository:
             handle_response(
                 self._client.table("reports")
                 .delete()
-                .eq("project_id", project_id)
+                .eq("project_id", safe_project_id)
                 .eq("user_id", self._user_id)
                 .eq("filename", filename)
                 .execute(),
@@ -246,7 +257,7 @@ class SupabaseProjectRepository:
 
         for report in reports:
             row = {
-                "project_id": project_id,
+                "project_id": safe_project_id,
                 "user_id": self._user_id,
                 "filename": report["filename"],
                 "name": report.get("name", report["filename"]),
@@ -268,10 +279,11 @@ class SupabaseProjectRepository:
         project_id: str,
         exports: list[dict[str, Any]],
     ) -> None:
+        safe_project_id = require_real_project_uuid(project_id)
         existing = handle_response(
             self._client.table("exports")
             .select("filename")
-            .eq("project_id", project_id)
+            .eq("project_id", safe_project_id)
             .eq("user_id", self._user_id)
             .execute(),
             action="list exports",
@@ -283,7 +295,7 @@ class SupabaseProjectRepository:
             handle_response(
                 self._client.table("exports")
                 .delete()
-                .eq("project_id", project_id)
+                .eq("project_id", safe_project_id)
                 .eq("user_id", self._user_id)
                 .eq("filename", filename)
                 .execute(),
@@ -292,7 +304,7 @@ class SupabaseProjectRepository:
 
         for export in exports:
             row = {
-                "project_id": project_id,
+                "project_id": safe_project_id,
                 "user_id": self._user_id,
                 "filename": export["filename"],
                 "format": export.get("format", ""),

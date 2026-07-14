@@ -218,7 +218,10 @@ SIDEBAR_STATE = "expanded"
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip()
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "").strip()
-AUTH_REDIRECT_URL = os.getenv("AUTH_REDIRECT_URL", "http://localhost:8501").strip()
+AUTH_REDIRECT_URL = os.getenv(
+    "AUTH_REDIRECT_URL",
+    "http://localhost:8501/?active_page=auth",
+).strip()
 
 # deployment environment: development | staging | production
 ENVIRONMENT = os.getenv("ENVIRONMENT", "production").strip().lower()

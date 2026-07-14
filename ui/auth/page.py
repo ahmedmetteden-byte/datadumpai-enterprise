@@ -15,6 +15,7 @@ from core.auth import (
     auth_is_configured,
     is_authenticated,
 )
+from core.auth_callbacks import recovery_failed
 from ui.auth.forms import (
     render_change_password_form,
     render_forgot_password_form,
@@ -30,8 +31,13 @@ WORDMARK_PATH = Path(__file__).resolve().parents[2] / "assets" / "auth-wordmark.
 def render_auth_page() -> None:
     """Render the public authentication experience."""
 
+    from core.recovery_callback_trace import explain_sign_in_render, log_recovery_trace
+
     if is_authenticated():
+        log_recovery_trace("auth_page.exit", reason="is_authenticated_true")
         return
+
+    log_recovery_trace("auth_page.render", **explain_sign_in_render())
 
     _render_auth_styles()
 
@@ -65,11 +71,24 @@ def render_auth_page() -> None:
         if auth_error:
             st.error(auth_error)
 
+        if recovery_failed():
+            if st.button(
+                "Request a new password reset email",
+                type="primary",
+                use_container_width=True,
+                key="auth_recovery_request_new_link",
+            ):
+                st.session_state[AUTH_VIEW_KEY] = "forgot_password"
+                st.session_state.pop("auth_recovery_failed", None)
+                st.rerun()
+
         if st.session_state.get(AUTH_RECOVERY_MODE_KEY):
+            log_recovery_trace("auth_page.view", view="reset_password_form")
             render_reset_password_form()
             return
 
         view = st.session_state.get(AUTH_VIEW_KEY, "sign_in")
+        log_recovery_trace("auth_page.view", view=view)
 
         if view == "sign_up":
             render_sign_up_form()

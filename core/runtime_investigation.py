@@ -81,10 +81,10 @@ def database_backend_label() -> str:
 
 def user_storage_paths(user_id: str) -> dict[str, str]:
     from core.user_paths import get_user_projects_root
-    from core.workspace_context import QUICK_REPORT_PROJECT_ID
+    from core.workspace_context import QUICK_REPORT_JSON_FOLDER
 
     projects_root = get_user_projects_root(user_id)
-    quick_root = projects_root / QUICK_REPORT_PROJECT_ID
+    quick_root = projects_root / QUICK_REPORT_JSON_FOLDER
 
     return {
         "workspace": str(projects_root),

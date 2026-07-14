@@ -28,7 +28,7 @@ from services.report_chunk_processor import process_source_documents
 from services.full_report_prompt import is_full_report
 from services.report_section_templates import build_report_section_plan
 from models.report_data import ReportData
-from core.workspace_context import QUICK_REPORT_NAME, QUICK_REPORT_PROJECT_ID, is_quick_report_workspace
+from core.workspace_context import QUICK_REPORT_NAME, QUICK_REPORT_PROJECT_ID, is_quick_report
 
 
 class ReportPipeline:
@@ -224,7 +224,7 @@ class ReportPipeline:
         project: dict[str, Any],
         metadata: dict[str, Any],
     ) -> None:
-        if is_quick_report_workspace(project["id"]):
+        if is_quick_report(project["id"]):
             project.setdefault("reports", [])
             project["reports"] = [
                 report

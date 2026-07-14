@@ -13,6 +13,7 @@ import config
 from core.current_user import CurrentUser, require_current_user
 from core.project_access import validate_project_id
 from core.user_paths import get_user_projects_root
+from core.workspace_context import resolve_storage_scope
 
 
 class FileStore:
@@ -38,23 +39,28 @@ class FileStore:
     def _validate_project_id(self, project_id: str) -> str:
         return validate_project_id(project_id)
 
-    def _local_root(self, project_id: str) -> Path:
+    def _storage_scope(self, project_id: str) -> str:
         safe_project_id = self._validate_project_id(project_id)
+        return resolve_storage_scope(safe_project_id)
+
+    def _local_root(self, project_id: str) -> Path:
+        storage_scope = self._storage_scope(project_id)
         user_root = get_user_projects_root(self._user_id).resolve()
-        root = (user_root / safe_project_id).resolve()
+        root = (user_root / storage_scope).resolve()
 
         try:
             root.relative_to(user_root)
         except ValueError as exc:
             raise PermissionError(
-                f"Access denied to project path: {safe_project_id!r}"
+                f"Access denied to project path: {storage_scope!r}"
             ) from exc
 
         return root
 
     def _storage_key(self, project_id: str, category: str, filename: str) -> str:
         safe_name = Path(filename).name
-        return f"{self._user_id}/{project_id}/{category}/{safe_name}"
+        storage_scope = self._storage_scope(project_id)
+        return f"{self._user_id}/{storage_scope}/{category}/{safe_name}"
 
     def _split_storage_key(self, storage_key: str) -> list[str]:
         return storage_key.replace("\\", "/").strip("/").split("/")
@@ -91,11 +97,10 @@ class FileStore:
         filename: str,
         content: bytes,
     ) -> str:
-        safe_project_id = self._validate_project_id(project_id)
         safe_name = Path(filename).name
 
         if self._backend == "supabase":
-            key = self._storage_key(safe_project_id, category, safe_name)
+            key = self._storage_key(project_id, category, safe_name)
             client = self._supabase_client()
             client.storage.from_(config.SUPABASE_STORAGE_BUCKET).upload(
                 key,
@@ -104,7 +109,7 @@ class FileStore:
             )
             return key
 
-        folder = self._local_root(safe_project_id) / category
+        folder = self._local_root(project_id) / category
         folder.mkdir(parents=True, exist_ok=True)
         path = folder / safe_name
         path.write_bytes(content)
@@ -160,10 +165,10 @@ class FileStore:
         return False
 
     def list_files(self, project_id: str, category: str) -> list[str]:
-        safe_project_id = self._validate_project_id(project_id)
+        storage_scope = self._storage_scope(project_id)
 
         if self._backend == "supabase":
-            prefix = f"{self._user_id}/{safe_project_id}/{category}/"
+            prefix = f"{self._user_id}/{storage_scope}/{category}/"
             client = self._supabase_client()
             entries = client.storage.from_(config.SUPABASE_STORAGE_BUCKET).list(prefix)
             names: list[str] = []
@@ -173,7 +178,7 @@ class FileStore:
                     names.append(name)
             return sorted(names)
 
-        folder = self._local_root(safe_project_id) / category
+        folder = self._local_root(project_id) / category
         if not folder.exists():
             return []
         return sorted(path.name for path in folder.iterdir() if path.is_file())
@@ -202,9 +207,8 @@ class FileStore:
             temp_path.unlink(missing_ok=True)
 
     def ensure_project_folders(self, project_id: str) -> None:
-        safe_project_id = self._validate_project_id(project_id)
         if self._backend == "local":
-            root = self._local_root(safe_project_id)
+            root = self._local_root(project_id)
             for category in self.CATEGORIES:
                 (root / category).mkdir(parents=True, exist_ok=True)
 

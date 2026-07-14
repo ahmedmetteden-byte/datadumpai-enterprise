@@ -19,6 +19,14 @@ def friendly_message(exc: Exception) -> str:
     if isinstance(exc, UsageLimitError):
         return str(exc)
 
+    from services.auth_service import AuthError
+
+    if isinstance(exc, AuthError):
+        title = getattr(exc, "title", None)
+        if title:
+            return f"{title}\n\n{exc}"
+        return str(exc)
+
     detail = str(exc).strip()
 
     if isinstance(exc, ValueError):

@@ -22,9 +22,9 @@ from models.workspace import (
     WorkspaceHealthIndicator,
 )
 from core.workspace_context import (
-    QUICK_REPORT_NAME,
     build_quick_report_record,
-    is_quick_report_workspace,
+    is_quick_report,
+    resolve_storage_scope,
 )
 from services.document_service import DocumentService
 from services.export_service import ExportService
@@ -88,7 +88,7 @@ class WorkspaceService:
 
         project = (
             build_quick_report_record()
-            if is_quick_report_workspace(project_id)
+            if is_quick_report(project_id)
             else self.projects.get_project(project_id)
         )
         documents = self.documents.get_documents(project_id)
@@ -372,7 +372,7 @@ class WorkspaceService:
             if suffix in self.MEETING_EXTENSIONS:
                 return True
 
-        meetings_dir = self._root() / project_id / "documents"
+        meetings_dir = self._root() / resolve_storage_scope(project_id) / "documents"
 
         if meetings_dir.exists():
             for file in meetings_dir.iterdir():

@@ -10,7 +10,11 @@ from typing import Any
 import config
 from core.current_user import require_current_user
 from core.user_paths import get_user_projects_root
+from core.workspace_context import is_quick_report
 from repositories.json_timeline_repository import JsonTimelineRepository
+from repositories.supabase_quick_report_timeline_repository import (
+    SupabaseQuickReportTimelineRepository,
+)
 from repositories.supabase_timeline_repository import SupabaseTimelineRepository
 
 
@@ -26,7 +30,15 @@ class TimelineRepository:
         resolved_user_id = current_user.id
 
         if config.use_database():
-            self._impl = SupabaseTimelineRepository(project_id, user_id=resolved_user_id)
+            if is_quick_report(project_id):
+                self._impl = SupabaseQuickReportTimelineRepository(
+                    user_id=resolved_user_id,
+                )
+            else:
+                self._impl = SupabaseTimelineRepository(
+                    project_id,
+                    user_id=resolved_user_id,
+                )
         else:
             root = (
                 Path(projects_root)
