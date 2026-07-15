@@ -14,12 +14,15 @@ from typing import Any
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
 from docx.shared import Inches, Pt, RGBColor
-from reportlab.lib.enums import TA_JUSTIFY
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_JUSTIFY, TA_LEFT
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
-from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer
+from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from services.export_chart_blocks import get_export_chart_images
 from models.report_data import ReportData
@@ -172,6 +175,113 @@ class ExportService:
                 run.font.size = Pt(10)
                 run.font.color.rgb = RGBColor(0x64, 0x74, 0x8B)
 
+    @staticmethod
+    def _escape_pdf_text(text: str) -> str:
+        return (
+            strip_inline_markdown(text)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+
+    @staticmethod
+    def _shade_docx_cell(cell: Any, fill_hex: str) -> None:
+        fill = fill_hex.lstrip("#").upper()
+        tc_pr = cell._tc.get_or_add_tcPr()
+        existing = tc_pr.find(qn("w:shd"))
+        if existing is not None:
+            tc_pr.remove(existing)
+        shading = OxmlElement("w:shd")
+        shading.set(qn("w:fill"), fill)
+        shading.set(qn("w:val"), "clear")
+        tc_pr.append(shading)
+
+    def _render_pdf_table(
+        self,
+        rows: list[list[str]],
+        *,
+        story: list[Any],
+        body_style: ParagraphStyle,
+    ) -> None:
+        if not rows:
+            return
+
+        col_count = max(len(row) for row in rows)
+        col_width = 6.2 * inch / max(col_count, 1)
+        cell_style = ParagraphStyle(
+            "ExportTableCell",
+            parent=body_style,
+            fontSize=9,
+            leading=12,
+            alignment=TA_LEFT,
+            spaceBefore=0,
+            spaceAfter=0,
+        )
+        header_style = ParagraphStyle(
+            "ExportTableHeader",
+            parent=cell_style,
+            textColor=colors.white,
+        )
+
+        table_data: list[list[Any]] = []
+        for row_index, row in enumerate(rows):
+            style = header_style if row_index == 0 else cell_style
+            padded = list(row) + [""] * (col_count - len(row))
+            table_data.append(
+                [Paragraph(self._escape_pdf_text(cell), style) for cell in padded[:col_count]]
+            )
+
+        table = Table(table_data, colWidths=[col_width] * col_count, repeatRows=1)
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.Color(0.11, 0.31, 0.85)),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("BACKGROUND", (0, 1), (-1, -1), colors.white),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.Color(0.97, 0.98, 0.99)]),
+                    ("BOX", (0, 0), (-1, -1), 0.5, colors.Color(0.78, 0.83, 0.90)),
+                    ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.Color(0.78, 0.83, 0.90)),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 6),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ]
+            )
+        )
+        story.append(table)
+        story.append(Spacer(1, 0.12 * inch))
+
+    def _render_docx_table(self, document: Document, rows: list[list[str]]) -> None:
+        if not rows:
+            return
+
+        col_count = max(len(row) for row in rows)
+        table = document.add_table(rows=len(rows), cols=col_count)
+        table.style = "Table Grid"
+
+        for row_index, row in enumerate(rows):
+            padded = list(row) + [""] * (col_count - len(row))
+            for col_index in range(col_count):
+                cell = table.rows[row_index].cells[col_index]
+                cell.text = strip_inline_markdown(padded[col_index])
+
+                for paragraph in cell.paragraphs:
+                    for run in paragraph.runs:
+                        run.font.size = Pt(10)
+                        run.font.color.rgb = RGBColor(0x0F, 0x17, 0x2A)
+
+                if row_index == 0:
+                    self._shade_docx_cell(cell, "1D4ED8")
+                    for paragraph in cell.paragraphs:
+                        for run in paragraph.runs:
+                            run.bold = True
+                            run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+                elif row_index % 2 == 0:
+                    self._shade_docx_cell(cell, "F8FAFC")
+
+        document.add_paragraph()
+
     def _render_pdf_block(
         self,
         block: Any,
@@ -183,26 +293,16 @@ class ExportService:
         if block.block_type == "heading":
             story.append(Paragraph(strip_inline_markdown(block.content), heading_style))
         elif block.block_type == "paragraph":
-            safe = (
-                strip_inline_markdown(block.content)
-                .replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-            )
-            story.append(Paragraph(safe, body_style))
+            story.append(Paragraph(self._escape_pdf_text(block.content), body_style))
         elif block.block_type == "bullets":
             for item in block.items:
-                safe = (
-                    strip_inline_markdown(item)
-                    .replace("&", "&amp;")
-                    .replace("<", "&lt;")
-                    .replace(">", "&gt;")
-                )
-                story.append(Paragraph(safe, body_style))
+                story.append(Paragraph(self._escape_pdf_text(item), body_style))
         elif block.block_type == "label_value":
             label = strip_inline_markdown(block.label)
             value = strip_inline_markdown(block.value)
             story.append(Paragraph(f"<b>{label}:</b> {value}", body_style))
+        elif block.block_type == "table":
+            self._render_pdf_table(block.rows, story=story, body_style=body_style)
         elif block.block_type == "spacer":
             story.append(Spacer(1, 0.08 * inch))
 
@@ -227,6 +327,8 @@ class ExportService:
             paragraph = document.add_paragraph()
             paragraph.add_run(f"{strip_inline_markdown(block.label)}: ").bold = True
             paragraph.add_run(strip_inline_markdown(block.value))
+        elif block.block_type == "table":
+            self._render_docx_table(document, block.rows)
 
     def _build_result(
         self,
