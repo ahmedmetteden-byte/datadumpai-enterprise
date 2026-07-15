@@ -6,7 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from services.auth_service import AuthError, AuthService, SignUpDuplicateError
+from services.auth_service import AuthError, AuthService, AuthSession, SignUpDuplicateError
+from models.user import User as AppUser
 
 
 class _FakeTable:
@@ -128,6 +129,7 @@ def test_sign_up_reclaims_orphan_then_succeeds(monkeypatch):
         return Response()
 
     monkeypatch.setattr(service, "_require_client", lambda: object())
+    monkeypatch.setattr(AuthService, "_admin_sign_up_available", staticmethod(lambda: False))
     monkeypatch.setattr(service, "_lookup_auth_user_by_email", lambda email: None)
     monkeypatch.setattr(service, "_delete_orphaned_account_rows", lambda email: True)
     monkeypatch.setattr(service, "_create_supabase_user", fake_create)
@@ -144,6 +146,7 @@ def test_sign_up_maps_ssl_failures(monkeypatch):
     service = AuthService()
 
     monkeypatch.setattr(service, "_require_client", lambda: object())
+    monkeypatch.setattr(AuthService, "_admin_sign_up_available", staticmethod(lambda: False))
     monkeypatch.setattr(service, "_lookup_auth_user_by_email", lambda email: None)
     monkeypatch.setattr(service, "_delete_orphaned_account_rows", lambda email: False)
     monkeypatch.setattr(
@@ -161,36 +164,106 @@ def test_sign_up_maps_ssl_failures(monkeypatch):
         service.sign_up("new@example.com", "password123")
 
 
-def test_sign_up_rate_limit_creates_user_without_email(monkeypatch):
-    from supabase_auth.errors import AuthApiError
-
+def test_sign_up_uses_admin_path_without_verification_email(monkeypatch):
     service = AuthService()
-    rate_limit = AuthApiError("email rate limit exceeded", 429, "over_email_send_rate_limit")
+    created = {}
 
-    monkeypatch.setattr(service, "_require_client", lambda: object())
-    monkeypatch.setattr(service, "_lookup_auth_user_by_email", lambda email: None)
-    monkeypatch.setattr(service, "_delete_orphaned_account_rows", lambda email: False)
-    monkeypatch.setattr(
-        service,
-        "_create_supabase_user",
-        lambda *args, **kwargs: (_ for _ in ()).throw(rate_limit),
+    expected = AuthSession(
+        access_token="a",
+        refresh_token="r",
+        user=AppUser(
+            id="new-user",
+            email="new@example.com",
+            full_name="Ada",
+            email_verified=True,
+        ),
     )
-    monkeypatch.setattr(service, "_create_user_without_email", lambda *a, **k: True)
+
     monkeypatch.setattr("config.auth_dev_bypass_enabled", lambda: False)
+    monkeypatch.setattr(AuthService, "_admin_sign_up_available", staticmethod(lambda: True))
+    monkeypatch.setattr(service, "_lookup_auth_user_by_email", lambda email: None)
+    monkeypatch.setattr(service, "_delete_orphaned_account_rows", lambda email: None)
 
-    from services.auth_service import SignUpEmailDelayedError
+    class AdminAuth:
+        def create_user(self, payload):
+            created["payload"] = payload
+            return SimpleNamespace(
+                user=SimpleNamespace(id="new-user", email=payload["email"])
+            )
 
-    with pytest.raises(SignUpEmailDelayedError, match="temporarily delayed"):
-        service.sign_up("new@example.com", "password123", full_name="Ada")
+    monkeypatch.setattr(
+        "core.database.get_service_role_client",
+        lambda: SimpleNamespace(auth=SimpleNamespace(admin=AdminAuth())),
+    )
+    monkeypatch.setattr(
+        service,
+        "_session_after_password_sign_in",
+        lambda email, password: expected,
+    )
+
+    result = service.sign_up("new@example.com", "password123", full_name="Ada")
+
+    assert result is expected
+    assert created["payload"]["email_confirm"] is True
+    assert created["payload"]["user_metadata"]["full_name"] == "Ada"
 
 
-def test_sign_up_rate_limit_without_fallback_shows_wait_message(monkeypatch):
+def test_sign_up_rate_limit_falls_back_to_admin(monkeypatch):
+    from supabase_auth.errors import AuthApiError
+
+    service = AuthService()
+    rate_limit = AuthApiError("email rate limit exceeded", 429, "over_email_send_rate_limit")
+    calls = {"admin": 0}
+
+    expected = AuthSession(
+        access_token="a",
+        refresh_token="r",
+        user=AppUser(
+            id="u1",
+            email="new@example.com",
+            full_name="Ada",
+            email_verified=True,
+        ),
+    )
+
+    monkeypatch.setattr(service, "_require_client", lambda: object())
+    monkeypatch.setattr("config.auth_dev_bypass_enabled", lambda: False)
+    # First call in sign_up: admin unavailable -> public path; later available for fallback
+    states = {"admin": False}
+
+    def admin_available():
+        return states["admin"]
+
+    monkeypatch.setattr(AuthService, "_admin_sign_up_available", staticmethod(admin_available))
+    monkeypatch.setattr(service, "_lookup_auth_user_by_email", lambda email: None)
+    monkeypatch.setattr(service, "_delete_orphaned_account_rows", lambda email: False)
+
+    def create_public(*args, **kwargs):
+        states["admin"] = True
+        raise rate_limit
+
+    monkeypatch.setattr(service, "_create_supabase_user", create_public)
+
+    def fake_admin_signup(email, password, *, full_name):
+        calls["admin"] += 1
+        return expected
+
+    monkeypatch.setattr(service, "_sign_up_with_admin", fake_admin_signup)
+
+    result = service.sign_up("new@example.com", "password123", full_name="Ada")
+
+    assert result is expected
+    assert calls["admin"] == 1
+
+
+def test_sign_up_rate_limit_without_admin_shows_wait_message(monkeypatch):
     from supabase_auth.errors import AuthApiError
 
     service = AuthService()
     rate_limit = AuthApiError("email rate limit exceeded", 429, "over_email_send_rate_limit")
 
     monkeypatch.setattr(service, "_require_client", lambda: object())
+    monkeypatch.setattr(AuthService, "_admin_sign_up_available", staticmethod(lambda: False))
     monkeypatch.setattr(service, "_lookup_auth_user_by_email", lambda email: None)
     monkeypatch.setattr(service, "_delete_orphaned_account_rows", lambda email: False)
     monkeypatch.setattr(
@@ -198,7 +271,6 @@ def test_sign_up_rate_limit_without_fallback_shows_wait_message(monkeypatch):
         "_create_supabase_user",
         lambda *args, **kwargs: (_ for _ in ()).throw(rate_limit),
     )
-    monkeypatch.setattr(service, "_create_user_without_email", lambda *a, **k: False)
     monkeypatch.setattr("config.auth_dev_bypass_enabled", lambda: False)
 
     with pytest.raises(AuthError, match="Too many verification emails"):

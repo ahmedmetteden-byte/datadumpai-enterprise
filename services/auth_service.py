@@ -414,6 +414,15 @@ class AuthService:
         if config.auth_dev_bypass_enabled():
             return self.dev_sign_up(normalized_email, full_name=full_name)
 
+        # Prefer service-role signup so we never depend on Supabase's
+        # verification-email rate limit (over_email_send_rate_limit).
+        if self._admin_sign_up_available():
+            return self._sign_up_with_admin(
+                normalized_email,
+                password,
+                full_name=full_name,
+            )
+
         client = self._require_client()
         assert client is not None
 
@@ -431,6 +440,12 @@ class AuthService:
                 full_name=full_name,
             )
         except Exception as exc:
+            if _is_email_rate_limit_error(exc) and self._admin_sign_up_available():
+                return self._sign_up_with_admin(
+                    normalized_email,
+                    password,
+                    full_name=full_name,
+                )
             response = self._recover_sign_up_failure(
                 client,
                 exc,
@@ -457,6 +472,118 @@ class AuthService:
             user=user,
         )
 
+    @staticmethod
+    def _admin_sign_up_available() -> bool:
+        return bool(
+            config.use_database()
+            and config.is_supabase_configured()
+            and config.SUPABASE_SERVICE_ROLE_KEY
+        )
+
+    def _sign_up_with_admin(
+        self,
+        email: str,
+        password: str,
+        *,
+        full_name: str,
+    ) -> AuthSession:
+        """Create a confirmed user via service role (no verification email sent)."""
+
+        existing = self._lookup_auth_user_by_email(email)
+        if existing is not None:
+            confirmed = bool(
+                getattr(existing, "email_confirmed_at", None)
+                or getattr(existing, "confirmed_at", None)
+            )
+            if confirmed:
+                client = self._require_client()
+                assert client is not None
+                self._raise_duplicate_sign_up_error(client, email, password)
+
+            # Finish an incomplete prior signup without sending email.
+            self._complete_unverified_signup(
+                str(existing.id),
+                password,
+                full_name=full_name,
+            )
+            return self._session_after_password_sign_in(email, password)
+
+        self._delete_orphaned_account_rows(email)
+
+        try:
+            from core.database import get_service_role_client
+
+            admin_client = get_service_role_client()
+            response = admin_client.auth.admin.create_user(
+                {
+                    "email": email,
+                    "password": password,
+                    "email_confirm": True,
+                    "user_metadata": {"full_name": full_name.strip()},
+                }
+            )
+        except Exception as exc:
+            if is_duplicate_email_error(exc):
+                client = self._require_client()
+                assert client is not None
+                self._raise_duplicate_sign_up_error(client, email, password)
+            if self._is_connectivity_error(exc):
+                raise AuthError(
+                    "Could not reach the authentication service. "
+                    "Check your internet connection and try again."
+                ) from exc
+            raise AuthError("Sign up failed. Please try again.") from exc
+
+        if response.user is None:
+            raise AuthError("Sign up failed. Please try again.")
+
+        return self._session_after_password_sign_in(email, password)
+
+    def _complete_unverified_signup(
+        self,
+        user_id: str,
+        password: str,
+        *,
+        full_name: str,
+    ) -> None:
+        from core.database import get_service_role_client
+
+        admin_client = get_service_role_client()
+        admin_client.auth.admin.update_user_by_id(
+            user_id,
+            {
+                "password": password,
+                "email_confirm": True,
+                "user_metadata": {"full_name": full_name.strip()},
+            },
+        )
+        logger.info("Completed unverified signup without email for user_id=%s", user_id)
+
+    def _session_after_password_sign_in(self, email: str, password: str) -> AuthSession:
+        client = self._require_client()
+        assert client is not None
+
+        try:
+            response = client.auth.sign_in_with_password(
+                {"email": email, "password": password}
+            )
+        except Exception as exc:
+            raise AuthError(
+                "Account created, but automatic sign-in failed. Please sign in."
+            ) from exc
+
+        if response.session is None or response.user is None:
+            raise AuthError(
+                "Account created, but automatic sign-in failed. Please sign in."
+            )
+
+        user = self._user_from_payload(response.user.model_dump())
+        return AuthSession(
+            access_token=response.session.access_token,
+            refresh_token=response.session.refresh_token,
+            user=user,
+        )
+
     def _recover_sign_up_failure(
         self,
         client,
@@ -470,13 +597,6 @@ class AuthService:
             self._raise_duplicate_sign_up_error(client, email, password)
 
         if _is_email_rate_limit_error(exc):
-            created = self._create_user_without_email(
-                email,
-                password,
-                full_name=full_name,
-            )
-            if created:
-                raise SignUpEmailDelayedError() from exc
             raise AuthError(
                 SIGN_UP_EMAIL_RATE_LIMIT_MESSAGE,
                 title=SIGN_UP_EMAIL_RATE_LIMIT_TITLE,
@@ -511,55 +631,6 @@ class AuthService:
             ) from exc
 
         raise AuthError("Sign up failed. Please try again.") from exc
-
-    def _create_user_without_email(
-        self,
-        email: str,
-        password: str,
-        *,
-        full_name: str,
-    ) -> bool:
-        """Create an auth user via service role when signup email sending is rate-limited."""
-
-        if not config.use_database() or not config.is_supabase_configured():
-            return False
-        if not config.SUPABASE_SERVICE_ROLE_KEY:
-            return False
-
-        try:
-            from core.database import get_service_role_client
-
-            admin_client = get_service_role_client()
-            response = admin_client.auth.admin.create_user(
-                {
-                    "email": email,
-                    "password": password,
-                    "email_confirm": False,
-                    "user_metadata": {"full_name": full_name.strip()},
-                }
-            )
-            if response.user is None:
-                return False
-            logger.warning(
-                "Created auth user without verification email due to rate limit email=%s user_id=%s",
-                email,
-                response.user.id,
-            )
-            return True
-        except Exception as exc:
-            if self._lookup_auth_user_by_email(email) is not None:
-                logger.info(
-                    "Rate-limited signup fallback found existing user for email=%s",
-                    email,
-                )
-                return True
-            if is_duplicate_email_error(exc):
-                return self._lookup_auth_user_by_email(email) is not None
-            logger.exception(
-                "Failed to create auth user without email for %s",
-                email,
-            )
-            return False
 
     def _create_supabase_user(
         self,
