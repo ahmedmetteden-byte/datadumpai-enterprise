@@ -4,7 +4,7 @@ Fail-closed project access checks for multi-tenant isolation.
 
 from __future__ import annotations
 
-from core.current_user import require_current_user
+from core.current_user import CurrentUser, require_current_user
 from core.workspace_context import is_quick_report
 
 
@@ -44,14 +44,21 @@ def require_real_project_uuid(project_id: str) -> str:
     return safe_project_id
 
 
-def assert_project_access(project_id: str) -> str:
+def assert_project_access(
+    project_id: str,
+    *,
+    current_user: CurrentUser | None = None,
+) -> str:
     """
     Verify the authenticated user may access a project workspace.
 
     Fail closed: unknown, invalid, or foreign project ids are rejected.
+
+    Pass ``current_user`` explicitly when calling from worker threads that do
+    not inherit Streamlit session / ContextVar auth state.
     """
 
-    require_current_user()
+    user = current_user or require_current_user()
     safe_project_id = validate_project_id(project_id)
 
     if is_quick_report(safe_project_id):
@@ -59,7 +66,7 @@ def assert_project_access(project_id: str) -> str:
 
     from services.project_service import ProjectService
 
-    if not ProjectService().project_exists(safe_project_id):
+    if not ProjectService(current_user=user).project_exists(safe_project_id):
         raise ProjectAccessError(f"Access denied to project: {safe_project_id!r}")
 
     return safe_project_id

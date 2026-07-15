@@ -10,6 +10,7 @@ from datetime import datetime
 import streamlit as st
 
 from application.report_pipeline import ReportPipeline
+from core.current_user import require_current_user
 from services.export_service import ExportService
 from services.report_service import ReportService
 from ui.feedback import loading, show_empty_state, show_error, show_success
@@ -20,7 +21,7 @@ from ui.report_viewer import render_report_viewer
 
 
 def _report_pipeline() -> ReportPipeline:
-    return ReportPipeline()
+    return ReportPipeline(current_user=require_current_user())
 
 
 export_service = ExportService()

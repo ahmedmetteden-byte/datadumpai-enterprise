@@ -28,6 +28,7 @@ from services.report_chunk_processor import process_source_documents
 from services.full_report_prompt import is_full_report
 from services.report_section_templates import build_report_section_plan
 from models.report_data import ReportData
+from core.current_user import CurrentUser, require_current_user
 from core.workspace_context import QUICK_REPORT_NAME, QUICK_REPORT_PROJECT_ID, is_quick_report
 
 logger = logging.getLogger(__name__)
@@ -44,13 +45,28 @@ class ReportPipeline:
         document_service: DocumentService | None = None,
         usage_service: UsageService | None = None,
         plan_service: PlanService | None = None,
+        *,
+        current_user: CurrentUser | None = None,
     ) -> None:
+        # Resolve once on the calling (Streamlit) thread, then reuse everywhere —
+        # including ThreadPoolExecutor workers that cannot see session_state.
+        self._current_user = current_user or require_current_user()
         self._ai_service = ai_service or AIService()
         self._report_service = report_service or ReportService()
-        self._project_service = project_service or ProjectService()
-        self._document_service = document_service or DocumentService()
-        self._usage_service = usage_service or UsageService()
+        self._project_service = project_service or ProjectService(
+            current_user=self._current_user,
+        )
+        self._document_service = document_service or DocumentService(
+            current_user=self._current_user,
+        )
+        self._usage_service = usage_service or UsageService(
+            current_user=self._current_user,
+        )
         self._plan_service = plan_service or PlanService(self._usage_service)
+
+    @property
+    def current_user(self) -> CurrentUser:
+        return self._current_user
 
     @staticmethod
     def _document_extraction_limits(
@@ -60,8 +76,8 @@ class ReportPipeline:
             return None, None
         return AI_REPORT_MAX_PDF_PAGES, AI_REPORT_MAX_TABULAR_ROWS
 
-    @staticmethod
     def load_document_text(
+        self,
         project_id: str,
         filenames: list[str],
         *,
@@ -69,22 +85,23 @@ class ReportPipeline:
     ) -> str:
         """Extract and combine text from selected project documents."""
 
-        max_pdf_pages, max_tabular_rows = ReportPipeline._document_extraction_limits(
+        max_pdf_pages, max_tabular_rows = self._document_extraction_limits(
             processing_mode,
         )
         texts: list[str] = []
-        document_service = DocumentService()
 
         logger.info(
-            "load_document_text start project_id=%s filenames=%s processing_mode=%s",
+            "load_document_text start project_id=%s filenames=%s processing_mode=%s "
+            "user_id=%s",
             project_id,
             filenames,
             processing_mode,
+            self._current_user.id,
         )
 
         for filename in filenames:
             try:
-                text = document_service.read_document_text(
+                text = self._document_service.read_document_text(
                     project_id,
                     filename,
                     max_pdf_pages=max_pdf_pages,
@@ -92,9 +109,10 @@ class ReportPipeline:
                 )
             except Exception:
                 logger.exception(
-                    "load_document_text failed project_id=%s filename=%s",
+                    "load_document_text failed project_id=%s filename=%s user_id=%s",
                     project_id,
                     filename,
+                    self._current_user.id,
                 )
                 raise
 
@@ -118,8 +136,8 @@ class ReportPipeline:
         )
         return combined
 
-    @staticmethod
     def _load_selection_item(
+        self,
         item: dict[str, str],
         processing_mode: ReportProcessingMode,
     ) -> tuple[str, str | None]:
@@ -127,19 +145,23 @@ class ReportPipeline:
 
         filename = item["filename"]
         project_id = item["project_id"]
-        max_pdf_pages, max_tabular_rows = ReportPipeline._document_extraction_limits(
+        max_pdf_pages, max_tabular_rows = self._document_extraction_limits(
             processing_mode,
         )
 
         logger.info(
-            "_load_selection_item start project_id=%s filename=%s processing_mode=%s",
+            "_load_selection_item start project_id=%s filename=%s processing_mode=%s "
+            "user_id=%s",
             project_id,
             filename,
             processing_mode,
+            self._current_user.id,
         )
 
+        # Use the pipeline-bound DocumentService — never require_current_user()
+        # inside the worker thread.
         try:
-            chunk = DocumentService().read_document_text(
+            chunk = self._document_service.read_document_text(
                 project_id,
                 filename,
                 max_pdf_pages=max_pdf_pages,
@@ -147,9 +169,10 @@ class ReportPipeline:
             ).strip()
         except Exception:
             logger.exception(
-                "_load_selection_item failed project_id=%s filename=%s",
+                "_load_selection_item failed project_id=%s filename=%s user_id=%s",
                 project_id,
                 filename,
+                self._current_user.id,
             )
             raise
 
@@ -169,9 +192,8 @@ class ReportPipeline:
         )
         return filename, f"=== SOURCE DOCUMENT: {filename} ===\n\n{chunk}"
 
-    @classmethod
     def load_document_text_from_selection(
-        cls,
+        self,
         selection: list[dict[str, str]],
         *,
         processing_mode: ReportProcessingMode = ReportProcessingMode.COMPREHENSIVE,
@@ -180,9 +202,10 @@ class ReportPipeline:
 
         logger.info(
             "load_document_text_from_selection start count=%s processing_mode=%s "
-            "selection=%s",
+            "user_id=%s selection=%s",
             len(selection),
             processing_mode,
+            self._current_user.id,
             [
                 {"project_id": item.get("project_id"), "filename": item.get("filename")}
                 for item in selection
@@ -209,7 +232,7 @@ class ReportPipeline:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             results = list(
                 executor.map(
-                    lambda item: cls._load_selection_item(
+                    lambda item: self._load_selection_item(
                         item,
                         processing_mode,
                     ),
@@ -242,10 +265,11 @@ class ReportPipeline:
         if not combined_text.strip():
             logger.error(
                 "load_document_text_from_selection returned empty combined text "
-                "loaded=%s skipped=%s selection_count=%s",
+                "loaded=%s skipped=%s selection_count=%s user_id=%s",
                 loaded,
                 skipped,
                 len(selection),
+                self._current_user.id,
             )
 
         return {

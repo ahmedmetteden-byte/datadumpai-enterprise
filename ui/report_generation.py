@@ -11,6 +11,7 @@ import streamlit as st
 
 from config import FULL_REPORT_PERIODS
 from application.report_pipeline import ReportPipeline
+from core.current_user import require_current_user
 from core.workspace_context import QUICK_REPORT_PROJECT_ID, QUICK_REPORT_NAME
 from models.report_processing_mode import (
     DEFAULT_PROCESSING_MODE,
@@ -28,11 +29,11 @@ from ui.report_preview import set_draft_report
 
 
 def _report_pipeline() -> ReportPipeline:
-    return ReportPipeline()
+    return ReportPipeline(current_user=require_current_user())
 
 
 def _document_service() -> DocumentService:
-    return DocumentService()
+    return DocumentService(current_user=require_current_user())
 
 
 def _plan_service() -> PlanService:

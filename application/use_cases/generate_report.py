@@ -6,13 +6,15 @@ Generate Report Use Case
 from __future__ import annotations
 
 from application.report_pipeline import ReportPipeline
+from core.current_user import CurrentUser, require_current_user
 
 
 class GenerateReportUseCase:
 
-    def __init__(self) -> None:
-
-        self.pipeline = ReportPipeline()
+    def __init__(self, *, current_user: CurrentUser | None = None) -> None:
+        self.pipeline = ReportPipeline(
+            current_user=current_user or require_current_user(),
+        )
 
     def execute(
         self,

@@ -9,6 +9,7 @@ from typing import Any
 import streamlit as st
 
 from application.report_pipeline import ReportPipeline
+from core.current_user import require_current_user
 from core.workspace_navigation import set_workspace_section
 from models.report_data import ReportData
 from models.report_processing_mode import ReportProcessingMode
@@ -19,7 +20,7 @@ from ui.report_renderer import render_report_content
 
 
 def _report_pipeline() -> ReportPipeline:
-    return ReportPipeline()
+    return ReportPipeline(current_user=require_current_user())
 
 
 context_builder = ExecutiveReportContextBuilder()

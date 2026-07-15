@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from application.report_pipeline import ReportPipeline
 from services.document_service import DocumentService
 from services.project_service import ProjectService
@@ -124,7 +126,11 @@ def test_load_document_text_from_selection_combines_all_documents(
         {"project_id": project["id"], "filename": "beta.txt"},
     ]
 
-    combined = ReportPipeline.load_document_text_from_selection(selection)
+    combined = ReportPipeline(
+        current_user=document_service.current_user,
+        document_service=document_service,
+        project_service=project_service,
+    ).load_document_text_from_selection(selection)
 
     assert "=== SOURCE DOCUMENT: alpha.txt ===" in combined["combined_text"]
     assert "=== SOURCE DOCUMENT: beta.txt ===" in combined["combined_text"]
@@ -133,6 +139,57 @@ def test_load_document_text_from_selection_combines_all_documents(
     assert combined["loaded"] == ["alpha.txt", "beta.txt"]
     assert combined["skipped"] == []
     assert combined["multi_stage"] is False
+
+
+def test_parallel_document_load_does_not_require_thread_local_auth(
+    isolated_env,
+    project_service: ProjectService,
+    document_service: DocumentService,
+    monkeypatch,
+):
+    """Worker threads must reuse the pipeline user — not require_current_user()."""
+
+    from core.current_user import (
+        AuthenticationRequiredError,
+        clear_current_user_binding,
+        require_current_user,
+    )
+    from tests.conftest import MockUpload, TEST_USER
+
+    project = project_service.create_project("Parallel Auth")
+    document_service.save_document(
+        project["id"],
+        MockUpload("one.txt", b"First document."),
+    )
+    document_service.save_document(
+        project["id"],
+        MockUpload("two.txt", b"Second document."),
+    )
+
+    pipeline = ReportPipeline(
+        current_user=document_service.current_user,
+        document_service=document_service,
+        project_service=project_service,
+    )
+
+    # Simulate production worker threads: no ContextVar override and no
+    # Streamlit session user available via get_current_user().
+    clear_current_user_binding()
+    monkeypatch.setattr("core.auth.get_current_user", lambda: None)
+
+    with pytest.raises(AuthenticationRequiredError):
+        require_current_user()
+
+    selection = [
+        {"project_id": project["id"], "filename": "one.txt"},
+        {"project_id": project["id"], "filename": "two.txt"},
+    ]
+    result = pipeline.load_document_text_from_selection(selection)
+
+    assert result["loaded"] == ["one.txt", "two.txt"]
+    assert "First document." in result["combined_text"]
+    assert "Second document." in result["combined_text"]
+    assert pipeline.current_user.id == TEST_USER.id
 
 
 def test_report_pipeline_generate_without_save(

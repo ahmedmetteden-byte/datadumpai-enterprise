@@ -74,7 +74,7 @@ class DocumentService:
         *,
         overwrite: bool = False,
     ) -> dict[str, Any]:
-        assert_project_access(project_id)
+        assert_project_access(project_id, current_user=self._current_user)
         filename = self._safe_filename(uploaded_file.name)
 
         if not overwrite:
@@ -147,7 +147,7 @@ class DocumentService:
             pass
 
         try:
-            assert_project_access(project_id)
+            assert_project_access(project_id, current_user=self._current_user)
         except PermissionError:
             return []
 
@@ -181,7 +181,7 @@ class DocumentService:
         return documents
 
     def read_document_text(self, project_id: str, filename: str, **kwargs) -> str:
-        assert_project_access(project_id)
+        assert_project_access(project_id, current_user=self._current_user)
         safe_name = self._safe_filename(filename)
         document = next(
             (item for item in self.get_documents(project_id) if item["filename"] == safe_name),
@@ -270,7 +270,7 @@ class DocumentService:
         return text
 
     def delete_document(self, project_id: str, filename: str) -> None:
-        assert_project_access(project_id)
+        assert_project_access(project_id, current_user=self._current_user)
         safe_name = self._safe_filename(filename)
         document = next(
             (item for item in self.get_documents(project_id) if item["filename"] == safe_name),
@@ -283,7 +283,7 @@ class DocumentService:
         self._file_store.delete(document["path"])
 
     def get_document_path(self, project_id: str, filename: str) -> Path:
-        assert_project_access(project_id)
+        assert_project_access(project_id, current_user=self._current_user)
         safe_name = self._safe_filename(filename)
         document = next(
             (item for item in self.get_documents(project_id) if item["filename"] == safe_name),

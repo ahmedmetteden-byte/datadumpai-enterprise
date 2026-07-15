@@ -70,11 +70,11 @@ class WorkspaceContextSummary:
 
 
 def _report_pipeline() -> ReportPipeline:
-    return ReportPipeline()
+    return ReportPipeline(current_user=require_current_user())
 
 
 def _document_service() -> DocumentService:
-    return DocumentService()
+    return DocumentService(current_user=require_current_user())
 
 
 def _plan_service() -> PlanService:
