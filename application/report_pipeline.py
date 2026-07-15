@@ -372,87 +372,76 @@ class ReportPipeline:
     ) -> ReportData:
         """Generate a structured report without persisting it."""
 
-        self._usage_service.check_can_generate_report()
+        try:
+            logger.info("Finished extracting documents")
+            logger.info("Combined text length=%d", len(document_text or ""))
 
-        intelligence_format = self._plan_service.uses_intelligence_format(report_type)
-        charts_enabled = (
-            include_charts and self._plan_service.include_professional_charts()
-        )
+            self._usage_service.check_can_generate_report()
 
-        report_context = report_context or {}
-        report_data, narrative_input = process_source_documents(
-            document_text=document_text,
-            report_type=report_type,
-            processing_mode=processing_mode,
-            ai_service=self._ai_service,
-            source_documents=report_context.get("source_documents"),
-            report_context=report_context,
-            source_document_count=source_document_count,
-        )
+            intelligence_format = self._plan_service.uses_intelligence_format(report_type)
+            charts_enabled = (
+                include_charts and self._plan_service.include_professional_charts()
+            )
 
-        report_format = "full_report" if is_full_report(report_type) else "intelligence"
-        section_plan = build_report_section_plan(
-            report_data,
-            user_report_type=report_type,
-            document_text=document_text,
-            report_context=report_context,
-            include_charts=charts_enabled,
-            source_document_count=source_document_count,
-            report_format=report_format,
-        )
-        report_data.metadata = {
-            **report_data.metadata,
-            "section_plan": section_plan.to_dict(),
-            "report_context": {
-                "has_prior_reports": bool(report_context.get("has_prior_reports")),
-                "reporting_period": report_context.get("reporting_period"),
-                "source_documents": list(report_context.get("source_documents") or []),
-            },
-            "source_document_count": source_document_count,
-        }
+            report_context = report_context or {}
+            report_data, narrative_input = process_source_documents(
+                document_text=document_text,
+                report_type=report_type,
+                processing_mode=processing_mode,
+                ai_service=self._ai_service,
+                source_documents=report_context.get("source_documents"),
+                report_context=report_context,
+                source_document_count=source_document_count,
+            )
 
-        logger.info(
-            "ReportPipeline.generate requesting OpenAI narrative report_type=%s "
-            "narrative_input_chars=%s",
-            report_type,
-            len(narrative_input or ""),
-        )
-        narrative = self._ai_service.generate_report(
-            document_text=narrative_input,
-            report_type=report_type,
-            writing_style=writing_style,
-            audience=audience,
-            include_charts=charts_enabled,
-            include_recommendations=include_recommendations,
-            source_document_count=source_document_count,
-            report_context=report_context,
-            use_intelligence_format=intelligence_format,
-            report_data=report_data,
-        )
-        logger.info(
-            "ReportPipeline.generate OpenAI narrative received report_type=%s "
-            "narrative_chars=%s",
-            report_type,
-            len(narrative or ""),
-        )
+            report_format = "full_report" if is_full_report(report_type) else "intelligence"
+            section_plan = build_report_section_plan(
+                report_data,
+                user_report_type=report_type,
+                document_text=document_text,
+                report_context=report_context,
+                include_charts=charts_enabled,
+                source_document_count=source_document_count,
+                report_format=report_format,
+            )
+            report_data.metadata = {
+                **report_data.metadata,
+                "section_plan": section_plan.to_dict(),
+                "report_context": {
+                    "has_prior_reports": bool(report_context.get("has_prior_reports")),
+                    "reporting_period": report_context.get("reporting_period"),
+                    "source_documents": list(report_context.get("source_documents") or []),
+                },
+                "source_document_count": source_document_count,
+            }
 
-        report = compose_report_data(
-            narrative=narrative,
-            base=report_data,
-            report_type=report_type,
-            title=report_type,
-            include_charts=charts_enabled,
-        )
-        logger.info(
-            "ReportPipeline.generate composed ReportData report_type=%s "
-            "narrative_chars=%s",
-            report.report_type,
-            len(report.narrative or ""),
-        )
+            narrative = self._ai_service.generate_report(
+                document_text=narrative_input,
+                report_type=report_type,
+                writing_style=writing_style,
+                audience=audience,
+                include_charts=charts_enabled,
+                include_recommendations=include_recommendations,
+                source_document_count=source_document_count,
+                report_context=report_context,
+                use_intelligence_format=intelligence_format,
+                report_data=report_data,
+            )
 
-        self._usage_service.record_report_generated()
+            report = compose_report_data(
+                narrative=narrative,
+                base=report_data,
+                report_type=report_type,
+                title=report_type,
+                include_charts=charts_enabled,
+            )
 
-        return report
+            self._usage_service.record_report_generated()
+
+            return report
+        except Exception:
+            logger.exception("Report generation crashed")
+            raise
 
     def save_generated_report(
         self,

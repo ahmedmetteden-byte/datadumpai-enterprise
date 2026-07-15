@@ -406,6 +406,7 @@ def execute_workspace_request(
 
             log_report_session_state("after_ai_workspace_set_draft")
     except Exception as exc:
+        logger.exception("Report generation crashed")
         show_error(exc)
         return WorkspaceRequestResult(
             success=False,

@@ -45,6 +45,7 @@ def set_draft_report(
     document_selection: list[dict[str, str]],
     processing_mode: str | None = None,
 ) -> None:
+    logger.info("Saving draft_report")
     log_report_session_state("before_set_draft_report")
     st.session_state[DRAFT_REPORT_KEY] = {
         "report": report.to_dict(),

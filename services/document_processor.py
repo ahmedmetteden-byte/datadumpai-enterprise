@@ -6,8 +6,10 @@ Document Processing Service
 from __future__ import annotations
 
 import logging
+import time
 from io import BytesIO
 from pathlib import Path
+from typing import Callable
 
 import pandas as pd
 from PyPDF2 import PdfReader
@@ -124,25 +126,52 @@ class DocumentProcessor:
                     max_pdf_pages=max_pdf_pages,
                     max_tabular_rows=max_tabular_rows,
                 )
+
+            logger.info(
+                "extract_text_from_path finished success=True chars=%d",
+                len(text or ""),
+            )
+            return text
         except Exception:
+            logger.exception("Document extraction crashed")
+            raise
+
+    @staticmethod
+    def _call_pdf_extractor(
+        name: str,
+        extractor: Callable[..., str],
+        data: bytes,
+        *,
+        max_pdf_pages: int | None = None,
+    ) -> str:
+        """Run one PDF backend with before/after timing logs."""
+
+        logger.info(
+            "PDF extractor %s starting data_size=%s max_pdf_pages=%s",
+            name,
+            len(data),
+            max_pdf_pages,
+        )
+        started = time.perf_counter()
+        try:
+            text = extractor(data, max_pdf_pages=max_pdf_pages) or ""
+        except Exception:
+            elapsed = time.perf_counter() - started
             logger.exception(
-                "extract_text_from_path failed path=%s suffix=%s file_size=%s",
-                path,
-                suffix,
-                file_size,
+                "PDF extractor %s crashed after %.3fs data_size=%s max_pdf_pages=%s",
+                name,
+                elapsed,
+                len(data),
+                max_pdf_pages,
             )
             raise
 
-        char_count = len(text or "")
-        stripped_count = len((text or "").strip())
+        elapsed = time.perf_counter() - started
         logger.info(
-            "extract_text_from_path finished path=%s suffix=%s success=%s "
-            "char_count=%s stripped_char_count=%s",
-            path,
-            suffix,
-            stripped_count > 0,
-            char_count,
-            stripped_count,
+            "PDF extractor %s returned chars=%d elapsed=%.3fs",
+            name,
+            len(text),
+            elapsed,
         )
         return text
 
@@ -163,25 +192,19 @@ class DocumentProcessor:
         best_text = ""
         for name, extractor in extractors:
             try:
-                text = extractor(data, max_pdf_pages=max_pdf_pages)
-            except Exception:
-                logger.exception(
-                    "PDF extractor %s failed data_size=%s max_pdf_pages=%s; trying next",
+                text = DocumentProcessor._call_pdf_extractor(
                     name,
-                    len(data),
-                    max_pdf_pages,
+                    extractor,
+                    data,
+                    max_pdf_pages=max_pdf_pages,
                 )
+            except Exception:
+                # Already logged with traceback inside _call_pdf_extractor.
+                # Continue to the next backend so one broken engine does not
+                # abort extraction entirely.
                 continue
 
-            stripped = len(text.strip())
-            logger.info(
-                "PDF extractor %s produced stripped_char_count=%s data_size=%s",
-                name,
-                stripped,
-                len(data),
-            )
-
-            if stripped > len(best_text.strip()):
+            if len(text.strip()) > len(best_text.strip()):
                 best_text = text
 
             if len(best_text.strip()) >= 200:
@@ -195,22 +218,11 @@ class DocumentProcessor:
                 len(data),
                 len(best_text.strip()),
             )
-            try:
-                ocr_text = DocumentProcessor._extract_pdf_with_ocr(
-                    data,
-                    max_pdf_pages=max_pdf_pages,
-                )
-            except Exception:
-                logger.exception(
-                    "PDF OCR extraction failed data_size=%s max_pdf_pages=%s",
-                    len(data),
-                    max_pdf_pages,
-                )
-                raise
-
-            logger.info(
-                "PDF OCR produced stripped_char_count=%s",
-                len(ocr_text.strip()),
+            ocr_text = DocumentProcessor._call_pdf_extractor(
+                "ocr",
+                DocumentProcessor._extract_pdf_with_ocr,
+                data,
+                max_pdf_pages=max_pdf_pages,
             )
             if len(ocr_text.strip()) > len(best_text.strip()):
                 best_text = ocr_text
@@ -339,14 +351,18 @@ class DocumentProcessor:
         if not config.PDF_OCR_ENABLED:
             return ""
 
-        text = DocumentProcessor._extract_pdf_with_tesseract_ocr(
+        text = DocumentProcessor._call_pdf_extractor(
+            "tesseract_ocr",
+            DocumentProcessor._extract_pdf_with_tesseract_ocr,
             data,
             max_pdf_pages=max_pdf_pages,
         )
         if text.strip():
             return text
 
-        return DocumentProcessor._extract_pdf_with_rapidocr(
+        return DocumentProcessor._call_pdf_extractor(
+            "rapidocr",
+            DocumentProcessor._extract_pdf_with_rapidocr,
             data,
             max_pdf_pages=max_pdf_pages,
         )

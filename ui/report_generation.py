@@ -780,4 +780,5 @@ def render_documents_page_generation(
             log_report_session_state("before_rerun_after_generate")
             st.rerun()
         except Exception as exc:
+            logger.exception("Report generation crashed")
             show_error(exc)
