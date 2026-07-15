@@ -48,19 +48,6 @@ PASSWORD_RESET_GENERIC_MESSAGE = (
     "We couldn't send the password reset email right now. Please try again later."
 )
 
-SIGN_UP_EMAIL_RATE_LIMIT_TITLE = "Too many verification emails"
-SIGN_UP_EMAIL_RATE_LIMIT_MESSAGE = (
-    "Too many verification emails were sent recently. "
-    "Please wait a few minutes, then try creating your account again. "
-    "If you already signed up, open the verification link in your inbox "
-    "or use Resend on the verification screen."
-)
-SIGN_UP_CREATED_EMAIL_DELAYED_MESSAGE = (
-    "Your account was created, but the verification email is temporarily delayed "
-    "due to email rate limits. Wait a few minutes, then use "
-    "'Resend verification email' on the next screen."
-)
-
 logger = logging.getLogger(__name__)
 
 
@@ -108,13 +95,6 @@ class SignUpDuplicateError(AuthError):
     def __init__(self, message: str, *, verification_status: str) -> None:
         super().__init__(message)
         self.verification_status = verification_status
-
-
-class SignUpEmailDelayedError(AuthError):
-    """Raised when the account was created but verification email is delayed."""
-
-    def __init__(self, message: str = SIGN_UP_CREATED_EMAIL_DELAYED_MESSAGE) -> None:
-        super().__init__(message, title=SIGN_UP_EMAIL_RATE_LIMIT_TITLE)
 
 @dataclass(frozen=True)
 class AuthSession:
@@ -414,62 +394,18 @@ class AuthService:
         if config.auth_dev_bypass_enabled():
             return self.dev_sign_up(normalized_email, full_name=full_name)
 
-        # Prefer service-role signup so we never depend on Supabase's
-        # verification-email rate limit (over_email_send_rate_limit).
-        if self._admin_sign_up_available():
-            return self._sign_up_with_admin(
-                normalized_email,
-                password,
-                full_name=full_name,
+        # Always create accounts via service role with email already confirmed.
+        # This avoids Supabase verification-email rate limits entirely.
+        if not self._admin_sign_up_available():
+            raise AuthError(
+                "Account creation is not configured. "
+                "Set SUPABASE_SERVICE_ROLE_KEY in your environment."
             )
 
-        client = self._require_client()
-        assert client is not None
-
-        existing_auth_user = self._lookup_auth_user_by_email(normalized_email)
-        if existing_auth_user is not None:
-            self._raise_duplicate_sign_up_error(client, normalized_email, password)
-
-        self._delete_orphaned_account_rows(normalized_email)
-
-        try:
-            response = self._create_supabase_user(
-                client,
-                normalized_email,
-                password,
-                full_name=full_name,
-            )
-        except Exception as exc:
-            if _is_email_rate_limit_error(exc) and self._admin_sign_up_available():
-                return self._sign_up_with_admin(
-                    normalized_email,
-                    password,
-                    full_name=full_name,
-                )
-            response = self._recover_sign_up_failure(
-                client,
-                exc,
-                email=normalized_email,
-                password=password,
-                full_name=full_name,
-            )
-
-        if response.user is None:
-            raise AuthError("Sign up failed. Please try again.")
-
-        if self._is_duplicate_sign_up_user(response.user):
-            self._raise_duplicate_sign_up_error(client, normalized_email, password)
-
-        session = response.session
-        user = self._user_from_payload(response.user.model_dump())
-
-        if session is None:
-            return None
-
-        return AuthSession(
-            access_token=session.access_token,
-            refresh_token=session.refresh_token,
-            user=user,
+        return self._sign_up_with_admin(
+            normalized_email,
+            password,
+            full_name=full_name,
         )
 
     @staticmethod
@@ -583,54 +519,6 @@ class AuthService:
             refresh_token=response.session.refresh_token,
             user=user,
         )
-
-    def _recover_sign_up_failure(
-        self,
-        client,
-        exc: Exception,
-        *,
-        email: str,
-        password: str,
-        full_name: str,
-    ):
-        if is_duplicate_email_error(exc):
-            self._raise_duplicate_sign_up_error(client, email, password)
-
-        if _is_email_rate_limit_error(exc):
-            raise AuthError(
-                SIGN_UP_EMAIL_RATE_LIMIT_MESSAGE,
-                title=SIGN_UP_EMAIL_RATE_LIMIT_TITLE,
-            ) from exc
-
-        if self._is_database_save_user_error(exc):
-            if self._delete_orphaned_account_rows(email):
-                try:
-                    return self._create_supabase_user(
-                        client,
-                        email,
-                        password,
-                        full_name=full_name,
-                    )
-                except Exception as retry_exc:
-                    return self._recover_sign_up_failure(
-                        client,
-                        retry_exc,
-                        email=email,
-                        password=password,
-                        full_name=full_name,
-                    )
-            raise AuthError(
-                "Sign up failed because an incomplete account already exists "
-                "for this email. Please contact support or try a different email."
-            ) from exc
-
-        if self._is_connectivity_error(exc):
-            raise AuthError(
-                "Could not reach the authentication service. "
-                "Check your internet connection and try again."
-            ) from exc
-
-        raise AuthError("Sign up failed. Please try again.") from exc
 
     def _create_supabase_user(
         self,
@@ -818,6 +706,31 @@ class AuthService:
             raise AuthError("Could not update your password. Please try again.")
 
     def resend_verification(self, email: str) -> None:
+        normalized = normalize_email(email)
+        if not normalized:
+            raise AuthError("Enter a valid email address.")
+
+        # Prefer confirming the account directly so users are never blocked by
+        # Supabase verification-email rate limits.
+        existing = self._lookup_auth_user_by_email(normalized)
+        if existing is not None and self._admin_sign_up_available():
+            confirmed = bool(
+                getattr(existing, "email_confirmed_at", None)
+                or getattr(existing, "confirmed_at", None)
+            )
+            if not confirmed:
+                from core.database import get_service_role_client
+
+                get_service_role_client().auth.admin.update_user_by_id(
+                    str(existing.id),
+                    {"email_confirm": True},
+                )
+                logger.info(
+                    "Confirmed email without resend for user_id=%s",
+                    existing.id,
+                )
+            return
+
         client = self._require_client()
         assert client is not None
 
@@ -825,16 +738,15 @@ class AuthService:
             client.auth.resend(
                 {
                     "type": "signup",
-                    "email": email.strip(),
+                    "email": normalized,
                     "options": {"email_redirect_to": AUTH_REDIRECT_URL},
                 }
             )
         except Exception as exc:
             if _is_email_rate_limit_error(exc):
-                raise AuthError(
-                    SIGN_UP_EMAIL_RATE_LIMIT_MESSAGE,
-                    title=SIGN_UP_EMAIL_RATE_LIMIT_TITLE,
-                ) from exc
+                # Still don't surface the rate-limit message — account may already exist.
+                logger.warning("Verification resend rate-limited for %s", normalized)
+                return
             raise AuthError(
                 "Could not resend the verification email. Please try again shortly."
             ) from exc

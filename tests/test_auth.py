@@ -179,6 +179,7 @@ def test_sign_in_rejects_unverified_email(monkeypatch):
 def test_supabase_sign_up_returns_distinct_user_ids(monkeypatch):
     monkeypatch.setattr("config.auth_dev_bypass_enabled", lambda: False)
     monkeypatch.setattr("services.auth_service.is_supabase_configured", lambda: False)
+    monkeypatch.setattr(AuthService, "_admin_sign_up_available", staticmethod(lambda: True))
 
     user_ids = {
         "ahmed@example.com": "550e8400-e29b-41d4-a716-446655440001",
@@ -207,18 +208,29 @@ def test_supabase_sign_up_returns_distinct_user_ids(monkeypatch):
             self.session = FakeSession(email)
             self.user = FakeUser(email)
 
-    class FakeAuth:
-        def sign_up(self, payload):
+    class FakeAdmin:
+        def create_user(self, payload):
             return FakeResponse(payload["email"])
 
+    class FakeAuth:
         def sign_in_with_password(self, credentials):
             return FakeResponse(credentials["email"])
+
+        @property
+        def admin(self):
+            return FakeAdmin()
 
     class FakeClient:
         auth = FakeAuth()
 
     service = AuthService()
     service._client = FakeClient()
+    service._lookup_auth_user_by_email = lambda _email: None
+    service._delete_orphaned_account_rows = lambda _email: False
+    monkeypatch.setattr(
+        "core.database.get_service_role_client",
+        lambda: FakeClient(),
+    )
 
     ahmed = service.sign_up("Ahmed@example.com", "password123", full_name="Ahmed")
     john = service.sign_up("John@example.com", "password123", full_name="John")
@@ -238,16 +250,19 @@ def test_supabase_sign_up_returns_distinct_user_ids(monkeypatch):
 def test_supabase_duplicate_sign_up_returns_verified_error(monkeypatch):
     monkeypatch.setattr("config.auth_dev_bypass_enabled", lambda: False)
     monkeypatch.setattr("services.auth_service.is_supabase_configured", lambda: False)
+    monkeypatch.setattr(AuthService, "_admin_sign_up_available", staticmethod(lambda: True))
 
-    class FakeAuth:
-        def sign_up(self, _payload):
-            raise Exception("User already registered")
+    class FakeAdminUser:
+        id = "existing-id"
+        email_confirmed_at = "2026-01-01T00:00:00Z"
+        confirmed_at = None
 
     class FakeClient:
-        auth = FakeAuth()
+        auth = object()
 
     service = AuthService()
     service._client = FakeClient()
+    service._lookup_auth_user_by_email = lambda _email: FakeAdminUser()
     service._existing_account_verification_status = lambda *_args, **_kwargs: "verified"
 
     with pytest.raises(SignUpDuplicateError) as exc_info:
@@ -260,70 +275,33 @@ def test_supabase_duplicate_sign_up_returns_verified_error(monkeypatch):
 def test_supabase_duplicate_sign_up_empty_identities_unverified(monkeypatch):
     monkeypatch.setattr("config.auth_dev_bypass_enabled", lambda: False)
     monkeypatch.setattr("services.auth_service.is_supabase_configured", lambda: False)
-
-    class FakeUser:
-        def model_dump(self):
-            return {
-                "id": "fake-id",
-                "email": "pending@example.com",
-                "email_confirmed_at": None,
-                "user_metadata": {},
-                "identities": [],
-            }
-
-    class FakeResponse:
-        session = None
-        user = FakeUser()
-
-    class FakeAuth:
-        def sign_up(self, _payload):
-            return FakeResponse()
-
-        def sign_in_with_password(self, _credentials):
-            raise Exception("Email not confirmed")
-
-        def sign_out(self, options=None):
-            return None
-
-    class FakeClient:
-        auth = FakeAuth()
-
-    service = AuthService()
-    service._client = FakeClient()
-    service._lookup_auth_user_by_email = lambda _email: None
-
-    with pytest.raises(SignUpDuplicateError) as exc_info:
-        service.sign_up("pending@example.com", "password123")
-
-    assert exc_info.value.verification_status == "unverified"
-    assert str(exc_info.value) == SIGN_UP_UNVERIFIED_DUPLICATE_MESSAGE
-
-
-def test_supabase_duplicate_sign_up_empty_identities_verified(monkeypatch):
-    monkeypatch.setattr("config.auth_dev_bypass_enabled", lambda: False)
-    monkeypatch.setattr("services.auth_service.is_supabase_configured", lambda: False)
-
-    class FakeUser:
-        def model_dump(self):
-            return {
-                "id": "fake-id",
-                "email": "verified@example.com",
-                "email_confirmed_at": "2026-01-01T00:00:00Z",
-                "user_metadata": {},
-                "identities": [],
-            }
-
-    class FakeResponse:
-        session = None
-        user = FakeUser()
-
-    class FakeAuth:
-        def sign_up(self, _payload):
-            return FakeResponse()
+    monkeypatch.setattr(AuthService, "_admin_sign_up_available", staticmethod(lambda: True))
 
     class FakeAdminUser:
-        email_confirmed_at = "2026-01-01T00:00:00Z"
+        id = "pending-id"
+        email_confirmed_at = None
         confirmed_at = None
+
+    class FakeUser:
+        def model_dump(self):
+            return {
+                "id": "pending-id",
+                "email": "pending@example.com",
+                "email_confirmed_at": "2026-01-01T00:00:00Z",
+                "user_metadata": {},
+            }
+
+    class FakeSession:
+        access_token = "access"
+        refresh_token = "refresh"
+
+    class FakeResponse:
+        session = FakeSession()
+        user = FakeUser()
+
+    class FakeAuth:
+        def sign_in_with_password(self, _credentials):
+            return FakeResponse()
 
     class FakeClient:
         auth = FakeAuth()
@@ -331,6 +309,32 @@ def test_supabase_duplicate_sign_up_empty_identities_verified(monkeypatch):
     service = AuthService()
     service._client = FakeClient()
     service._lookup_auth_user_by_email = lambda _email: FakeAdminUser()
+    service._complete_unverified_signup = lambda *_args, **_kwargs: None
+
+    result = service.sign_up("pending@example.com", "password123")
+
+    assert result is not None
+    assert result.user.id == "pending-id"
+    assert result.user.email_verified is True
+
+
+def test_supabase_duplicate_sign_up_empty_identities_verified(monkeypatch):
+    monkeypatch.setattr("config.auth_dev_bypass_enabled", lambda: False)
+    monkeypatch.setattr("services.auth_service.is_supabase_configured", lambda: False)
+    monkeypatch.setattr(AuthService, "_admin_sign_up_available", staticmethod(lambda: True))
+
+    class FakeAdminUser:
+        id = "verified-id"
+        email_confirmed_at = "2026-01-01T00:00:00Z"
+        confirmed_at = None
+
+    class FakeClient:
+        auth = object()
+
+    service = AuthService()
+    service._client = FakeClient()
+    service._lookup_auth_user_by_email = lambda _email: FakeAdminUser()
+    service._existing_account_verification_status = lambda *_args, **_kwargs: "verified"
 
     with pytest.raises(SignUpDuplicateError) as exc_info:
         service.sign_up("verified@example.com", "password123")
@@ -339,37 +343,58 @@ def test_supabase_duplicate_sign_up_empty_identities_verified(monkeypatch):
     assert str(exc_info.value) == SIGN_UP_VERIFIED_DUPLICATE_MESSAGE
 
 
-def test_new_sign_up_with_empty_session_is_not_treated_as_duplicate(monkeypatch):
+def test_new_sign_up_creates_confirmed_session(monkeypatch):
     monkeypatch.setattr("config.auth_dev_bypass_enabled", lambda: False)
     monkeypatch.setattr("services.auth_service.is_supabase_configured", lambda: False)
+    monkeypatch.setattr(AuthService, "_admin_sign_up_available", staticmethod(lambda: True))
 
     class FakeUser:
         def model_dump(self):
             return {
                 "id": "550e8400-e29b-41d4-a716-446655440099",
                 "email": "new@example.com",
-                "email_confirmed_at": None,
+                "email_confirmed_at": "2026-01-01T00:00:00Z",
                 "user_metadata": {},
-                "identities": [{"id": "identity-1"}],
             }
 
+    class FakeSession:
+        access_token = "access"
+        refresh_token = "refresh"
+
     class FakeResponse:
-        session = None
+        session = FakeSession()
         user = FakeUser()
 
-    class FakeAuth:
-        def sign_up(self, _payload):
+    class FakeAdmin:
+        def create_user(self, payload):
+            assert payload["email_confirm"] is True
             return FakeResponse()
+
+    class FakeAuth:
+        def sign_in_with_password(self, _credentials):
+            return FakeResponse()
+
+        @property
+        def admin(self):
+            return FakeAdmin()
 
     class FakeClient:
         auth = FakeAuth()
 
     service = AuthService()
     service._client = FakeClient()
+    service._lookup_auth_user_by_email = lambda _email: None
+    service._delete_orphaned_account_rows = lambda _email: False
+    monkeypatch.setattr(
+        "core.database.get_service_role_client",
+        lambda: FakeClient(),
+    )
 
     result = service.sign_up("new@example.com", "password123")
 
-    assert result is None
+    assert result is not None
+    assert result.user.email == "new@example.com"
+    assert result.user.email_verified is True
 
 
 def test_restore_session_uses_supabase_tokens(monkeypatch):
