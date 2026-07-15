@@ -48,14 +48,28 @@ PASSWORD_RESET_GENERIC_MESSAGE = (
     "We couldn't send the password reset email right now. Please try again later."
 )
 
+SIGN_UP_EMAIL_RATE_LIMIT_TITLE = "Too many verification emails"
+SIGN_UP_EMAIL_RATE_LIMIT_MESSAGE = (
+    "Too many verification emails were sent recently. "
+    "Please wait a few minutes, then try creating your account again. "
+    "If you already signed up, open the verification link in your inbox "
+    "or use Resend on the verification screen."
+)
+SIGN_UP_CREATED_EMAIL_DELAYED_MESSAGE = (
+    "Your account was created, but the verification email is temporarily delayed "
+    "due to email rate limits. Wait a few minutes, then use "
+    "'Resend verification email' on the next screen."
+)
+
 logger = logging.getLogger(__name__)
 
 
-def _is_password_reset_rate_limit_error(exc: Exception) -> bool:
+def _is_email_rate_limit_error(exc: Exception) -> bool:
     from supabase_auth.errors import AuthApiError
 
     if not isinstance(exc, AuthApiError):
-        return False
+        message = str(exc).lower()
+        return "rate limit" in message or "too many" in message
 
     code = getattr(exc, "code", None)
     if code in {"over_email_send_rate_limit", "over_request_rate_limit"}:
@@ -67,6 +81,9 @@ def _is_password_reset_rate_limit_error(exc: Exception) -> bool:
     message = str(exc).lower()
     return "rate limit" in message or "too many" in message
 
+
+def _is_password_reset_rate_limit_error(exc: Exception) -> bool:
+    return _is_email_rate_limit_error(exc)
 
 def _is_password_reset_network_error(exc: Exception) -> bool:
     try:
@@ -92,6 +109,12 @@ class SignUpDuplicateError(AuthError):
         super().__init__(message)
         self.verification_status = verification_status
 
+
+class SignUpEmailDelayedError(AuthError):
+    """Raised when the account was created but verification email is delayed."""
+
+    def __init__(self, message: str = SIGN_UP_CREATED_EMAIL_DELAYED_MESSAGE) -> None:
+        super().__init__(message, title=SIGN_UP_EMAIL_RATE_LIMIT_TITLE)
 
 @dataclass(frozen=True)
 class AuthSession:
@@ -408,35 +431,13 @@ class AuthService:
                 full_name=full_name,
             )
         except Exception as exc:
-            if is_duplicate_email_error(exc):
-                self._raise_duplicate_sign_up_error(client, normalized_email, password)
-            if self._is_database_save_user_error(exc):
-                if self._delete_orphaned_account_rows(normalized_email):
-                    try:
-                        response = self._create_supabase_user(
-                            client,
-                            normalized_email,
-                            password,
-                            full_name=full_name,
-                        )
-                    except Exception as retry_exc:
-                        if is_duplicate_email_error(retry_exc):
-                            self._raise_duplicate_sign_up_error(
-                                client, normalized_email, password
-                            )
-                        raise AuthError("Sign up failed. Please try again.") from retry_exc
-                else:
-                    raise AuthError(
-                        "Sign up failed because an incomplete account already exists "
-                        "for this email. Please contact support or try a different email."
-                    ) from exc
-            elif self._is_connectivity_error(exc):
-                raise AuthError(
-                    "Could not reach the authentication service. "
-                    "Check your internet connection and try again."
-                ) from exc
-            else:
-                raise AuthError("Sign up failed. Please try again.") from exc
+            response = self._recover_sign_up_failure(
+                client,
+                exc,
+                email=normalized_email,
+                password=password,
+                full_name=full_name,
+            )
 
         if response.user is None:
             raise AuthError("Sign up failed. Please try again.")
@@ -455,6 +456,110 @@ class AuthService:
             refresh_token=session.refresh_token,
             user=user,
         )
+
+    def _recover_sign_up_failure(
+        self,
+        client,
+        exc: Exception,
+        *,
+        email: str,
+        password: str,
+        full_name: str,
+    ):
+        if is_duplicate_email_error(exc):
+            self._raise_duplicate_sign_up_error(client, email, password)
+
+        if _is_email_rate_limit_error(exc):
+            created = self._create_user_without_email(
+                email,
+                password,
+                full_name=full_name,
+            )
+            if created:
+                raise SignUpEmailDelayedError() from exc
+            raise AuthError(
+                SIGN_UP_EMAIL_RATE_LIMIT_MESSAGE,
+                title=SIGN_UP_EMAIL_RATE_LIMIT_TITLE,
+            ) from exc
+
+        if self._is_database_save_user_error(exc):
+            if self._delete_orphaned_account_rows(email):
+                try:
+                    return self._create_supabase_user(
+                        client,
+                        email,
+                        password,
+                        full_name=full_name,
+                    )
+                except Exception as retry_exc:
+                    return self._recover_sign_up_failure(
+                        client,
+                        retry_exc,
+                        email=email,
+                        password=password,
+                        full_name=full_name,
+                    )
+            raise AuthError(
+                "Sign up failed because an incomplete account already exists "
+                "for this email. Please contact support or try a different email."
+            ) from exc
+
+        if self._is_connectivity_error(exc):
+            raise AuthError(
+                "Could not reach the authentication service. "
+                "Check your internet connection and try again."
+            ) from exc
+
+        raise AuthError("Sign up failed. Please try again.") from exc
+
+    def _create_user_without_email(
+        self,
+        email: str,
+        password: str,
+        *,
+        full_name: str,
+    ) -> bool:
+        """Create an auth user via service role when signup email sending is rate-limited."""
+
+        if not config.use_database() or not config.is_supabase_configured():
+            return False
+        if not config.SUPABASE_SERVICE_ROLE_KEY:
+            return False
+
+        try:
+            from core.database import get_service_role_client
+
+            admin_client = get_service_role_client()
+            response = admin_client.auth.admin.create_user(
+                {
+                    "email": email,
+                    "password": password,
+                    "email_confirm": False,
+                    "user_metadata": {"full_name": full_name.strip()},
+                }
+            )
+            if response.user is None:
+                return False
+            logger.warning(
+                "Created auth user without verification email due to rate limit email=%s user_id=%s",
+                email,
+                response.user.id,
+            )
+            return True
+        except Exception as exc:
+            if self._lookup_auth_user_by_email(email) is not None:
+                logger.info(
+                    "Rate-limited signup fallback found existing user for email=%s",
+                    email,
+                )
+                return True
+            if is_duplicate_email_error(exc):
+                return self._lookup_auth_user_by_email(email) is not None
+            logger.exception(
+                "Failed to create auth user without email for %s",
+                email,
+            )
+            return False
 
     def _create_supabase_user(
         self,
@@ -645,13 +750,23 @@ class AuthService:
         client = self._require_client()
         assert client is not None
 
-        client.auth.resend(
-            {
-                "type": "signup",
-                "email": email.strip(),
-                "options": {"email_redirect_to": AUTH_REDIRECT_URL},
-            }
-        )
+        try:
+            client.auth.resend(
+                {
+                    "type": "signup",
+                    "email": email.strip(),
+                    "options": {"email_redirect_to": AUTH_REDIRECT_URL},
+                }
+            )
+        except Exception as exc:
+            if _is_email_rate_limit_error(exc):
+                raise AuthError(
+                    SIGN_UP_EMAIL_RATE_LIMIT_MESSAGE,
+                    title=SIGN_UP_EMAIL_RATE_LIMIT_TITLE,
+                ) from exc
+            raise AuthError(
+                "Could not resend the verification email. Please try again shortly."
+            ) from exc
 
     def exchange_auth_code(self, code: str) -> AuthSession:
         """Exchange a Supabase email link code for a session."""

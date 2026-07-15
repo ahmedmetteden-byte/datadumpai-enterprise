@@ -16,7 +16,7 @@ from core.auth import (
     sign_out,
     sign_up,
 )
-from services.auth_service import AuthError, AuthService, SignUpDuplicateError
+from services.auth_service import AuthError, AuthService, SignUpDuplicateError, SignUpEmailDelayedError
 from services.email_uniqueness import SIGN_UP_VERIFIED_DUPLICATE_MESSAGE
 from ui.feedback import show_error, show_success
 
@@ -93,6 +93,11 @@ def render_sign_up_form() -> None:
                     st.rerun()
                 else:
                     st.rerun()
+            except SignUpEmailDelayedError as exc:
+                st.session_state[AUTH_PENDING_EMAIL_KEY] = email.strip()
+                st.session_state[AUTH_VIEW_KEY] = "verify_email"
+                st.session_state.auth_error = str(exc)
+                st.rerun()
             except SignUpDuplicateError as exc:
                 if exc.verification_status == "unverified":
                     st.session_state[AUTH_PENDING_EMAIL_KEY] = email.strip()

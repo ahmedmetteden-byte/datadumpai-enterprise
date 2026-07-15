@@ -159,3 +159,47 @@ def test_sign_up_maps_ssl_failures(monkeypatch):
 
     with pytest.raises(AuthError, match="authentication service"):
         service.sign_up("new@example.com", "password123")
+
+
+def test_sign_up_rate_limit_creates_user_without_email(monkeypatch):
+    from supabase_auth.errors import AuthApiError
+
+    service = AuthService()
+    rate_limit = AuthApiError("email rate limit exceeded", 429, "over_email_send_rate_limit")
+
+    monkeypatch.setattr(service, "_require_client", lambda: object())
+    monkeypatch.setattr(service, "_lookup_auth_user_by_email", lambda email: None)
+    monkeypatch.setattr(service, "_delete_orphaned_account_rows", lambda email: False)
+    monkeypatch.setattr(
+        service,
+        "_create_supabase_user",
+        lambda *args, **kwargs: (_ for _ in ()).throw(rate_limit),
+    )
+    monkeypatch.setattr(service, "_create_user_without_email", lambda *a, **k: True)
+    monkeypatch.setattr("config.auth_dev_bypass_enabled", lambda: False)
+
+    from services.auth_service import SignUpEmailDelayedError
+
+    with pytest.raises(SignUpEmailDelayedError, match="temporarily delayed"):
+        service.sign_up("new@example.com", "password123", full_name="Ada")
+
+
+def test_sign_up_rate_limit_without_fallback_shows_wait_message(monkeypatch):
+    from supabase_auth.errors import AuthApiError
+
+    service = AuthService()
+    rate_limit = AuthApiError("email rate limit exceeded", 429, "over_email_send_rate_limit")
+
+    monkeypatch.setattr(service, "_require_client", lambda: object())
+    monkeypatch.setattr(service, "_lookup_auth_user_by_email", lambda email: None)
+    monkeypatch.setattr(service, "_delete_orphaned_account_rows", lambda email: False)
+    monkeypatch.setattr(
+        service,
+        "_create_supabase_user",
+        lambda *args, **kwargs: (_ for _ in ()).throw(rate_limit),
+    )
+    monkeypatch.setattr(service, "_create_user_without_email", lambda *a, **k: False)
+    monkeypatch.setattr("config.auth_dev_bypass_enabled", lambda: False)
+
+    with pytest.raises(AuthError, match="Too many verification emails"):
+        service.sign_up("new@example.com", "password123")
