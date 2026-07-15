@@ -14,6 +14,7 @@ from ui.hero import render_hero
 from ui.onboarding import render_onboarding_wizard
 from ui.project_summary import render_project_summary
 from ui.report_preview import render_report_preview_if_open
+from ui.report_session_trace import log_report_session_state
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,7 @@ def render_workspace_shell() -> None:
 
     active_section = get_workspace_section()
     is_ai_workspace = active_section == "documents"
+    log_report_session_state(f"workspace_shell_enter section={active_section}")
 
     if not is_ai_workspace:
         render_hero()

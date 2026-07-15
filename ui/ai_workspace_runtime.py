@@ -386,6 +386,12 @@ def execute_workspace_request(
                 processing_mode=processing_mode,
             )
 
+            logger.info(
+                "AI Workspace generate complete report_type=%s narrative_chars=%s "
+                "(preview draft only — not saved until user clicks Save)",
+                report.report_type,
+                len(report.narrative or ""),
+            )
             advance_generation_status(status, "✓ Creating recommendations")
             advance_generation_status(status, "✓ Preparing downloads", state="complete")
 
@@ -396,6 +402,9 @@ def execute_workspace_request(
                 document_selection=document_selection,
                 processing_mode=processing_mode.value,
             )
+            from ui.report_session_trace import log_report_session_state
+
+            log_report_session_state("after_ai_workspace_set_draft")
     except Exception as exc:
         show_error(exc)
         return WorkspaceRequestResult(

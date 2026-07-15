@@ -4,6 +4,7 @@ Floating preview for a generated report before it is saved.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import streamlit as st
@@ -17,6 +18,9 @@ from services.executive_report_context import ExecutiveReportContextBuilder
 from ui.feedback import loading, show_error, show_success
 from ui.report_downloads import render_premium_downloads
 from ui.report_renderer import render_report_content
+from ui.report_session_trace import log_report_session_state
+
+logger = logging.getLogger(__name__)
 
 
 def _report_pipeline() -> ReportPipeline:
@@ -41,6 +45,7 @@ def set_draft_report(
     document_selection: list[dict[str, str]],
     processing_mode: str | None = None,
 ) -> None:
+    log_report_session_state("before_set_draft_report")
     st.session_state[DRAFT_REPORT_KEY] = {
         "report": report.to_dict(),
         "source_documents": source_documents,
@@ -48,18 +53,38 @@ def set_draft_report(
         "document_selection": document_selection,
         "processing_mode": processing_mode,
     }
+    logger.info(
+        "Report stored in session_state key=%s report_type=%s narrative_chars=%s "
+        "source_documents=%s workspace_id=%s",
+        DRAFT_REPORT_KEY,
+        report.report_type,
+        len(report.narrative or ""),
+        source_documents,
+        workspace.get("id"),
+    )
+    log_report_session_state("after_set_draft_report")
 
 
 def clear_draft_report() -> None:
+    logger.info("Clearing draft_report from session_state")
+    log_report_session_state("before_clear_draft_report")
     st.session_state.pop(DRAFT_REPORT_KEY, None)
+    log_report_session_state("after_clear_draft_report")
 
 
 def render_report_preview_if_open() -> None:
     """Open the floating preview dialog when a draft report exists."""
 
+    logger.info("Entering render_report_preview_if_open")
+    logger.info(
+        "draft_report=%s",
+        bool(st.session_state.get("draft_report")),
+    )
+
     if DRAFT_REPORT_KEY not in st.session_state:
         return
 
+    logger.info("Opening preview dialog")
     _report_preview_dialog()
 
 
@@ -68,6 +93,7 @@ def _report_preview_dialog() -> None:
     draft = st.session_state.get(DRAFT_REPORT_KEY)
 
     if not draft:
+        logger.warning("Report preview dialog opened but draft_report is empty")
         return
 
     report = ReportData.from_dict(draft.get("report"))
@@ -116,6 +142,10 @@ def _report_preview_dialog() -> None:
     st.markdown("---")
 
     st.markdown('<div class="dde-report-preview-body">', unsafe_allow_html=True)
+    logger.info(
+        "Rendering markdown length=%d",
+        len(report.narrative or ""),
+    )
     render_report_content(report, include_charts=False)
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -134,8 +164,14 @@ def _report_preview_dialog() -> None:
                         source_documents=draft["source_documents"],
                     )
 
+                logger.info(
+                    "Save complete — clearing draft and setting selected_report "
+                    "filename=%s",
+                    metadata.get("filename"),
+                )
                 clear_draft_report()
                 st.session_state.selected_report = metadata
+                log_report_session_state("after_save_selected_report")
                 show_success(f"{report_type} saved to **My Reports**.")
                 set_workspace_section("reports")
                 st.rerun()

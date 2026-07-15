@@ -5,6 +5,7 @@ Report generation UI — used in AI Workspace.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import streamlit as st
@@ -26,6 +27,9 @@ from ui.feedback import loading, show_error
 from ui.plan_upgrade import render_upgrade_prompt
 from ui.projects import get_active_workspace, get_user_projects
 from ui.report_preview import set_draft_report
+from ui.report_session_trace import log_report_session_state
+
+logger = logging.getLogger(__name__)
 
 
 def _report_pipeline() -> ReportPipeline:
@@ -760,6 +764,12 @@ def render_documents_page_generation(
                     processing_mode=processing_mode,
                 )
 
+            logger.info(
+                "UI generate complete report_type=%s narrative_chars=%s "
+                "(preview draft only — not saved until user clicks Save)",
+                report.report_type,
+                len(report.narrative or ""),
+            )
             set_draft_report(
                 report=report,
                 source_documents=source_labels,
@@ -767,6 +777,7 @@ def render_documents_page_generation(
                 document_selection=document_selection,
                 processing_mode=processing_mode.value,
             )
+            log_report_session_state("before_rerun_after_generate")
             st.rerun()
         except Exception as exc:
             show_error(exc)

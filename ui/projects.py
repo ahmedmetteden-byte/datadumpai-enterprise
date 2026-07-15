@@ -46,8 +46,12 @@ WORKSPACE_CONTENT_KEYS = (
 
 
 def _clear_workspace_content_state() -> None:
+    from ui.report_session_trace import log_report_session_state
+
+    log_report_session_state("before_clear_workspace_content_state")
     for key in WORKSPACE_CONTENT_KEYS:
         st.session_state.pop(key, None)
+    log_report_session_state("after_clear_workspace_content_state")
 
     for key in list(st.session_state.keys()):
         if key.startswith("project_report_documents_"):

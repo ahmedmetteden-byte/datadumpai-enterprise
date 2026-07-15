@@ -411,6 +411,12 @@ class ReportPipeline:
             "source_document_count": source_document_count,
         }
 
+        logger.info(
+            "ReportPipeline.generate requesting OpenAI narrative report_type=%s "
+            "narrative_input_chars=%s",
+            report_type,
+            len(narrative_input or ""),
+        )
         narrative = self._ai_service.generate_report(
             document_text=narrative_input,
             report_type=report_type,
@@ -423,6 +429,12 @@ class ReportPipeline:
             use_intelligence_format=intelligence_format,
             report_data=report_data,
         )
+        logger.info(
+            "ReportPipeline.generate OpenAI narrative received report_type=%s "
+            "narrative_chars=%s",
+            report_type,
+            len(narrative or ""),
+        )
 
         report = compose_report_data(
             narrative=narrative,
@@ -430,6 +442,12 @@ class ReportPipeline:
             report_type=report_type,
             title=report_type,
             include_charts=charts_enabled,
+        )
+        logger.info(
+            "ReportPipeline.generate composed ReportData report_type=%s "
+            "narrative_chars=%s",
+            report.report_type,
+            len(report.narrative or ""),
         )
 
         self._usage_service.record_report_generated()
@@ -446,11 +464,26 @@ class ReportPipeline:
     ) -> dict[str, Any]:
         """Persist a generated report draft to the active workspace."""
 
+        logger.info(
+            "Saving report project_id=%s report_type=%s narrative_chars=%s "
+            "source_documents=%s",
+            project.get("id"),
+            report_type,
+            len(report.narrative or ""),
+            source_documents,
+        )
         metadata = self._report_service.save_report(
             project_id=project["id"],
             report_name=report_type,
             report=report,
             source_documents=source_documents,
+        )
+        logger.info(
+            "Saved report id/filename=%s path=%s size=%s project_id=%s",
+            metadata.get("filename"),
+            metadata.get("path"),
+            metadata.get("size"),
+            project.get("id"),
         )
 
         project.setdefault("reports", [])

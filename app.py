@@ -14,9 +14,15 @@ import logging
 for _logger_name in (
     "services.document_service",
     "services.document_processor",
+    "services.ai_service",
     "storage.file_store",
     "application.report_pipeline",
     "ui.ai_workspace_runtime",
+    "ui.report_generation",
+    "ui.report_preview",
+    "ui.report_session_trace",
+    "ui.projects",
+    "ui.workspace.shell",
 ):
     _pipeline_logger = logging.getLogger(_logger_name)
     _pipeline_logger.setLevel(logging.INFO)

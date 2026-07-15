@@ -5,9 +5,12 @@ AI Service
 
 from __future__ import annotations
 
+import logging
 import os
 
 from openai import OpenAI
+
+logger = logging.getLogger(__name__)
 
 from config import (
     AI_MODEL,
@@ -174,6 +177,15 @@ Source Material
 """
             max_output_tokens = AI_REPORT_MAX_OUTPUT_TOKENS
 
+        logger.info(
+            "Calling OpenAI for report generation model=%s report_type=%s "
+            "max_output_tokens=%s prompt_chars=%s",
+            AI_REPORT_MODEL,
+            report_type,
+            max_output_tokens,
+            len(user_prompt),
+        )
+
         response = self.client.responses.create(
             model=AI_REPORT_MODEL,
             instructions=AI_SYSTEM_PROMPT,
@@ -181,7 +193,13 @@ Source Material
             max_output_tokens=max_output_tokens,
         )
 
-        return response.output_text.strip()
+        report_text = response.output_text.strip()
+        logger.info(
+            "OpenAI returned %d characters for report_type=%s",
+            len(report_text),
+            report_type,
+        )
+        return report_text
 
     def summarize_source_chunk(
         self,
