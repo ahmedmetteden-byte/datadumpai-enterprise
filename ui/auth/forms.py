@@ -217,7 +217,7 @@ def render_verify_email_notice() -> None:
 
     pending_email = st.session_state.get(AUTH_PENDING_EMAIL_KEY, "your inbox")
     auth_error = st.session_state.pop("auth_error", None)
-    if auth_error:
+    if auth_error and "too many verification emails" not in str(auth_error).lower():
         st.warning(auth_error)
     else:
         st.info(

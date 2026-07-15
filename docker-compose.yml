@@ -9,7 +9,15 @@ services:
       - app_data:/app/data
       - ./assets:/app/assets:ro
       - ./static:/app/static
+      - ./app.py:/app/app.py:ro
+      - ./config.py:/app/config.py:ro
+      - ./core:/app/core:ro
+      - ./services:/app/services:ro
       - ./ui:/app/ui:ro
+      - ./application:/app/application:ro
+      - ./models:/app/models:ro
+      - ./repositories:/app/repositories:ro
+      - ./storage:/app/storage:ro
       - ./.streamlit:/app/.streamlit:ro
     restart: unless-stopped
     healthcheck:

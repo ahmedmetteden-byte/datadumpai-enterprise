@@ -68,7 +68,7 @@ def render_auth_page() -> None:
             st.success(auth_success)
 
         auth_error = st.session_state.pop("auth_error", None)
-        if auth_error:
+        if auth_error and "too many verification emails" not in str(auth_error).lower():
             st.error(auth_error)
 
         if recovery_failed():
