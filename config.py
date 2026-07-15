@@ -146,16 +146,17 @@ def is_running_locally() -> bool:
 
 
 def print_startup_configuration_diagnostics() -> None:
-    """Print configuration diagnostics once in development or debug mode."""
+    """Print configuration diagnostics once (always, temporary for production debugging)."""
 
     global _STARTUP_DIAGNOSTICS_PRINTED
 
     if _STARTUP_DIAGNOSTICS_PRINTED:
         return
 
-    debug_mode = os.getenv("DEBUG", "false").lower() in {"1", "true", "yes"}
-    if ENVIRONMENT != "development" and not debug_mode:
-        return
+    # TEMPORARY FOR PRODUCTION DEBUGGING — always print diagnostics.
+    # debug_mode = os.getenv("DEBUG", "false").lower() in {"1", "true", "yes"}
+    # if ENVIRONMENT != "development" and not debug_mode:
+    #     return
 
     _STARTUP_DIAGNOSTICS_PRINTED = True
 
