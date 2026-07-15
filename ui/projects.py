@@ -160,13 +160,23 @@ def set_active_workspace(workspace_id: str) -> None:
 
 
 def set_quick_report_mode() -> None:
-    _clear_workspace_content_state()
+    # Sidebar re-affirms the selection every rerun; only clear when mode changes.
+    already_active = (
+        st.session_state.get(WORKSPACE_MODE_KEY) == WORKSPACE_MODE_QUICK
+        and st.session_state.get(WORKSPACE_ID_KEY) == QUICK_REPORT_PROJECT_ID
+    )
+    if not already_active:
+        _clear_workspace_content_state()
+
     st.session_state[WORKSPACE_MODE_KEY] = WORKSPACE_MODE_QUICK
     st.session_state[WORKSPACE_ID_KEY] = QUICK_REPORT_PROJECT_ID
 
 
 def set_project_mode() -> None:
-    _clear_workspace_content_state()
+    already_active = st.session_state.get(WORKSPACE_MODE_KEY) == WORKSPACE_MODE_PROJECT
+    if not already_active:
+        _clear_workspace_content_state()
+
     st.session_state[WORKSPACE_MODE_KEY] = WORKSPACE_MODE_PROJECT
 
     if _has_active_user_project():
