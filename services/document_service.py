@@ -5,6 +5,7 @@ Document Service
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,8 @@ from core.current_user import CurrentUser, require_current_user
 from core.project_access import assert_project_access
 from services.timeline_service import TimelineService
 from storage.file_store import FileStore
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentService:
@@ -186,12 +189,85 @@ class DocumentService:
         )
 
         if document is None:
+            logger.error(
+                "Document metadata not found project_id=%s filename=%s",
+                project_id,
+                safe_name,
+            )
             raise FileNotFoundError(f"Document not found: {safe_name!r}")
 
         from services.document_processor import DocumentProcessor
 
-        with self._file_store.readable_path(document["path"]) as path:
-            return DocumentProcessor.extract_text_from_path(str(path), **kwargs)
+        storage_path = document["path"]
+        backend = getattr(self._file_store, "backend", None) or getattr(
+            self._file_store, "_backend", "unknown"
+        )
+        metadata_size = document.get("size")
+
+        logger.info(
+            "Reading document text project_id=%s filename=%s backend=%s "
+            "storage_path=%s metadata_size=%s",
+            project_id,
+            safe_name,
+            backend,
+            storage_path,
+            metadata_size,
+        )
+
+        try:
+            with self._file_store.readable_path(storage_path) as path:
+                resolved_path = str(path)
+                try:
+                    file_size = path.stat().st_size
+                except OSError:
+                    file_size = None
+
+                logger.info(
+                    "Opened readable path for %s resolved_path=%s file_size=%s backend=%s",
+                    safe_name,
+                    resolved_path,
+                    file_size,
+                    backend,
+                )
+
+                text = DocumentProcessor.extract_text_from_path(str(path), **kwargs)
+        except Exception:
+            logger.exception(
+                "Failed reading/extracting document project_id=%s filename=%s "
+                "backend=%s storage_path=%s",
+                project_id,
+                safe_name,
+                backend,
+                storage_path,
+            )
+            raise
+
+        char_count = len(text or "")
+        stripped_count = len((text or "").strip())
+        logger.info(
+            "Document extraction finished project_id=%s filename=%s backend=%s "
+            "storage_path=%s success=%s char_count=%s stripped_char_count=%s",
+            project_id,
+            safe_name,
+            backend,
+            storage_path,
+            stripped_count > 0,
+            char_count,
+            stripped_count,
+        )
+
+        if stripped_count == 0:
+            logger.warning(
+                "Document extraction returned empty text project_id=%s filename=%s "
+                "backend=%s storage_path=%s file_size=%s",
+                project_id,
+                safe_name,
+                backend,
+                storage_path,
+                metadata_size,
+            )
+
+        return text
 
     def delete_document(self, project_id: str, filename: str) -> None:
         assert_project_access(project_id)

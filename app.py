@@ -7,6 +7,27 @@ from core.ssl_bootstrap import bootstrap_system_ssl
 
 bootstrap_system_ssl()
 
+import logging
+
+# TEMPORARY — surface document-load / extraction diagnostics while debugging
+# "Could not read text from the selected documents."
+for _logger_name in (
+    "services.document_service",
+    "services.document_processor",
+    "storage.file_store",
+    "application.report_pipeline",
+    "ui.ai_workspace_runtime",
+):
+    _pipeline_logger = logging.getLogger(_logger_name)
+    _pipeline_logger.setLevel(logging.INFO)
+    if not _pipeline_logger.handlers:
+        _handler = logging.StreamHandler()
+        _handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
+        )
+        _pipeline_logger.addHandler(_handler)
+        _pipeline_logger.propagate = False
+
 import streamlit as st
 
 from config import (

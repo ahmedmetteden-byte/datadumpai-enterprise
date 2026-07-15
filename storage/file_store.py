@@ -4,6 +4,7 @@ Blob storage — local filesystem or Supabase Storage.
 
 from __future__ import annotations
 
+import logging
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -15,6 +16,8 @@ from core.project_access import validate_project_id
 from core.user_paths import get_user_projects_root
 from core.workspace_context import resolve_storage_scope
 
+logger = logging.getLogger(__name__)
+
 
 class FileStore:
     """Read and write project files across storage backends."""
@@ -25,6 +28,12 @@ class FileStore:
         self._current_user = current_user
         self._user_id = current_user.id
         self._backend = self._resolve_backend()
+
+    @property
+    def backend(self) -> str:
+        """Return the active storage backend: 'supabase' or 'local'."""
+
+        return self._backend
 
     @classmethod
     def for_current_user(cls) -> FileStore:
@@ -120,14 +129,47 @@ class FileStore:
 
         path = Path(storage_key)
         if path.is_file():
-            return path.read_bytes()
+            data = path.read_bytes()
+            logger.info(
+                "FileStore.read_bytes local_file path=%s size=%s backend=%s",
+                storage_key,
+                len(data),
+                self._backend,
+            )
+            return data
 
         if self._backend == "supabase" or self._looks_like_storage_key(storage_key):
             key = self._normalize_key(storage_key)
-            client = self._supabase_client()
-            return client.storage.from_(config.SUPABASE_STORAGE_BUCKET).download(key)
+            logger.info(
+                "FileStore.read_bytes supabase_download key=%s backend=%s",
+                key,
+                self._backend,
+            )
+            try:
+                client = self._supabase_client()
+                data = client.storage.from_(config.SUPABASE_STORAGE_BUCKET).download(key)
+            except Exception:
+                logger.exception(
+                    "FileStore.read_bytes supabase download failed key=%s bucket=%s",
+                    key,
+                    config.SUPABASE_STORAGE_BUCKET,
+                )
+                raise
+            logger.info(
+                "FileStore.read_bytes supabase_download ok key=%s size=%s",
+                key,
+                len(data) if data is not None else None,
+            )
+            return data
 
-        return Path(storage_key).read_bytes()
+        data = Path(storage_key).read_bytes()
+        logger.info(
+            "FileStore.read_bytes fallback_local path=%s size=%s backend=%s",
+            storage_key,
+            len(data),
+            self._backend,
+        )
+        return data
 
     def read_text(self, storage_key: str, *, encoding: str = "utf-8") -> str:
         return self.read_bytes(storage_key).decode(encoding)
@@ -192,14 +234,48 @@ class FileStore:
         if self._backend == "local" and not self._looks_like_storage_key(storage_key):
             path = Path(storage_key)
             if not path.is_file():
+                logger.error(
+                    "FileStore.readable_path local file missing storage_key=%s backend=%s",
+                    storage_key,
+                    self._backend,
+                )
                 raise FileNotFoundError(storage_key)
+            logger.info(
+                "FileStore.readable_path using local file storage_key=%s size=%s",
+                storage_key,
+                path.stat().st_size,
+            )
             yield path
             return
 
         suffix = Path(self._normalize_key(storage_key)).suffix or ".bin"
+        logger.info(
+            "FileStore.readable_path materializing temp file storage_key=%s "
+            "backend=%s suffix=%s",
+            storage_key,
+            self._backend,
+            suffix,
+        )
+        try:
+            payload = self.read_bytes(storage_key)
+        except Exception:
+            logger.exception(
+                "FileStore.readable_path failed to fetch bytes storage_key=%s backend=%s",
+                storage_key,
+                self._backend,
+            )
+            raise
+
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
-            handle.write(self.read_bytes(storage_key))
+            handle.write(payload)
             temp_path = Path(handle.name)
+
+        logger.info(
+            "FileStore.readable_path temp ready storage_key=%s temp_path=%s size=%s",
+            storage_key,
+            temp_path,
+            len(payload),
+        )
 
         try:
             yield temp_path

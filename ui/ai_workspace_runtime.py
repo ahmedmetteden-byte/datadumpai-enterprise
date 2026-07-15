@@ -4,6 +4,7 @@ AI Workspace runtime — resolve document context and run report workflows.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,6 +20,8 @@ from ui.feedback import advance_generation_status, progressive_generation, show_
 from ui.projects import get_user_projects
 from ui.report_generation import REPORT_TYPE_META, _selection_source_labels
 from ui.report_preview import set_draft_report
+
+logger = logging.getLogger(__name__)
 
 AUTO_REPORT_TYPE = "Auto (from prompt)"
 OUTPUT_LENGTHS = ("Brief", "Standard", "Detailed")
@@ -321,6 +324,14 @@ def execute_workspace_request(
             source_labels = _selection_source_labels(document_selection, get_user_projects())
 
             if not document_text:
+                logger.error(
+                    "AI Workspace empty document text loaded=%s skipped=%s "
+                    "selection=%s processing_mode=%s",
+                    load_result.get("loaded"),
+                    load_result.get("skipped"),
+                    document_selection,
+                    processing_mode,
+                )
                 advance_generation_status(
                     status,
                     "Could not read selected documents",

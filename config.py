@@ -286,10 +286,14 @@ def validate_production_auth_configuration() -> list[str]:
     warnings: list[str] = []
 
     if _AUTH_DEV_BYPASS_REQUESTED and ENVIRONMENT != "development":
+        # TEMPORARY FOR PRODUCTION DEBUGGING — include config sources on the error page.
         warnings.append(
             "Configuration Error\n\n"
-            f"ENVIRONMENT:\n{ENVIRONMENT}\n\n"
-            f"AUTH_DEV_BYPASS:\n{str(_AUTH_DEV_BYPASS_REQUESTED).lower()}\n\n"
+            f"ENVIRONMENT: {ENVIRONMENT}\n"
+            f"ENVIRONMENT source: {config_source('ENVIRONMENT')}\n\n"
+            f"AUTH_DEV_BYPASS: {str(_AUTH_DEV_BYPASS_REQUESTED).lower()}\n"
+            f"AUTH_DEV_BYPASS source: {config_source('AUTH_DEV_BYPASS')}\n\n"
+            f"Loaded .env:\n{_ENV_FILE_PATH}\n\n"
             "Reason\n\n"
             "Development authentication cannot be enabled in production."
         )

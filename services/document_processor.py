@@ -5,6 +5,7 @@ Document Processing Service
 
 from __future__ import annotations
 
+import logging
 from io import BytesIO
 from pathlib import Path
 
@@ -13,6 +14,8 @@ from PyPDF2 import PdfReader
 from docx import Document
 
 import config
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentProcessor:
@@ -92,20 +95,56 @@ class DocumentProcessor:
 
         path = Path(file_path)
         suffix = path.suffix.lower()
+        try:
+            file_size = path.stat().st_size
+        except OSError:
+            file_size = None
 
-        if suffix == ".pdf":
-            return DocumentProcessor._extract_pdf_text(
-                path.read_bytes(),
-                max_pdf_pages=max_pdf_pages,
-            )
-
-        buffer = BytesIO(path.read_bytes())
-        buffer.name = path.name
-        return DocumentProcessor.extract_text(
-            buffer,
-            max_pdf_pages=max_pdf_pages,
-            max_tabular_rows=max_tabular_rows,
+        logger.info(
+            "extract_text_from_path start path=%s suffix=%s file_size=%s "
+            "max_pdf_pages=%s max_tabular_rows=%s",
+            path,
+            suffix,
+            file_size,
+            max_pdf_pages,
+            max_tabular_rows,
         )
+
+        try:
+            if suffix == ".pdf":
+                text = DocumentProcessor._extract_pdf_text(
+                    path.read_bytes(),
+                    max_pdf_pages=max_pdf_pages,
+                )
+            else:
+                buffer = BytesIO(path.read_bytes())
+                buffer.name = path.name
+                text = DocumentProcessor.extract_text(
+                    buffer,
+                    max_pdf_pages=max_pdf_pages,
+                    max_tabular_rows=max_tabular_rows,
+                )
+        except Exception:
+            logger.exception(
+                "extract_text_from_path failed path=%s suffix=%s file_size=%s",
+                path,
+                suffix,
+                file_size,
+            )
+            raise
+
+        char_count = len(text or "")
+        stripped_count = len((text or "").strip())
+        logger.info(
+            "extract_text_from_path finished path=%s suffix=%s success=%s "
+            "char_count=%s stripped_char_count=%s",
+            path,
+            suffix,
+            stripped_count > 0,
+            char_count,
+            stripped_count,
+        )
+        return text
 
     @staticmethod
     def _extract_pdf_text(
@@ -116,33 +155,63 @@ class DocumentProcessor:
         """Try text-layer engines, then OCR for scanned PDFs."""
 
         extractors = (
-            DocumentProcessor._extract_pdf_with_pypdf2,
-            DocumentProcessor._extract_pdf_with_pymupdf,
-            DocumentProcessor._extract_pdf_with_pdfplumber,
+            ("pypdf2", DocumentProcessor._extract_pdf_with_pypdf2),
+            ("pymupdf", DocumentProcessor._extract_pdf_with_pymupdf),
+            ("pdfplumber", DocumentProcessor._extract_pdf_with_pdfplumber),
         )
 
         best_text = ""
-        for extractor in extractors:
+        for name, extractor in extractors:
             try:
                 text = extractor(data, max_pdf_pages=max_pdf_pages)
             except Exception:
+                logger.exception(
+                    "PDF extractor %s failed data_size=%s max_pdf_pages=%s; trying next",
+                    name,
+                    len(data),
+                    max_pdf_pages,
+                )
                 continue
 
-            if len(text.strip()) > len(best_text.strip()):
+            stripped = len(text.strip())
+            logger.info(
+                "PDF extractor %s produced stripped_char_count=%s data_size=%s",
+                name,
+                stripped,
+                len(data),
+            )
+
+            if stripped > len(best_text.strip()):
                 best_text = text
 
             if len(best_text.strip()) >= 200:
                 break
 
         if len(best_text.strip()) < config.PDF_OCR_MIN_TEXT_CHARS:
+            logger.info(
+                "PDF text layer below OCR threshold (%s); attempting OCR data_size=%s "
+                "best_stripped=%s",
+                config.PDF_OCR_MIN_TEXT_CHARS,
+                len(data),
+                len(best_text.strip()),
+            )
             try:
                 ocr_text = DocumentProcessor._extract_pdf_with_ocr(
                     data,
                     max_pdf_pages=max_pdf_pages,
                 )
             except Exception:
-                ocr_text = ""
+                logger.exception(
+                    "PDF OCR extraction failed data_size=%s max_pdf_pages=%s",
+                    len(data),
+                    max_pdf_pages,
+                )
+                raise
 
+            logger.info(
+                "PDF OCR produced stripped_char_count=%s",
+                len(ocr_text.strip()),
+            )
             if len(ocr_text.strip()) > len(best_text.strip()):
                 best_text = ocr_text
 
@@ -153,6 +222,11 @@ class DocumentProcessor:
                 max_pdf_pages=max_pdf_pages,
             )
 
+        logger.warning(
+            "All PDF extractors returned empty text data_size=%s max_pdf_pages=%s",
+            len(data),
+            max_pdf_pages,
+        )
         return best_text
 
     @staticmethod

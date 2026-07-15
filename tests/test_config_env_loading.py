@@ -148,8 +148,11 @@ def test_validation_message_uses_runtime_values(tmp_path, monkeypatch):
     config_errors = [message for message in warnings if message.startswith("Configuration Error")]
 
     assert len(config_errors) == 1
-    assert "ENVIRONMENT:\nproduction" in config_errors[0]
-    assert "AUTH_DEV_BYPASS:\ntrue" in config_errors[0]
+    assert "ENVIRONMENT: production" in config_errors[0]
+    assert "ENVIRONMENT source: OS Environment" in config_errors[0]
+    assert "AUTH_DEV_BYPASS: true" in config_errors[0]
+    assert "AUTH_DEV_BYPASS source: OS Environment" in config_errors[0]
+    assert f"Loaded .env:\n{env_file}" in config_errors[0]
     assert "AUTH_DEV_BYPASS=true is only permitted" not in config_errors[0]
 
 

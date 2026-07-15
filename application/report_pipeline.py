@@ -5,6 +5,7 @@ Report Pipeline
 
 from __future__ import annotations
 
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
@@ -16,7 +17,6 @@ from config import (
 from models.report_processing_mode import ReportProcessingMode
 from services.ai_service import AIService
 from services.document_service import DocumentService
-from services.document_processor import DocumentProcessor
 from services.project_service import ProjectService
 from services.report_service import ReportService
 from services.report_source_text import prepare_combined_source_text
@@ -29,6 +29,8 @@ from services.full_report_prompt import is_full_report
 from services.report_section_templates import build_report_section_plan
 from models.report_data import ReportData
 from core.workspace_context import QUICK_REPORT_NAME, QUICK_REPORT_PROJECT_ID, is_quick_report
+
+logger = logging.getLogger(__name__)
 
 
 class ReportPipeline:
@@ -73,6 +75,13 @@ class ReportPipeline:
         texts: list[str] = []
         document_service = DocumentService()
 
+        logger.info(
+            "load_document_text start project_id=%s filenames=%s processing_mode=%s",
+            project_id,
+            filenames,
+            processing_mode,
+        )
+
         for filename in filenames:
             try:
                 text = document_service.read_document_text(
@@ -81,12 +90,33 @@ class ReportPipeline:
                     max_pdf_pages=max_pdf_pages,
                     max_tabular_rows=max_tabular_rows,
                 )
-                if text.strip():
-                    texts.append(text)
             except Exception:
-                continue
+                logger.exception(
+                    "load_document_text failed project_id=%s filename=%s",
+                    project_id,
+                    filename,
+                )
+                raise
 
-        return "\n\n".join(texts)
+            if text.strip():
+                texts.append(text)
+            else:
+                logger.warning(
+                    "load_document_text empty extraction project_id=%s filename=%s",
+                    project_id,
+                    filename,
+                )
+
+        combined = "\n\n".join(texts)
+        logger.info(
+            "load_document_text finished project_id=%s loaded=%s empty=%s "
+            "combined_char_count=%s",
+            project_id,
+            len(texts),
+            len(filenames) - len(texts),
+            len(combined),
+        )
+        return combined
 
     @staticmethod
     def _load_selection_item(
@@ -101,6 +131,13 @@ class ReportPipeline:
             processing_mode,
         )
 
+        logger.info(
+            "_load_selection_item start project_id=%s filename=%s processing_mode=%s",
+            project_id,
+            filename,
+            processing_mode,
+        )
+
         try:
             chunk = DocumentService().read_document_text(
                 project_id,
@@ -109,11 +146,27 @@ class ReportPipeline:
                 max_tabular_rows=max_tabular_rows,
             ).strip()
         except Exception:
-            return filename, None
+            logger.exception(
+                "_load_selection_item failed project_id=%s filename=%s",
+                project_id,
+                filename,
+            )
+            raise
 
         if not chunk:
+            logger.warning(
+                "_load_selection_item empty text project_id=%s filename=%s",
+                project_id,
+                filename,
+            )
             return filename, None
 
+        logger.info(
+            "_load_selection_item success project_id=%s filename=%s char_count=%s",
+            project_id,
+            filename,
+            len(chunk),
+        )
         return filename, f"=== SOURCE DOCUMENT: {filename} ===\n\n{chunk}"
 
     @classmethod
@@ -125,7 +178,19 @@ class ReportPipeline:
     ) -> dict[str, Any]:
         """Load and combine text from a structured document selection."""
 
+        logger.info(
+            "load_document_text_from_selection start count=%s processing_mode=%s "
+            "selection=%s",
+            len(selection),
+            processing_mode,
+            [
+                {"project_id": item.get("project_id"), "filename": item.get("filename")}
+                for item in selection
+            ],
+        )
+
         if not selection:
+            logger.warning("load_document_text_from_selection called with empty selection")
             return {
                 "combined_text": "",
                 "loaded": [],
@@ -162,6 +227,26 @@ class ReportPipeline:
         prepared = prepare_combined_source_text("\n\n".join(texts))
         combined_text = str(prepared["combined_text"])
         multi_stage = len(combined_text) > AI_REPORT_MAX_TOTAL_CHARS
+
+        logger.info(
+            "load_document_text_from_selection finished loaded=%s skipped=%s "
+            "combined_char_count=%s stripped_char_count=%s normalized=%s multi_stage=%s",
+            loaded,
+            skipped,
+            len(combined_text),
+            len(combined_text.strip()),
+            bool(prepared["normalized"]),
+            multi_stage,
+        )
+
+        if not combined_text.strip():
+            logger.error(
+                "load_document_text_from_selection returned empty combined text "
+                "loaded=%s skipped=%s selection_count=%s",
+                loaded,
+                skipped,
+                len(selection),
+            )
 
         return {
             "combined_text": combined_text,
