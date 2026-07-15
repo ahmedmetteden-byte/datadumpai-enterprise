@@ -306,6 +306,77 @@ class AuthService:
             verification_status="verified",
         )
 
+    def _delete_orphaned_account_rows(self, email: str) -> bool:
+        """
+        Remove profile/usage rows for an email that has no matching auth user.
+
+        Orphaned profiles block signup: the auth trigger inserts into
+        user_profiles and hits the unique email index, which Supabase reports
+        only as "Database error saving new user".
+        """
+
+        if self._lookup_auth_user_by_email(email) is not None:
+            return False
+
+        if not config.use_database() or not config.is_supabase_configured():
+            return False
+
+        try:
+            from core.database import get_service_role_client, handle_response
+
+            client = get_service_role_client()
+            response = handle_response(
+                client.table("user_profiles")
+                .select("user_id")
+                .ilike("email", email)
+                .execute(),
+                action="lookup orphaned profiles for signup",
+            )
+            rows = response.data or []
+            if not rows:
+                return False
+
+            removed = False
+            for row in rows:
+                user_id = str(row.get("user_id") or "")
+                if not user_id:
+                    continue
+
+                handle_response(
+                    client.table("user_usage").delete().eq("user_id", user_id).execute(),
+                    action="delete orphaned usage for signup",
+                )
+                handle_response(
+                    client.table("user_profiles")
+                    .delete()
+                    .eq("user_id", user_id)
+                    .execute(),
+                    action="delete orphaned profile for signup",
+                )
+                removed = True
+                logger.warning(
+                    "Removed orphaned account rows for email=%s user_id=%s before signup",
+                    email,
+                    user_id,
+                )
+
+            return removed
+        except Exception:
+            logger.exception("Failed to reclaim orphaned account rows for %s", email)
+            return False
+
+    @staticmethod
+    def _is_connectivity_error(exc: Exception) -> bool:
+        message = str(exc).lower()
+        if "certificate" in message or "ssl" in message:
+            return True
+        return _is_password_reset_network_error(exc)
+
+    @staticmethod
+    def _is_database_save_user_error(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return "database error saving new user" in message
+
     def sign_up(
         self,
         email: str,
@@ -323,21 +394,49 @@ class AuthService:
         client = self._require_client()
         assert client is not None
 
+        existing_auth_user = self._lookup_auth_user_by_email(normalized_email)
+        if existing_auth_user is not None:
+            self._raise_duplicate_sign_up_error(client, normalized_email, password)
+
+        self._delete_orphaned_account_rows(normalized_email)
+
         try:
-            response = client.auth.sign_up(
-                {
-                    "email": normalized_email,
-                    "password": password,
-                    "options": {
-                        "data": {"full_name": full_name.strip()},
-                        "email_redirect_to": AUTH_REDIRECT_URL,
-                    },
-                }
+            response = self._create_supabase_user(
+                client,
+                normalized_email,
+                password,
+                full_name=full_name,
             )
         except Exception as exc:
             if is_duplicate_email_error(exc):
                 self._raise_duplicate_sign_up_error(client, normalized_email, password)
-            raise AuthError("Sign up failed. Please try again.") from exc
+            if self._is_database_save_user_error(exc):
+                if self._delete_orphaned_account_rows(normalized_email):
+                    try:
+                        response = self._create_supabase_user(
+                            client,
+                            normalized_email,
+                            password,
+                            full_name=full_name,
+                        )
+                    except Exception as retry_exc:
+                        if is_duplicate_email_error(retry_exc):
+                            self._raise_duplicate_sign_up_error(
+                                client, normalized_email, password
+                            )
+                        raise AuthError("Sign up failed. Please try again.") from retry_exc
+                else:
+                    raise AuthError(
+                        "Sign up failed because an incomplete account already exists "
+                        "for this email. Please contact support or try a different email."
+                    ) from exc
+            elif self._is_connectivity_error(exc):
+                raise AuthError(
+                    "Could not reach the authentication service. "
+                    "Check your internet connection and try again."
+                ) from exc
+            else:
+                raise AuthError("Sign up failed. Please try again.") from exc
 
         if response.user is None:
             raise AuthError("Sign up failed. Please try again.")
@@ -355,6 +454,25 @@ class AuthService:
             access_token=session.access_token,
             refresh_token=session.refresh_token,
             user=user,
+        )
+
+    def _create_supabase_user(
+        self,
+        client,
+        email: str,
+        password: str,
+        *,
+        full_name: str,
+    ):
+        return client.auth.sign_up(
+            {
+                "email": email,
+                "password": password,
+                "options": {
+                    "data": {"full_name": full_name.strip()},
+                    "email_redirect_to": AUTH_REDIRECT_URL,
+                },
+            }
         )
 
     def sign_in(

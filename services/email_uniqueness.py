@@ -65,7 +65,7 @@ class EmailUniquenessService:
         response = handle_response(
             client.table("user_profiles")
             .select("user_id")
-            .eq("email", email)
+            .ilike("email", email)
             .limit(1)
             .execute(),
             action="check email uniqueness",
