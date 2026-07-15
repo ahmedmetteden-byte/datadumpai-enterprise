@@ -304,6 +304,18 @@ def validate_production_auth_configuration() -> list[str]:
             "SUPABASE_ANON_KEY in your environment."
         )
 
+    redirect = AUTH_REDIRECT_URL.lower()
+    if ENVIRONMENT in {"production", "staging"} and (
+        "localhost" in redirect or "127.0.0.1" in redirect or redirect in {"", "null"}
+    ):
+        warnings.append(
+            "AUTH_REDIRECT_URL points to a local or invalid address "
+            f"({AUTH_REDIRECT_URL!r}). Email verification and password-reset "
+            "links will not open on other devices. Set it to your public app "
+            "URL, for example https://app.getdatadump.com/?active_page=auth, "
+            "and allowlist that exact URL in the Supabase Auth redirect settings."
+        )
+
     return warnings
 
 

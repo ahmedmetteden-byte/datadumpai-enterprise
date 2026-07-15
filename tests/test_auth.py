@@ -1024,3 +1024,20 @@ def test_auth_dev_bypass_blocked_outside_development(monkeypatch):
     warnings = validate_production_auth_configuration()
     assert any("Configuration Error" in message for message in warnings)
     assert any("Development authentication cannot be enabled in production." in message for message in warnings)
+
+
+def test_production_rejects_localhost_auth_redirect(monkeypatch):
+    monkeypatch.setattr("config.ENVIRONMENT", "production")
+    monkeypatch.setattr("config._AUTH_DEV_BYPASS_REQUESTED", False)
+    monkeypatch.setattr(
+        "config.AUTH_REDIRECT_URL",
+        "http://localhost:8501/?active_page=auth",
+    )
+    monkeypatch.setattr("config.SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setattr("config.SUPABASE_ANON_KEY", "anon-key")
+
+    from config import validate_production_auth_configuration
+
+    warnings = validate_production_auth_configuration()
+    assert any("AUTH_REDIRECT_URL" in message for message in warnings)
+    assert any("localhost" in message for message in warnings)
