@@ -69,7 +69,13 @@ def get_database_client(*, access_token: str | None = None):
         raise DatabaseError("No authenticated session is available for database access.")
 
     client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+    # Apply the user JWT to shared client headers so Storage (and PostgREST)
+    # both use the authenticated session — not only postgrest.auth().
+    auth_header = f"Bearer {token}"
+    client.options.headers["Authorization"] = auth_header
     client.postgrest.auth(token)
+    # Ensure lazily-created Storage picks up the updated headers.
+    client._storage = None
     return client
 
 

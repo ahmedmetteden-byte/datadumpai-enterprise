@@ -14,9 +14,10 @@ from core.workspace_context import is_quick_report
 class SupabaseProjectRepository:
     """Persist projects and related metadata in PostgreSQL."""
 
-    def __init__(self, user_id: str) -> None:
+    def __init__(self, user_id: str, *, access_token: str | None = None) -> None:
         self._user_id = user_id
-        self._client = get_database_client()
+        self._access_token = access_token
+        self._client = get_database_client(access_token=access_token)
 
     @property
     def user_id(self) -> str:

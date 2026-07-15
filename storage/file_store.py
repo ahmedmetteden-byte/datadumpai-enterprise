@@ -24,9 +24,15 @@ class FileStore:
 
     CATEGORIES = ("documents", "reports", "exports")
 
-    def __init__(self, current_user: CurrentUser) -> None:
+    def __init__(
+        self,
+        current_user: CurrentUser,
+        *,
+        access_token: str | None = None,
+    ) -> None:
         self._current_user = current_user
         self._user_id = current_user.id
+        self._access_token = access_token
         self._backend = self._resolve_backend()
 
     @property
@@ -35,9 +41,20 @@ class FileStore:
 
         return self._backend
 
+    @property
+    def access_token(self) -> str | None:
+        """JWT captured for Supabase Storage calls (thread-safe)."""
+
+        return self._access_token
+
     @classmethod
-    def for_current_user(cls) -> FileStore:
-        return cls(require_current_user())
+    def for_current_user(cls, *, access_token: str | None = None) -> FileStore:
+        token = access_token
+        if token is None:
+            from core.auth import get_access_token
+
+            token = get_access_token()
+        return cls(require_current_user(), access_token=token)
 
     @staticmethod
     def _resolve_backend() -> str:
@@ -293,13 +310,30 @@ class FileStore:
         parts = storage_key.replace("\\", "/").strip("/").split("/")
         return len(parts) == 4 and parts[2] in FileStore.CATEGORIES
 
+    def resolve_document_path(self, project_id: str, filename: str) -> str:
+        """Return the storage key / local path for a project document filename."""
+
+        safe_name = Path(filename).name
+        if self._backend == "local":
+            return str(self._local_root(project_id) / "documents" / safe_name)
+        return self._storage_key(project_id, "documents", safe_name)
+
     def _normalize_key(self, storage_key: str) -> str:
         if self._looks_like_storage_key(storage_key):
             return storage_key.replace("\\", "/")
         return storage_key.replace("\\", "/")
 
-    @staticmethod
-    def _supabase_client():
+    def _supabase_client(self):
+        """
+        Return a Supabase client for Storage.
+
+        Prefer the JWT captured at construction time so worker threads never
+        call get_access_token() / Streamlit session_state.
+        """
+
         from core.database import get_database_client
+
+        if self._access_token:
+            return get_database_client(access_token=self._access_token)
 
         return get_database_client()

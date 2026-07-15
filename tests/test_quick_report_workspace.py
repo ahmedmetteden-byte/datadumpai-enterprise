@@ -110,7 +110,7 @@ def _enable_supabase_backends(monkeypatch, client: TrackingSupabaseClient) -> No
         "repositories.supabase_timeline_repository.get_database_client",
         "repositories.supabase_project_repository.get_database_client",
     ):
-        monkeypatch.setattr(target, lambda: client)
+        monkeypatch.setattr(target, lambda *, access_token=None: client)
 
 
 def test_is_quick_report_recognizes_workspace_sentinel():
@@ -142,7 +142,7 @@ def test_supabase_timeline_repository_rejects_quick_report(monkeypatch):
     client = TrackingSupabaseClient()
     monkeypatch.setattr(
         "repositories.supabase_timeline_repository.get_database_client",
-        lambda: client,
+        lambda *, access_token=None: client,
     )
 
     with pytest.raises(ProjectAccessError, match="not a database project"):
@@ -231,7 +231,10 @@ def test_supabase_file_store_uses_quick_report_scope_not_sentinel(monkeypatch):
     class FakeClient:
         storage = FakeStorage()
 
-    monkeypatch.setattr("core.database.get_database_client", lambda: FakeClient())
+    monkeypatch.setattr(
+        "core.database.get_database_client",
+        lambda *, access_token=None: FakeClient(),
+    )
 
     store = FileStore(CurrentUser.from_user(TEST_USER))
     store.list_files(QUICK_REPORT_PROJECT_ID, "documents")
@@ -287,7 +290,10 @@ def test_supabase_quick_report_documents_reports_exports_use_storage_scope(
     class FakeClient:
         storage = FakeStorage()
 
-    monkeypatch.setattr("core.database.get_database_client", lambda: FakeClient())
+    monkeypatch.setattr(
+        "core.database.get_database_client",
+        lambda *, access_token=None: FakeClient(),
+    )
 
     document_service = DocumentService()
     document_service.save_document(

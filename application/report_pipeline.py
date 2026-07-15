@@ -47,17 +47,25 @@ class ReportPipeline:
         plan_service: PlanService | None = None,
         *,
         current_user: CurrentUser | None = None,
+        access_token: str | None = None,
     ) -> None:
         # Resolve once on the calling (Streamlit) thread, then reuse everywhere —
         # including ThreadPoolExecutor workers that cannot see session_state.
         self._current_user = current_user or require_current_user()
+        if access_token is None:
+            from core.auth import get_access_token
+
+            access_token = get_access_token()
+        self._access_token = access_token
         self._ai_service = ai_service or AIService()
         self._report_service = report_service or ReportService()
         self._project_service = project_service or ProjectService(
             current_user=self._current_user,
+            access_token=self._access_token,
         )
         self._document_service = document_service or DocumentService(
             current_user=self._current_user,
+            access_token=self._access_token,
         )
         self._usage_service = usage_service or UsageService(
             current_user=self._current_user,
@@ -67,6 +75,10 @@ class ReportPipeline:
     @property
     def current_user(self) -> CurrentUser:
         return self._current_user
+
+    @property
+    def access_token(self) -> str | None:
+        return self._access_token
 
     @staticmethod
     def _document_extraction_limits(

@@ -30,13 +30,24 @@ class DocumentService:
         *,
         file_store: FileStore | None = None,
         current_user: CurrentUser | None = None,
+        access_token: str | None = None,
     ) -> None:
         self._current_user = current_user or require_current_user()
-        self._file_store = file_store or FileStore(self._current_user)
+        self._access_token = access_token
+        self._file_store = file_store or FileStore(
+            self._current_user,
+            access_token=self._access_token,
+        )
+        if self._access_token and not self._file_store.access_token:
+            self._file_store._access_token = self._access_token
 
     @property
     def current_user(self) -> CurrentUser:
         return self._current_user
+
+    @property
+    def access_token(self) -> str | None:
+        return self._access_token or self._file_store.access_token
 
     def _utc_now(self) -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -74,7 +85,11 @@ class DocumentService:
         *,
         overwrite: bool = False,
     ) -> dict[str, Any]:
-        assert_project_access(project_id, current_user=self._current_user)
+        assert_project_access(
+            project_id,
+            current_user=self._current_user,
+            access_token=self.access_token,
+        )
         filename = self._safe_filename(uploaded_file.name)
 
         if not overwrite:
@@ -147,7 +162,11 @@ class DocumentService:
             pass
 
         try:
-            assert_project_access(project_id, current_user=self._current_user)
+            assert_project_access(
+                project_id,
+                current_user=self._current_user,
+                access_token=self.access_token,
+            )
         except PermissionError:
             return []
 
@@ -181,37 +200,38 @@ class DocumentService:
         return documents
 
     def read_document_text(self, project_id: str, filename: str, **kwargs) -> str:
-        assert_project_access(project_id, current_user=self._current_user)
-        safe_name = self._safe_filename(filename)
-        document = next(
-            (item for item in self.get_documents(project_id) if item["filename"] == safe_name),
-            None,
+        assert_project_access(
+            project_id,
+            current_user=self._current_user,
+            access_token=self.access_token,
         )
+        safe_name = self._safe_filename(filename)
 
-        if document is None:
+        # Resolve the known storage key directly — do not list the folder via
+        # get_documents() / list_files(), which would hit Supabase from workers
+        # without a captured JWT.
+        storage_path = self._file_store.resolve_document_path(project_id, safe_name)
+        backend = self._file_store.backend
+
+        if backend == "local" and not Path(storage_path).is_file():
             logger.error(
-                "Document metadata not found project_id=%s filename=%s",
+                "Document file not found project_id=%s filename=%s path=%s",
                 project_id,
                 safe_name,
+                storage_path,
             )
             raise FileNotFoundError(f"Document not found: {safe_name!r}")
 
         from services.document_processor import DocumentProcessor
 
-        storage_path = document["path"]
-        backend = getattr(self._file_store, "backend", None) or getattr(
-            self._file_store, "_backend", "unknown"
-        )
-        metadata_size = document.get("size")
-
         logger.info(
             "Reading document text project_id=%s filename=%s backend=%s "
-            "storage_path=%s metadata_size=%s",
+            "storage_path=%s has_access_token=%s",
             project_id,
             safe_name,
             backend,
             storage_path,
-            metadata_size,
+            bool(self.access_token),
         )
 
         try:
@@ -231,6 +251,16 @@ class DocumentService:
                 )
 
                 text = DocumentProcessor.extract_text_from_path(str(path), **kwargs)
+        except FileNotFoundError:
+            logger.exception(
+                "Document missing during read project_id=%s filename=%s "
+                "backend=%s storage_path=%s",
+                project_id,
+                safe_name,
+                backend,
+                storage_path,
+            )
+            raise
         except Exception:
             logger.exception(
                 "Failed reading/extracting document project_id=%s filename=%s "
@@ -259,18 +289,21 @@ class DocumentService:
         if stripped_count == 0:
             logger.warning(
                 "Document extraction returned empty text project_id=%s filename=%s "
-                "backend=%s storage_path=%s file_size=%s",
+                "backend=%s storage_path=%s",
                 project_id,
                 safe_name,
                 backend,
                 storage_path,
-                metadata_size,
             )
 
         return text
 
     def delete_document(self, project_id: str, filename: str) -> None:
-        assert_project_access(project_id, current_user=self._current_user)
+        assert_project_access(
+            project_id,
+            current_user=self._current_user,
+            access_token=self.access_token,
+        )
         safe_name = self._safe_filename(filename)
         document = next(
             (item for item in self.get_documents(project_id) if item["filename"] == safe_name),
@@ -283,7 +316,11 @@ class DocumentService:
         self._file_store.delete(document["path"])
 
     def get_document_path(self, project_id: str, filename: str) -> Path:
-        assert_project_access(project_id, current_user=self._current_user)
+        assert_project_access(
+            project_id,
+            current_user=self._current_user,
+            access_token=self.access_token,
+        )
         safe_name = self._safe_filename(filename)
         document = next(
             (item for item in self.get_documents(project_id) if item["filename"] == safe_name),

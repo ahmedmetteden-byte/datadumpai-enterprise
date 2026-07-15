@@ -20,7 +20,12 @@ from ui.report_renderer import render_report_content
 
 
 def _report_pipeline() -> ReportPipeline:
-    return ReportPipeline(current_user=require_current_user())
+    from core.auth import get_access_token
+
+    return ReportPipeline(
+        current_user=require_current_user(),
+        access_token=get_access_token(),
+    )
 
 
 context_builder = ExecutiveReportContextBuilder()

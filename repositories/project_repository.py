@@ -13,13 +13,22 @@ from repositories.supabase_project_repository import SupabaseProjectRepository
 class ProjectRepository:
     """Repository responsible for loading and saving projects for one user."""
 
-    def __init__(self, current_user: CurrentUser | None = None) -> None:
+    def __init__(
+        self,
+        current_user: CurrentUser | None = None,
+        *,
+        access_token: str | None = None,
+    ) -> None:
         resolved = current_user or require_current_user()
         self._current_user = resolved
         self._user_id = resolved.id
+        self._access_token = access_token
 
         if config.use_database():
-            self._impl = SupabaseProjectRepository(self._user_id)
+            self._impl = SupabaseProjectRepository(
+                self._user_id,
+                access_token=access_token,
+            )
         else:
             self._impl = JsonProjectRepository(self._user_id)
 

@@ -48,14 +48,15 @@ def assert_project_access(
     project_id: str,
     *,
     current_user: CurrentUser | None = None,
+    access_token: str | None = None,
 ) -> str:
     """
     Verify the authenticated user may access a project workspace.
 
     Fail closed: unknown, invalid, or foreign project ids are rejected.
 
-    Pass ``current_user`` explicitly when calling from worker threads that do
-    not inherit Streamlit session / ContextVar auth state.
+    Pass ``current_user`` and ``access_token`` explicitly when calling from
+    worker threads that do not inherit Streamlit session / ContextVar auth.
     """
 
     user = current_user or require_current_user()
@@ -66,7 +67,10 @@ def assert_project_access(
 
     from services.project_service import ProjectService
 
-    if not ProjectService(current_user=user).project_exists(safe_project_id):
+    if not ProjectService(
+        current_user=user,
+        access_token=access_token,
+    ).project_exists(safe_project_id):
         raise ProjectAccessError(f"Access denied to project: {safe_project_id!r}")
 
     return safe_project_id

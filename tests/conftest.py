@@ -59,6 +59,7 @@ def auth_context(monkeypatch):
     monkeypatch.setattr("config.use_supabase_storage", lambda: False)
     monkeypatch.setattr("services.auth_service.is_supabase_configured", lambda: False)
     monkeypatch.setattr("core.auth.get_current_user", lambda: TEST_USER)
+    monkeypatch.setattr("core.auth.get_access_token", lambda: None)
     monkeypatch.setattr("core.auth.is_authenticated", lambda: True)
     bind_current_user(TEST_USER)
     yield

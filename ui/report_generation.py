@@ -29,11 +29,21 @@ from ui.report_preview import set_draft_report
 
 
 def _report_pipeline() -> ReportPipeline:
-    return ReportPipeline(current_user=require_current_user())
+    from core.auth import get_access_token
+
+    return ReportPipeline(
+        current_user=require_current_user(),
+        access_token=get_access_token(),
+    )
 
 
 def _document_service() -> DocumentService:
-    return DocumentService(current_user=require_current_user())
+    from core.auth import get_access_token
+
+    return DocumentService(
+        current_user=require_current_user(),
+        access_token=get_access_token(),
+    )
 
 
 def _plan_service() -> PlanService:

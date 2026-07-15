@@ -36,17 +36,27 @@ class ProjectService:
         *,
         document_service: DocumentService | None = None,
         current_user: CurrentUser | None = None,
+        access_token: str | None = None,
     ) -> None:
         self._current_user = current_user or require_current_user()
-        self.repository = ProjectRepository(self._current_user)
+        self._access_token = access_token
+        self.repository = ProjectRepository(
+            self._current_user,
+            access_token=access_token,
+        )
         self._document_service = document_service or DocumentService(
             current_user=self._current_user,
+            access_token=access_token,
         )
         self._ensure_storage_exists()
 
     @property
     def current_user(self) -> CurrentUser:
         return self._current_user
+
+    @property
+    def access_token(self) -> str | None:
+        return self._access_token
 
     def _ensure_storage_exists(self) -> None:
         """Create the storage directory and file when they do not exist."""
