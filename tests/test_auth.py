@@ -208,17 +208,9 @@ def test_supabase_sign_up_returns_distinct_user_ids(monkeypatch):
             self.session = FakeSession(email)
             self.user = FakeUser(email)
 
-    class FakeAdmin:
-        def create_user(self, payload):
-            return FakeResponse(payload["email"])
-
     class FakeAuth:
         def sign_in_with_password(self, credentials):
             return FakeResponse(credentials["email"])
-
-        @property
-        def admin(self):
-            return FakeAdmin()
 
     class FakeClient:
         auth = FakeAuth()
@@ -228,12 +220,11 @@ def test_supabase_sign_up_returns_distinct_user_ids(monkeypatch):
     service._lookup_auth_user_by_email = lambda _email: None
     service._delete_orphaned_account_rows = lambda _email: False
     monkeypatch.setattr(
-        "core.database.create_service_role_client",
-        lambda: FakeClient(),
-    )
-    monkeypatch.setattr(
-        "core.database.get_service_role_client",
-        lambda: FakeClient(),
+        "core.database.admin_create_user",
+        lambda **kwargs: {
+            "id": user_ids[kwargs["email"].lower()],
+            "email": kwargs["email"],
+        },
     )
 
     ahmed = service.sign_up("Ahmed@example.com", "password123", full_name="Ahmed")
@@ -369,18 +360,9 @@ def test_new_sign_up_creates_confirmed_session(monkeypatch):
         session = FakeSession()
         user = FakeUser()
 
-    class FakeAdmin:
-        def create_user(self, payload):
-            assert payload["email_confirm"] is True
-            return FakeResponse()
-
     class FakeAuth:
         def sign_in_with_password(self, _credentials):
             return FakeResponse()
-
-        @property
-        def admin(self):
-            return FakeAdmin()
 
     class FakeClient:
         auth = FakeAuth()
@@ -389,14 +371,15 @@ def test_new_sign_up_creates_confirmed_session(monkeypatch):
     service._client = FakeClient()
     service._lookup_auth_user_by_email = lambda _email: None
     service._delete_orphaned_account_rows = lambda _email: False
-    monkeypatch.setattr(
-        "core.database.create_service_role_client",
-        lambda: FakeClient(),
-    )
-    monkeypatch.setattr(
-        "core.database.get_service_role_client",
-        lambda: FakeClient(),
-    )
+
+    def fake_admin_create_user(*, email, password, full_name="", email_confirm=True):
+        assert email_confirm is True
+        return {
+            "id": "550e8400-e29b-41d4-a716-446655440099",
+            "email": email,
+        }
+
+    monkeypatch.setattr("core.database.admin_create_user", fake_admin_create_user)
 
     result = service.sign_up("new@example.com", "password123")
 

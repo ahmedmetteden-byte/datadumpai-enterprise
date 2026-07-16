@@ -133,21 +133,16 @@ def test_sign_up_uses_admin_path_without_verification_email(monkeypatch):
     monkeypatch.setattr(service, "_lookup_auth_user_by_email", lambda email: None)
     monkeypatch.setattr(service, "_delete_orphaned_account_rows", lambda email: None)
 
-    class AdminAuth:
-        def create_user(self, payload):
-            created["payload"] = payload
-            return SimpleNamespace(
-                user=SimpleNamespace(id="new-user", email=payload["email"])
-            )
+    def fake_admin_create_user(*, email, password, full_name="", email_confirm=True):
+        created["payload"] = {
+            "email": email,
+            "password": password,
+            "email_confirm": email_confirm,
+            "user_metadata": {"full_name": full_name.strip()},
+        }
+        return {"id": "new-user", "email": email}
 
-    monkeypatch.setattr(
-        "core.database.create_service_role_client",
-        lambda: SimpleNamespace(auth=SimpleNamespace(admin=AdminAuth())),
-    )
-    monkeypatch.setattr(
-        "core.database.get_service_role_client",
-        lambda: SimpleNamespace(auth=SimpleNamespace(admin=AdminAuth())),
-    )
+    monkeypatch.setattr("core.database.admin_create_user", fake_admin_create_user)
     monkeypatch.setattr(
         service,
         "_session_after_password_sign_in",
@@ -195,22 +190,14 @@ def test_resend_verification_confirms_without_email_when_rate_limited(monkeypatc
         confirmed_at=None,
     )
 
-    class AdminAuth:
-        def update_user_by_id(self, user_id, payload):
-            updates["user_id"] = user_id
-            updates["payload"] = payload
-            return SimpleNamespace(user=SimpleNamespace(id=user_id))
+    def fake_admin_update_user(user_id, payload):
+        updates["user_id"] = user_id
+        updates["payload"] = payload
+        return {"id": user_id}
 
     monkeypatch.setattr(service, "_lookup_auth_user_by_email", lambda email: existing)
     monkeypatch.setattr(AuthService, "_admin_sign_up_available", staticmethod(lambda: True))
-    monkeypatch.setattr(
-        "core.database.create_service_role_client",
-        lambda: SimpleNamespace(auth=SimpleNamespace(admin=AdminAuth())),
-    )
-    monkeypatch.setattr(
-        "core.database.get_service_role_client",
-        lambda: SimpleNamespace(auth=SimpleNamespace(admin=AdminAuth())),
-    )
+    monkeypatch.setattr("core.database.admin_update_user", fake_admin_update_user)
 
     service.resend_verification("new@example.com")
 

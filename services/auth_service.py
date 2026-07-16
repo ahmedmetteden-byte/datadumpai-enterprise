@@ -253,21 +253,15 @@ class AuthService:
             return None
 
         try:
-            from core.database import create_service_role_client
-            from supabase_auth.helpers import model_validate
-            from supabase_auth.types import UserList
+            from types import SimpleNamespace
 
-            client = create_service_role_client()
-            response = client.auth.admin._request(
-                "GET",
-                "admin/users",
-                query={"filter": normalized, "page": 1, "per_page": 50},
-            )
-            users = model_validate(UserList, response.content).users
-            for user in users or []:
-                if normalize_email(str(getattr(user, "email", "") or "")) == normalized:
-                    return user
-            return None
+            from core.database import admin_get_user_by_email
+
+            user = admin_get_user_by_email(normalized)
+            if user is None:
+                return None
+            # Attribute access matches supabase-py User objects used elsewhere.
+            return SimpleNamespace(**user)
         except Exception:
             logger.exception("Failed to look up auth user by email=%s", normalized)
             return None
@@ -312,16 +306,14 @@ class AuthService:
         *,
         full_name: str,
     ):
-        from core.database import create_service_role_client
+        from core.database import admin_create_user
 
-        admin_client = create_service_role_client()
-        return admin_client.auth.admin.create_user(
-            {
-                "email": email,
-                "password": password,
-                "email_confirm": True,
-                "user_metadata": {"full_name": full_name.strip()},
-            }
+        # Raw Admin HTTP API — never rely on supabase-py Authorization headers.
+        return admin_create_user(
+            email=email,
+            password=password,
+            full_name=full_name,
+            email_confirm=True,
         )
 
     def _sign_up_with_admin(
@@ -401,7 +393,7 @@ class AuthService:
                     ) from retry_exc
                 raise AuthError(f"Sign up failed: {retry_exc}") from retry_exc
 
-        if response.user is None:
+        if not response or not response.get("id"):
             existing = self._lookup_auth_user_by_email(email)
             if existing is not None:
                 return self._finish_existing_signup(
@@ -576,10 +568,9 @@ class AuthService:
         *,
         full_name: str,
     ) -> None:
-        from core.database import create_service_role_client
+        from core.database import admin_update_user
 
-        admin_client = create_service_role_client()
-        admin_client.auth.admin.update_user_by_id(
+        admin_update_user(
             user_id,
             {
                 "password": password,
@@ -813,12 +804,9 @@ class AuthService:
                 or getattr(existing, "confirmed_at", None)
             )
             if not confirmed:
-                from core.database import create_service_role_client
+                from core.database import admin_update_user
 
-                create_service_role_client().auth.admin.update_user_by_id(
-                    str(existing.id),
-                    {"email_confirm": True},
-                )
+                admin_update_user(str(existing.id), {"email_confirm": True})
                 logger.info(
                     "Confirmed email without resend for user_id=%s",
                     existing.id,
