@@ -228,6 +228,10 @@ def test_supabase_sign_up_returns_distinct_user_ids(monkeypatch):
     service._lookup_auth_user_by_email = lambda _email: None
     service._delete_orphaned_account_rows = lambda _email: False
     monkeypatch.setattr(
+        "core.database.create_service_role_client",
+        lambda: FakeClient(),
+    )
+    monkeypatch.setattr(
         "core.database.get_service_role_client",
         lambda: FakeClient(),
     )
@@ -385,6 +389,10 @@ def test_new_sign_up_creates_confirmed_session(monkeypatch):
     service._client = FakeClient()
     service._lookup_auth_user_by_email = lambda _email: None
     service._delete_orphaned_account_rows = lambda _email: False
+    monkeypatch.setattr(
+        "core.database.create_service_role_client",
+        lambda: FakeClient(),
+    )
     monkeypatch.setattr(
         "core.database.get_service_role_client",
         lambda: FakeClient(),

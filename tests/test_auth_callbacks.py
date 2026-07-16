@@ -239,8 +239,8 @@ def test_auth_service_creates_client_with_pkce_flow(monkeypatch):
         return object()
 
     monkeypatch.setattr("services.auth_service.is_supabase_configured", lambda: True)
-    monkeypatch.setattr("services.auth_service.SUPABASE_URL", "https://example.supabase.co")
-    monkeypatch.setattr("services.auth_service.SUPABASE_ANON_KEY", "anon-key")
+    monkeypatch.setattr("config.SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setattr("config.SUPABASE_ANON_KEY", "anon-key")
 
     import supabase
 
@@ -251,7 +251,11 @@ def test_auth_service_creates_client_with_pkce_flow(monkeypatch):
 
     assert captured["url"] == "https://example.supabase.co"
     assert captured["key"] == "anon-key"
-    assert captured["options_kwargs"] == {"flow_type": "pkce"}
+    assert captured["options_kwargs"] == {
+        "flow_type": "pkce",
+        "persist_session": False,
+        "auto_refresh_token": False,
+    }
     assert getattr(captured["options"], "flow_type", None) == "pkce"
 
 

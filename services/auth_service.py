@@ -115,10 +115,15 @@ class AuthService:
 
             # PKCE so password-recovery (and other email) links return ?code=...
             # instead of #access_token=... implicit fragments.
+            # Keep user-session storage isolated from the service-role admin client.
             self._client = create_client(
-                SUPABASE_URL,
-                SUPABASE_ANON_KEY,
-                options=ClientOptions(flow_type="pkce"),
+                config.SUPABASE_URL,
+                config.SUPABASE_ANON_KEY,
+                options=ClientOptions(
+                    flow_type="pkce",
+                    persist_session=False,
+                    auto_refresh_token=False,
+                ),
             )
 
     @property
@@ -248,11 +253,11 @@ class AuthService:
             return None
 
         try:
-            from core.database import get_service_role_client
+            from core.database import create_service_role_client
             from supabase_auth.helpers import model_validate
             from supabase_auth.types import UserList
 
-            client = get_service_role_client()
+            client = create_service_role_client()
             response = client.auth.admin._request(
                 "GET",
                 "admin/users",
@@ -307,9 +312,9 @@ class AuthService:
         *,
         full_name: str,
     ):
-        from core.database import get_service_role_client
+        from core.database import create_service_role_client
 
-        admin_client = get_service_role_client()
+        admin_client = create_service_role_client()
         return admin_client.auth.admin.create_user(
             {
                 "email": email,
@@ -473,9 +478,9 @@ class AuthService:
             return False
 
         try:
-            from core.database import get_service_role_client, handle_response
+            from core.database import create_service_role_client, handle_response
 
-            client = get_service_role_client()
+            client = create_service_role_client()
             response = handle_response(
                 client.table("user_profiles")
                 .select("user_id")
@@ -571,9 +576,9 @@ class AuthService:
         *,
         full_name: str,
     ) -> None:
-        from core.database import get_service_role_client
+        from core.database import create_service_role_client
 
-        admin_client = get_service_role_client()
+        admin_client = create_service_role_client()
         admin_client.auth.admin.update_user_by_id(
             user_id,
             {
@@ -808,9 +813,9 @@ class AuthService:
                 or getattr(existing, "confirmed_at", None)
             )
             if not confirmed:
-                from core.database import get_service_role_client
+                from core.database import create_service_role_client
 
-                get_service_role_client().auth.admin.update_user_by_id(
+                create_service_role_client().auth.admin.update_user_by_id(
                     str(existing.id),
                     {"email_confirm": True},
                 )

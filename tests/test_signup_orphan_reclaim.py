@@ -85,6 +85,10 @@ def test_delete_orphaned_account_rows_removes_profile_without_auth(monkeypatch):
     monkeypatch.setattr("config.use_database", lambda: True)
     monkeypatch.setattr("config.is_supabase_configured", lambda: True)
     monkeypatch.setattr(
+        "core.database.create_service_role_client",
+        lambda: client,
+    )
+    monkeypatch.setattr(
         "core.database.get_service_role_client",
         lambda: client,
     )
@@ -136,6 +140,10 @@ def test_sign_up_uses_admin_path_without_verification_email(monkeypatch):
                 user=SimpleNamespace(id="new-user", email=payload["email"])
             )
 
+    monkeypatch.setattr(
+        "core.database.create_service_role_client",
+        lambda: SimpleNamespace(auth=SimpleNamespace(admin=AdminAuth())),
+    )
     monkeypatch.setattr(
         "core.database.get_service_role_client",
         lambda: SimpleNamespace(auth=SimpleNamespace(admin=AdminAuth())),
@@ -195,6 +203,10 @@ def test_resend_verification_confirms_without_email_when_rate_limited(monkeypatc
 
     monkeypatch.setattr(service, "_lookup_auth_user_by_email", lambda email: existing)
     monkeypatch.setattr(AuthService, "_admin_sign_up_available", staticmethod(lambda: True))
+    monkeypatch.setattr(
+        "core.database.create_service_role_client",
+        lambda: SimpleNamespace(auth=SimpleNamespace(admin=AdminAuth())),
+    )
     monkeypatch.setattr(
         "core.database.get_service_role_client",
         lambda: SimpleNamespace(auth=SimpleNamespace(admin=AdminAuth())),

@@ -25,16 +25,42 @@ def database_is_available() -> bool:
     return use_database() and is_supabase_configured()
 
 
-@lru_cache(maxsize=1)
-def _service_role_client():
-    from supabase import create_client
+def create_service_role_client():
+    """
+    Create a fresh service-role Supabase client for admin/server operations.
 
-    if not SUPABASE_SERVICE_ROLE_KEY:
+    Always disables session persistence so a user sign-in cannot overwrite the
+    service-role Authorization header (a known supabase-py footgun).
+    """
+
+    from supabase import ClientOptions, create_client
+
+    # Read at call time — avoid stale empty keys from import-time binding.
+    url = (config.SUPABASE_URL or "").strip()
+    key = (config.SUPABASE_SERVICE_ROLE_KEY or "").strip()
+    if not url or not key:
         raise DatabaseError(
-            "SUPABASE_SERVICE_ROLE_KEY is required for database access in development."
+            "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required for "
+            "service-role database access."
         )
 
-    return create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    client = create_client(
+        url,
+        key,
+        options=ClientOptions(
+            auto_refresh_token=False,
+            persist_session=False,
+        ),
+    )
+    # Belt-and-suspenders: keep admin calls on the service-role Bearer token.
+    client.options.headers["apiKey"] = key
+    client.options.headers["Authorization"] = f"Bearer {key}"
+    return client
+
+
+@lru_cache(maxsize=1)
+def _service_role_client():
+    return create_service_role_client()
 
 
 def get_service_role_client():
@@ -63,7 +89,7 @@ def get_database_client(*, access_token: str | None = None):
     token = access_token or get_access_token()
 
     if config.auth_dev_bypass_enabled():
-        return _service_role_client()
+        return create_service_role_client()
 
     if not token:
         raise DatabaseError("No authenticated session is available for database access.")
