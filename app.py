@@ -9,30 +9,9 @@ bootstrap_system_ssl()
 
 import logging
 
-# TEMPORARY — surface document-load / extraction diagnostics while debugging
-# "Could not read text from the selected documents."
-for _logger_name in (
-    "services.document_service",
-    "services.document_processor",
-    "services.ai_service",
-    "storage.file_store",
-    "application.report_pipeline",
-    "ui.ai_workspace_runtime",
-    "ui.report_generation",
-    "ui.report_preview",
-    "ui.report_session_trace",
-    "ui.projects",
-    "ui.workspace.shell",
-):
-    _pipeline_logger = logging.getLogger(_logger_name)
-    _pipeline_logger.setLevel(logging.INFO)
-    if not _pipeline_logger.handlers:
-        _handler = logging.StreamHandler()
-        _handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
-        )
-        _pipeline_logger.addHandler(_handler)
-        _pipeline_logger.propagate = False
+# TEMPORARY — keep signup instrumentation visible in container logs.
+logging.getLogger("services.auth_service").setLevel(logging.INFO)
+logging.getLogger("core.database").setLevel(logging.INFO)
 
 import streamlit as st
 

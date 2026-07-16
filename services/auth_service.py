@@ -308,13 +308,22 @@ class AuthService:
     ):
         from core.database import admin_create_user
 
+        logger.info(
+            "SIGNUP_TRACE stage=admin_create_user.enter email=%s via=core.database.admin_create_user",
+            email,
+        )
         # Raw Admin HTTP API — never rely on supabase-py Authorization headers.
-        return admin_create_user(
+        result = admin_create_user(
             email=email,
             password=password,
             full_name=full_name,
             email_confirm=True,
         )
+        logger.info(
+            "SIGNUP_TRACE stage=admin_create_user.ok user_id=%s",
+            (result or {}).get("id"),
+        )
+        return result
 
     def _sign_up_with_admin(
         self,
@@ -325,8 +334,15 @@ class AuthService:
     ) -> AuthSession:
         """Create a confirmed user via service role (no verification email sent)."""
 
+        logger.info("SIGNUP_TRACE stage=admin_path.enter email=%s", email)
+
         existing = self._lookup_auth_user_by_email(email)
         if existing is not None:
+            logger.info(
+                "SIGNUP_TRACE stage=existing_user branch=finish_existing id=%s confirmed=%s",
+                getattr(existing, "id", None),
+                self._is_user_confirmed(existing),
+            )
             return self._finish_existing_signup(
                 existing,
                 email,
@@ -334,19 +350,23 @@ class AuthService:
                 full_name=full_name,
             )
 
+        logger.info("SIGNUP_TRACE stage=orphan_cleanup.start")
         self._delete_orphaned_account_rows(email)
+        logger.info("SIGNUP_TRACE stage=orphan_cleanup.done")
 
         try:
+            logger.info("SIGNUP_TRACE stage=post_admin_users.attempt=1")
             response = self._create_admin_user(
                 email,
                 password,
                 full_name=full_name,
             )
+            logger.info("SIGNUP_TRACE stage=post_admin_users.attempt=1.result=ok")
         except Exception as exc:
             logger.warning(
-                "Admin create_user failed for %s: %s",
-                email,
-                exc,
+                "SIGNUP_TRACE stage=post_admin_users.attempt=1.result=fail type=%s detail=%s",
+                type(exc).__name__,
+                str(exc)[:300],
                 exc_info=True,
             )
             if self._is_connectivity_error(exc):
@@ -359,6 +379,10 @@ class AuthService:
             self._delete_orphaned_account_rows(email)
             existing = self._lookup_auth_user_by_email(email)
             if existing is not None:
+                logger.info(
+                    "SIGNUP_TRACE stage=post_fail_existing branch=finish_existing id=%s",
+                    getattr(existing, "id", None),
+                )
                 return self._finish_existing_signup(
                     existing,
                     email,
@@ -367,13 +391,19 @@ class AuthService:
                 )
 
             try:
+                logger.info("SIGNUP_TRACE stage=post_admin_users.attempt=2")
                 response = self._create_admin_user(
                     email,
                     password,
                     full_name=full_name,
                 )
+                logger.info("SIGNUP_TRACE stage=post_admin_users.attempt=2.result=ok")
             except Exception as retry_exc:
-                logger.exception("Admin create_user retry failed for %s", email)
+                logger.exception(
+                    "SIGNUP_TRACE stage=post_admin_users.attempt=2.result=fail type=%s detail=%s",
+                    type(retry_exc).__name__,
+                    str(retry_exc)[:300],
+                )
                 existing = self._lookup_auth_user_by_email(email)
                 if existing is not None:
                     return self._finish_existing_signup(
@@ -391,9 +421,23 @@ class AuthService:
                         "Could not reach the authentication service. "
                         "Check your internet connection and try again."
                     ) from retry_exc
+                detail = str(retry_exc).strip()
+                if "bearer token" in detail.lower():
+                    raise AuthError(
+                        "Sign up failed: the server is missing a valid Supabase "
+                        "service-role key for account creation. "
+                        "If you are on app.getdatadump.com, production has not "
+                        "picked up the latest fix yet — use http://127.0.0.1:8501 "
+                        "or redeploy. "
+                        f"(Detail: {detail})"
+                    ) from retry_exc
                 raise AuthError(f"Sign up failed: {retry_exc}") from retry_exc
 
         if not response or not response.get("id"):
+            logger.info(
+                "SIGNUP_TRACE stage=post_admin_users.empty_response response=%s",
+                bool(response),
+            )
             existing = self._lookup_auth_user_by_email(email)
             if existing is not None:
                 return self._finish_existing_signup(
@@ -404,7 +448,16 @@ class AuthService:
                 )
             raise AuthError("Sign up failed. Please try again.")
 
-        return self._session_after_password_sign_in(email, password)
+        logger.info(
+            "SIGNUP_TRACE stage=password_sign_in.start user_id=%s",
+            response.get("id"),
+        )
+        session = self._session_after_password_sign_in(email, password)
+        logger.info(
+            "SIGNUP_TRACE stage=password_sign_in.ok user_id=%s",
+            session.user.id,
+        )
+        return session
 
     def _existing_account_verification_status(
         self,
@@ -537,16 +590,28 @@ class AuthService:
             raise AuthError("Enter a valid email address.")
 
         if config.auth_dev_bypass_enabled():
+            logger.info(
+                "SIGNUP_TRACE AuthService.sign_up path=dev_bypass email=%s",
+                normalized_email,
+            )
             return self.dev_sign_up(normalized_email, full_name=full_name)
 
         # Always create accounts via service role with email already confirmed.
         # This avoids Supabase verification-email rate limits entirely.
         if not self._admin_sign_up_available():
+            logger.info(
+                "SIGNUP_TRACE AuthService.sign_up path=admin_unavailable email=%s",
+                normalized_email,
+            )
             raise AuthError(
                 "Account creation is not configured. "
                 "Set SUPABASE_SERVICE_ROLE_KEY in your environment."
             )
 
+        logger.info(
+            "SIGNUP_TRACE AuthService.sign_up path=admin_http email=%s",
+            normalized_email,
+        )
         return self._sign_up_with_admin(
             normalized_email,
             password,
@@ -584,21 +649,32 @@ class AuthService:
         client = self._require_client()
         assert client is not None
 
+        logger.info("SIGNUP_TRACE stage=sign_in_with_password.enter email=%s", email)
         try:
             response = client.auth.sign_in_with_password(
                 {"email": email, "password": password}
             )
         except Exception as exc:
+            logger.info(
+                "SIGNUP_TRACE stage=sign_in_with_password.fail type=%s detail=%s",
+                type(exc).__name__,
+                str(exc)[:300],
+            )
             raise AuthError(
                 "Account created, but automatic sign-in failed. Please sign in."
             ) from exc
 
         if response.session is None or response.user is None:
+            logger.info("SIGNUP_TRACE stage=sign_in_with_password.empty_session")
             raise AuthError(
                 "Account created, but automatic sign-in failed. Please sign in."
             )
 
         user = self._user_from_payload(response.user.model_dump())
+        logger.info(
+            "SIGNUP_TRACE stage=sign_in_with_password.ok user_id=%s",
+            user.id,
+        )
         return AuthSession(
             access_token=response.session.access_token,
             refresh_token=response.session.refresh_token,

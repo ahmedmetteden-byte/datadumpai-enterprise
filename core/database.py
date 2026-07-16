@@ -4,6 +4,7 @@ Supabase PostgreSQL client for authenticated application queries.
 
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
 from typing import Any
 
@@ -14,6 +15,8 @@ from config import (
     is_supabase_configured,
     use_database,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class DatabaseError(Exception):
@@ -81,6 +84,71 @@ def create_service_role_client():
     return client
 
 
+def _admin_api_headers(key: str) -> dict[str, str]:
+    """
+    Headers for Supabase Auth Admin HTTP calls.
+
+    New ``sb_secret_...`` keys are not JWTs. Always send them on ``apikey``.
+    Also send ``Authorization: Bearer <key>`` (required by GoTrue admin routes
+    and accepted when it matches ``apikey``). Use a non-browser User-Agent —
+    secret keys are rejected when the platform detects a browser UA.
+    """
+
+    return {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+        "User-Agent": "DataDumpAI-Enterprise/1.0",
+        "X-Client-Info": "datadumpai-enterprise-admin",
+    }
+
+
+def _log_admin_request(
+    *,
+    method: str,
+    endpoint: str,
+    headers: dict[str, str],
+    service_role_key: str,
+    response: Any,
+) -> None:
+    """Log non-secret evidence about Auth Admin HTTP calls."""
+
+    auth_header = headers.get("Authorization", "")
+    logger.info("SIGNUP_TRACE Admin endpoint: %s %s", method, endpoint)
+    logger.info(
+        "SIGNUP_TRACE Authorization header present: %s",
+        "Authorization" in headers,
+    )
+    logger.info(
+        "SIGNUP_TRACE Authorization starts with Bearer: %s",
+        auth_header.startswith("Bearer "),
+    )
+    logger.info("SIGNUP_TRACE Service role key length: %d", len(service_role_key))
+    logger.info(
+        "SIGNUP_TRACE Service role key prefix kind: %s",
+        (
+            "jwt"
+            if service_role_key.startswith("eyJ")
+            else "sb_secret"
+            if service_role_key.startswith("sb_secret_")
+            else "other"
+        ),
+    )
+    logger.info("SIGNUP_TRACE apikey header present: %s", "apikey" in headers)
+    logger.info("SIGNUP_TRACE Status: %d", response.status_code)
+    logger.info("SIGNUP_TRACE Body: %s", (response.text or "")[:500])
+
+
+def _raise_admin_http_error(response: Any) -> None:
+    detail = response.text
+    try:
+        payload = response.json()
+        detail = payload.get("msg") or payload.get("message") or detail
+    except Exception:
+        pass
+    raise DatabaseError(detail)
+
+
 def admin_create_user(
     *,
     email: str,
@@ -98,13 +166,11 @@ def admin_create_user(
     import httpx
 
     url, key = _service_role_credentials()
+    endpoint = f"{url}/auth/v1/admin/users"
+    headers = _admin_api_headers(key)
     response = httpx.post(
-        f"{url}/auth/v1/admin/users",
-        headers={
-            "apikey": key,
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json",
-        },
+        endpoint,
+        headers=headers,
         json={
             "email": email,
             "password": password,
@@ -113,14 +179,15 @@ def admin_create_user(
         },
         timeout=30.0,
     )
+    _log_admin_request(
+        method="POST",
+        endpoint=endpoint,
+        headers=headers,
+        service_role_key=key,
+        response=response,
+    )
     if response.status_code >= 400:
-        detail = response.text
-        try:
-            payload = response.json()
-            detail = payload.get("msg") or payload.get("message") or detail
-        except Exception:
-            pass
-        raise DatabaseError(detail)
+        _raise_admin_http_error(response)
     return response.json()
 
 
@@ -130,24 +197,23 @@ def admin_update_user(user_id: str, attributes: dict[str, Any]) -> dict[str, Any
     import httpx
 
     url, key = _service_role_credentials()
+    endpoint = f"{url}/auth/v1/admin/users/{user_id}"
+    headers = _admin_api_headers(key)
     response = httpx.put(
-        f"{url}/auth/v1/admin/users/{user_id}",
-        headers={
-            "apikey": key,
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json",
-        },
+        endpoint,
+        headers=headers,
         json=attributes,
         timeout=30.0,
     )
+    _log_admin_request(
+        method="PUT",
+        endpoint=endpoint,
+        headers=headers,
+        service_role_key=key,
+        response=response,
+    )
     if response.status_code >= 400:
-        detail = response.text
-        try:
-            payload = response.json()
-            detail = payload.get("msg") or payload.get("message") or detail
-        except Exception:
-            pass
-        raise DatabaseError(detail)
+        _raise_admin_http_error(response)
     return response.json()
 
 
@@ -158,23 +224,23 @@ def admin_get_user_by_email(email: str) -> dict[str, Any] | None:
 
     url, key = _service_role_credentials()
     normalized = email.strip().lower()
+    endpoint = f"{url}/auth/v1/admin/users"
+    headers = _admin_api_headers(key)
     response = httpx.get(
-        f"{url}/auth/v1/admin/users",
-        headers={
-            "apikey": key,
-            "Authorization": f"Bearer {key}",
-        },
+        endpoint,
+        headers=headers,
         params={"filter": normalized, "page": 1, "per_page": 50},
         timeout=30.0,
     )
+    _log_admin_request(
+        method="GET",
+        endpoint=endpoint,
+        headers=headers,
+        service_role_key=key,
+        response=response,
+    )
     if response.status_code >= 400:
-        detail = response.text
-        try:
-            payload = response.json()
-            detail = payload.get("msg") or payload.get("message") or detail
-        except Exception:
-            pass
-        raise DatabaseError(detail)
+        _raise_admin_http_error(response)
 
     users = response.json().get("users") or []
     for user in users:

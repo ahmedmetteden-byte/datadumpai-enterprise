@@ -4,6 +4,8 @@ Authentication form components.
 
 from __future__ import annotations
 
+import logging
+
 import streamlit as st
 
 from core.auth import (
@@ -19,6 +21,8 @@ from core.auth import (
 from services.auth_service import AuthError, AuthService, SignUpDuplicateError
 from services.email_uniqueness import SIGN_UP_VERIFIED_DUPLICATE_MESSAGE
 from ui.feedback import show_error, show_success
+
+logger = logging.getLogger(__name__)
 
 
 def render_sign_in_form() -> None:
@@ -65,6 +69,8 @@ def render_sign_in_form() -> None:
 def render_sign_up_form() -> None:
     st.markdown('<div class="dde-auth-card">', unsafe_allow_html=True)
     st.markdown("### Create your account")
+    # Visible so we can tell local Docker (fixed) from stale production.
+    st.caption("Auth build: admin-http-v2")
 
     with st.form("sign_up_form"):
         full_name = st.text_input("Full name", placeholder="Ada Lovelace")
@@ -86,14 +92,27 @@ def render_sign_up_form() -> None:
         elif len(password) < 8:
             st.warning("Password must be at least 8 characters.")
         else:
+            logger.info(
+                "SIGNUP_TRACE ui.form.submit path=render_sign_up_form email=%s",
+                email.strip().lower(),
+            )
             try:
                 user = sign_up(email, password, full_name=full_name)
+                logger.info(
+                    "SIGNUP_TRACE ui.form.success has_user=%s",
+                    user is not None,
+                )
                 if user is not None:
                     show_success("Welcome to DataDumpAI.")
                     st.rerun()
                 else:
                     st.rerun()
             except SignUpDuplicateError as exc:
+                logger.info(
+                    "SIGNUP_TRACE ui.form.duplicate status=%s detail=%s",
+                    exc.verification_status,
+                    str(exc)[:200],
+                )
                 if exc.verification_status == "unverified":
                     st.session_state[AUTH_PENDING_EMAIL_KEY] = email.strip()
                     st.session_state[AUTH_VIEW_KEY] = "verify_email"
@@ -119,6 +138,11 @@ def render_sign_up_form() -> None:
                             st.session_state[AUTH_VIEW_KEY] = "forgot_password"
                             st.rerun()
             except AuthError as exc:
+                logger.info(
+                    "SIGNUP_TRACE ui.form.auth_error type=%s detail=%s",
+                    type(exc).__name__,
+                    str(exc)[:300],
+                )
                 show_error(exc)
 
     st.markdown(

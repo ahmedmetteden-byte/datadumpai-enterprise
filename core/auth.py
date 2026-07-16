@@ -4,14 +4,17 @@ Authentication session management for Streamlit.
 
 from __future__ import annotations
 
+import logging
+
 import streamlit as st
 
-import config
 import config
 from config import is_supabase_configured
 from core.telemetry import identify, track
 from models.user import User
 from services.auth_service import AuthError, AuthService, AuthSession
+
+logger = logging.getLogger(__name__)
 
 AUTH_USER_KEY = "auth_user"
 AUTH_ACCESS_TOKEN_KEY = "auth_access_token"
@@ -309,10 +312,19 @@ def sign_up(email: str, password: str, *, full_name: str = "") -> User | None:
     from services.email_uniqueness import normalize_email
 
     normalized = normalize_email(email)
+    logger.info(
+        "SIGNUP_TRACE core.auth.sign_up.enter email=%s path=AuthService.sign_up",
+        normalized,
+    )
 
     try:
         session = AuthService().sign_up(email, password, full_name=full_name)
     except AuthError as exc:
+        logger.info(
+            "SIGNUP_TRACE core.auth.sign_up.error type=%s detail=%s",
+            type(exc).__name__,
+            str(exc)[:300],
+        )
         try:
             from core.runtime_investigation import log_registration_decision
 
@@ -326,6 +338,12 @@ def sign_up(email: str, password: str, *, full_name: str = "") -> User | None:
         except Exception:
             pass
         raise
+
+    logger.info(
+        "SIGNUP_TRACE core.auth.sign_up.return has_session=%s user_id=%s",
+        session is not None,
+        getattr(getattr(session, "user", None), "id", None),
+    )
 
     try:
         from core.runtime_investigation import (
