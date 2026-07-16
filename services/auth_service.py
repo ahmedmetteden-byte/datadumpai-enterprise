@@ -243,6 +243,10 @@ class AuthService:
         if not config.is_supabase_configured():
             return None
 
+        normalized = normalize_email(email)
+        if not normalized:
+            return None
+
         try:
             from core.database import get_service_role_client
             from supabase_auth.helpers import model_validate
@@ -252,14 +256,158 @@ class AuthService:
             response = client.auth.admin._request(
                 "GET",
                 "admin/users",
-                query={"filter": email, "page": 1, "per_page": 1},
+                query={"filter": normalized, "page": 1, "per_page": 50},
             )
             users = model_validate(UserList, response.content).users
-            if not users:
-                return None
-            return users[0]
-        except Exception:
+            for user in users or []:
+                if normalize_email(str(getattr(user, "email", "") or "")) == normalized:
+                    return user
             return None
+        except Exception:
+            logger.exception("Failed to look up auth user by email=%s", normalized)
+            return None
+
+    def _is_user_confirmed(self, user: Any) -> bool:
+        return bool(
+            getattr(user, "email_confirmed_at", None)
+            or getattr(user, "confirmed_at", None)
+        )
+
+    def _finish_existing_signup(
+        self,
+        existing: Any,
+        email: str,
+        password: str,
+        *,
+        full_name: str,
+    ) -> AuthSession:
+        """Complete or resume signup for an email that already has an auth user."""
+
+        if not self._is_user_confirmed(existing):
+            self._complete_unverified_signup(
+                str(existing.id),
+                password,
+                full_name=full_name,
+            )
+            return self._session_after_password_sign_in(email, password)
+
+        # Verified account: if the password matches, sign them in instead of failing.
+        try:
+            return self._session_after_password_sign_in(email, password)
+        except AuthError:
+            client = self._require_client()
+            assert client is not None
+            self._raise_duplicate_sign_up_error(client, email, password)
+            raise  # pragma: no cover - raise above never returns
+
+    def _create_admin_user(
+        self,
+        email: str,
+        password: str,
+        *,
+        full_name: str,
+    ):
+        from core.database import get_service_role_client
+
+        admin_client = get_service_role_client()
+        return admin_client.auth.admin.create_user(
+            {
+                "email": email,
+                "password": password,
+                "email_confirm": True,
+                "user_metadata": {"full_name": full_name.strip()},
+            }
+        )
+
+    def _sign_up_with_admin(
+        self,
+        email: str,
+        password: str,
+        *,
+        full_name: str,
+    ) -> AuthSession:
+        """Create a confirmed user via service role (no verification email sent)."""
+
+        existing = self._lookup_auth_user_by_email(email)
+        if existing is not None:
+            return self._finish_existing_signup(
+                existing,
+                email,
+                password,
+                full_name=full_name,
+            )
+
+        self._delete_orphaned_account_rows(email)
+
+        try:
+            response = self._create_admin_user(
+                email,
+                password,
+                full_name=full_name,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Admin create_user failed for %s: %s",
+                email,
+                exc,
+                exc_info=True,
+            )
+            if self._is_connectivity_error(exc):
+                raise AuthError(
+                    "Could not reach the authentication service. "
+                    "Check your internet connection and try again."
+                ) from exc
+
+            # Orphan profile / unique-email races often surface as a database error.
+            self._delete_orphaned_account_rows(email)
+            existing = self._lookup_auth_user_by_email(email)
+            if existing is not None:
+                return self._finish_existing_signup(
+                    existing,
+                    email,
+                    password,
+                    full_name=full_name,
+                )
+
+            try:
+                response = self._create_admin_user(
+                    email,
+                    password,
+                    full_name=full_name,
+                )
+            except Exception as retry_exc:
+                logger.exception("Admin create_user retry failed for %s", email)
+                existing = self._lookup_auth_user_by_email(email)
+                if existing is not None:
+                    return self._finish_existing_signup(
+                        existing,
+                        email,
+                        password,
+                        full_name=full_name,
+                    )
+                if is_duplicate_email_error(retry_exc):
+                    client = self._require_client()
+                    assert client is not None
+                    self._raise_duplicate_sign_up_error(client, email, password)
+                if self._is_connectivity_error(retry_exc):
+                    raise AuthError(
+                        "Could not reach the authentication service. "
+                        "Check your internet connection and try again."
+                    ) from retry_exc
+                raise AuthError(f"Sign up failed: {retry_exc}") from retry_exc
+
+        if response.user is None:
+            existing = self._lookup_auth_user_by_email(email)
+            if existing is not None:
+                return self._finish_existing_signup(
+                    existing,
+                    email,
+                    password,
+                    full_name=full_name,
+                )
+            raise AuthError("Sign up failed. Please try again.")
+
+        return self._session_after_password_sign_in(email, password)
 
     def _existing_account_verification_status(
         self,
@@ -415,65 +563,6 @@ class AuthService:
             and config.is_supabase_configured()
             and config.SUPABASE_SERVICE_ROLE_KEY
         )
-
-    def _sign_up_with_admin(
-        self,
-        email: str,
-        password: str,
-        *,
-        full_name: str,
-    ) -> AuthSession:
-        """Create a confirmed user via service role (no verification email sent)."""
-
-        existing = self._lookup_auth_user_by_email(email)
-        if existing is not None:
-            confirmed = bool(
-                getattr(existing, "email_confirmed_at", None)
-                or getattr(existing, "confirmed_at", None)
-            )
-            if confirmed:
-                client = self._require_client()
-                assert client is not None
-                self._raise_duplicate_sign_up_error(client, email, password)
-
-            # Finish an incomplete prior signup without sending email.
-            self._complete_unverified_signup(
-                str(existing.id),
-                password,
-                full_name=full_name,
-            )
-            return self._session_after_password_sign_in(email, password)
-
-        self._delete_orphaned_account_rows(email)
-
-        try:
-            from core.database import get_service_role_client
-
-            admin_client = get_service_role_client()
-            response = admin_client.auth.admin.create_user(
-                {
-                    "email": email,
-                    "password": password,
-                    "email_confirm": True,
-                    "user_metadata": {"full_name": full_name.strip()},
-                }
-            )
-        except Exception as exc:
-            if is_duplicate_email_error(exc):
-                client = self._require_client()
-                assert client is not None
-                self._raise_duplicate_sign_up_error(client, email, password)
-            if self._is_connectivity_error(exc):
-                raise AuthError(
-                    "Could not reach the authentication service. "
-                    "Check your internet connection and try again."
-                ) from exc
-            raise AuthError("Sign up failed. Please try again.") from exc
-
-        if response.user is None:
-            raise AuthError("Sign up failed. Please try again.")
-
-        return self._session_after_password_sign_in(email, password)
 
     def _complete_unverified_signup(
         self,

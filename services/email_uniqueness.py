@@ -133,6 +133,9 @@ class EmailUniquenessService:
 
 def is_duplicate_email_error(exc: Exception) -> bool:
     message = str(exc).lower()
+    code = str(getattr(exc, "code", "") or "").lower()
+    if code in {"email_exists", "user_already_exists"}:
+        return True
     return any(
         token in message
         for token in (
@@ -141,5 +144,8 @@ def is_duplicate_email_error(exc: Exception) -> bool:
             "user already registered",
             "email address is already",
             "duplicate key",
+            "email_exists",
+            "database error creating new user",
+            "database error saving new user",
         )
     )
