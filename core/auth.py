@@ -309,10 +309,12 @@ def sign_in(email: str, password: str, *, remember_me: bool = False) -> User:
 
 
 def sign_up(email: str, password: str, *, full_name: str = "") -> User | None:
+    from core.signup_trace import signup_trace_log
     from services.email_uniqueness import normalize_email
 
     normalized = normalize_email(email)
-    logger.info(
+    signup_trace_log(
+        logger,
         "SIGNUP_TRACE core.auth.sign_up.enter email=%s path=AuthService.sign_up",
         normalized,
     )
@@ -320,7 +322,8 @@ def sign_up(email: str, password: str, *, full_name: str = "") -> User | None:
     try:
         session = AuthService().sign_up(email, password, full_name=full_name)
     except AuthError as exc:
-        logger.info(
+        signup_trace_log(
+            logger,
             "SIGNUP_TRACE core.auth.sign_up.error type=%s detail=%s",
             type(exc).__name__,
             str(exc)[:300],
@@ -339,7 +342,8 @@ def sign_up(email: str, password: str, *, full_name: str = "") -> User | None:
             pass
         raise
 
-    logger.info(
+    signup_trace_log(
+        logger,
         "SIGNUP_TRACE core.auth.sign_up.return has_session=%s user_id=%s",
         session is not None,
         getattr(getattr(session, "user", None), "id", None),

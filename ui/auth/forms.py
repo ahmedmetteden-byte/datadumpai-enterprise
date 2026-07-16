@@ -92,13 +92,17 @@ def render_sign_up_form() -> None:
         elif len(password) < 8:
             st.warning("Password must be at least 8 characters.")
         else:
-            logger.info(
+            from core.signup_trace import signup_trace_log
+
+            signup_trace_log(
+                logger,
                 "SIGNUP_TRACE ui.form.submit path=render_sign_up_form email=%s",
                 email.strip().lower(),
             )
             try:
                 user = sign_up(email, password, full_name=full_name)
-                logger.info(
+                signup_trace_log(
+                    logger,
                     "SIGNUP_TRACE ui.form.success has_user=%s",
                     user is not None,
                 )
@@ -108,7 +112,8 @@ def render_sign_up_form() -> None:
                 else:
                     st.rerun()
             except SignUpDuplicateError as exc:
-                logger.info(
+                signup_trace_log(
+                    logger,
                     "SIGNUP_TRACE ui.form.duplicate status=%s detail=%s",
                     exc.verification_status,
                     str(exc)[:200],
@@ -138,7 +143,8 @@ def render_sign_up_form() -> None:
                             st.session_state[AUTH_VIEW_KEY] = "forgot_password"
                             st.rerun()
             except AuthError as exc:
-                logger.info(
+                signup_trace_log(
+                    logger,
                     "SIGNUP_TRACE ui.form.auth_error type=%s detail=%s",
                     type(exc).__name__,
                     str(exc)[:300],

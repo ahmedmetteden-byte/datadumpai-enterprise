@@ -113,18 +113,25 @@ def _log_admin_request(
 ) -> None:
     """Log non-secret evidence about Auth Admin HTTP calls."""
 
+    from core.signup_trace import signup_trace_log
+
     auth_header = headers.get("Authorization", "")
-    logger.info("SIGNUP_TRACE Admin endpoint: %s %s", method, endpoint)
-    logger.info(
+    signup_trace_log(logger, "SIGNUP_TRACE Admin endpoint: %s %s", method, endpoint)
+    signup_trace_log(
+        logger,
         "SIGNUP_TRACE Authorization header present: %s",
         "Authorization" in headers,
     )
-    logger.info(
+    signup_trace_log(
+        logger,
         "SIGNUP_TRACE Authorization starts with Bearer: %s",
         auth_header.startswith("Bearer "),
     )
-    logger.info("SIGNUP_TRACE Service role key length: %d", len(service_role_key))
-    logger.info(
+    signup_trace_log(
+        logger, "SIGNUP_TRACE Service role key length: %d", len(service_role_key)
+    )
+    signup_trace_log(
+        logger,
         "SIGNUP_TRACE Service role key prefix kind: %s",
         (
             "jwt"
@@ -134,9 +141,11 @@ def _log_admin_request(
             else "other"
         ),
     )
-    logger.info("SIGNUP_TRACE apikey header present: %s", "apikey" in headers)
-    logger.info("SIGNUP_TRACE Status: %d", response.status_code)
-    logger.info("SIGNUP_TRACE Body: %s", (response.text or "")[:500])
+    signup_trace_log(
+        logger, "SIGNUP_TRACE apikey header present: %s", "apikey" in headers
+    )
+    signup_trace_log(logger, "SIGNUP_TRACE Status: %d", response.status_code)
+    signup_trace_log(logger, "SIGNUP_TRACE Body: %s", (response.text or "")[:500])
 
 
 def _raise_admin_http_error(response: Any) -> None:

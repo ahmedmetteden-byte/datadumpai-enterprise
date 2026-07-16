@@ -51,6 +51,28 @@ PASSWORD_RESET_GENERIC_MESSAGE = (
 logger = logging.getLogger(__name__)
 
 
+def _trace(msg: str, *args: object) -> None:
+    from core.signup_trace import signup_trace_log
+
+    signup_trace_log(logger, msg, *args)
+
+
+def _trace_warn(msg: str, *args: object, **kwargs: object) -> None:
+    from core.signup_trace import append_signup_trace_line
+
+    line = msg % args if args else msg
+    append_signup_trace_line(line)
+    logger.warning(line, **kwargs)
+
+
+def _trace_exc(msg: str, *args: object) -> None:
+    from core.signup_trace import append_signup_trace_line
+
+    line = msg % args if args else msg
+    append_signup_trace_line(line)
+    logger.exception(line)
+
+
 def _is_email_rate_limit_error(exc: Exception) -> bool:
     from supabase_auth.errors import AuthApiError
 
@@ -308,7 +330,7 @@ class AuthService:
     ):
         from core.database import admin_create_user
 
-        logger.info(
+        _trace(
             "SIGNUP_TRACE stage=admin_create_user.enter email=%s via=core.database.admin_create_user",
             email,
         )
@@ -319,7 +341,7 @@ class AuthService:
             full_name=full_name,
             email_confirm=True,
         )
-        logger.info(
+        _trace(
             "SIGNUP_TRACE stage=admin_create_user.ok user_id=%s",
             (result or {}).get("id"),
         )
@@ -334,11 +356,11 @@ class AuthService:
     ) -> AuthSession:
         """Create a confirmed user via service role (no verification email sent)."""
 
-        logger.info("SIGNUP_TRACE stage=admin_path.enter email=%s", email)
+        _trace("SIGNUP_TRACE stage=admin_path.enter email=%s", email)
 
         existing = self._lookup_auth_user_by_email(email)
         if existing is not None:
-            logger.info(
+            _trace(
                 "SIGNUP_TRACE stage=existing_user branch=finish_existing id=%s confirmed=%s",
                 getattr(existing, "id", None),
                 self._is_user_confirmed(existing),
@@ -350,20 +372,20 @@ class AuthService:
                 full_name=full_name,
             )
 
-        logger.info("SIGNUP_TRACE stage=orphan_cleanup.start")
+        _trace("SIGNUP_TRACE stage=orphan_cleanup.start")
         self._delete_orphaned_account_rows(email)
-        logger.info("SIGNUP_TRACE stage=orphan_cleanup.done")
+        _trace("SIGNUP_TRACE stage=orphan_cleanup.done")
 
         try:
-            logger.info("SIGNUP_TRACE stage=post_admin_users.attempt=1")
+            _trace("SIGNUP_TRACE stage=post_admin_users.attempt=1")
             response = self._create_admin_user(
                 email,
                 password,
                 full_name=full_name,
             )
-            logger.info("SIGNUP_TRACE stage=post_admin_users.attempt=1.result=ok")
+            _trace("SIGNUP_TRACE stage=post_admin_users.attempt=1.result=ok")
         except Exception as exc:
-            logger.warning(
+            _trace_warn(
                 "SIGNUP_TRACE stage=post_admin_users.attempt=1.result=fail type=%s detail=%s",
                 type(exc).__name__,
                 str(exc)[:300],
@@ -379,7 +401,7 @@ class AuthService:
             self._delete_orphaned_account_rows(email)
             existing = self._lookup_auth_user_by_email(email)
             if existing is not None:
-                logger.info(
+                _trace(
                     "SIGNUP_TRACE stage=post_fail_existing branch=finish_existing id=%s",
                     getattr(existing, "id", None),
                 )
@@ -391,15 +413,15 @@ class AuthService:
                 )
 
             try:
-                logger.info("SIGNUP_TRACE stage=post_admin_users.attempt=2")
+                _trace("SIGNUP_TRACE stage=post_admin_users.attempt=2")
                 response = self._create_admin_user(
                     email,
                     password,
                     full_name=full_name,
                 )
-                logger.info("SIGNUP_TRACE stage=post_admin_users.attempt=2.result=ok")
+                _trace("SIGNUP_TRACE stage=post_admin_users.attempt=2.result=ok")
             except Exception as retry_exc:
-                logger.exception(
+                _trace_exc(
                     "SIGNUP_TRACE stage=post_admin_users.attempt=2.result=fail type=%s detail=%s",
                     type(retry_exc).__name__,
                     str(retry_exc)[:300],
@@ -434,7 +456,7 @@ class AuthService:
                 raise AuthError(f"Sign up failed: {retry_exc}") from retry_exc
 
         if not response or not response.get("id"):
-            logger.info(
+            _trace(
                 "SIGNUP_TRACE stage=post_admin_users.empty_response response=%s",
                 bool(response),
             )
@@ -448,12 +470,12 @@ class AuthService:
                 )
             raise AuthError("Sign up failed. Please try again.")
 
-        logger.info(
+        _trace(
             "SIGNUP_TRACE stage=password_sign_in.start user_id=%s",
             response.get("id"),
         )
         session = self._session_after_password_sign_in(email, password)
-        logger.info(
+        _trace(
             "SIGNUP_TRACE stage=password_sign_in.ok user_id=%s",
             session.user.id,
         )
@@ -590,7 +612,7 @@ class AuthService:
             raise AuthError("Enter a valid email address.")
 
         if config.auth_dev_bypass_enabled():
-            logger.info(
+            _trace(
                 "SIGNUP_TRACE AuthService.sign_up path=dev_bypass email=%s",
                 normalized_email,
             )
@@ -599,7 +621,7 @@ class AuthService:
         # Always create accounts via service role with email already confirmed.
         # This avoids Supabase verification-email rate limits entirely.
         if not self._admin_sign_up_available():
-            logger.info(
+            _trace(
                 "SIGNUP_TRACE AuthService.sign_up path=admin_unavailable email=%s",
                 normalized_email,
             )
@@ -608,7 +630,7 @@ class AuthService:
                 "Set SUPABASE_SERVICE_ROLE_KEY in your environment."
             )
 
-        logger.info(
+        _trace(
             "SIGNUP_TRACE AuthService.sign_up path=admin_http email=%s",
             normalized_email,
         )
@@ -649,13 +671,13 @@ class AuthService:
         client = self._require_client()
         assert client is not None
 
-        logger.info("SIGNUP_TRACE stage=sign_in_with_password.enter email=%s", email)
+        _trace("SIGNUP_TRACE stage=sign_in_with_password.enter email=%s", email)
         try:
             response = client.auth.sign_in_with_password(
                 {"email": email, "password": password}
             )
         except Exception as exc:
-            logger.info(
+            _trace(
                 "SIGNUP_TRACE stage=sign_in_with_password.fail type=%s detail=%s",
                 type(exc).__name__,
                 str(exc)[:300],
@@ -665,13 +687,13 @@ class AuthService:
             ) from exc
 
         if response.session is None or response.user is None:
-            logger.info("SIGNUP_TRACE stage=sign_in_with_password.empty_session")
+            _trace("SIGNUP_TRACE stage=sign_in_with_password.empty_session")
             raise AuthError(
                 "Account created, but automatic sign-in failed. Please sign in."
             )
 
         user = self._user_from_payload(response.user.model_dump())
-        logger.info(
+        _trace(
             "SIGNUP_TRACE stage=sign_in_with_password.ok user_id=%s",
             user.id,
         )

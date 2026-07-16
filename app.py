@@ -9,9 +9,26 @@ bootstrap_system_ssl()
 
 import logging
 
+from core.signup_trace import append_signup_trace_line
+
 # TEMPORARY — keep signup instrumentation visible in container logs.
-logging.getLogger("services.auth_service").setLevel(logging.INFO)
-logging.getLogger("core.database").setLevel(logging.INFO)
+_auth_logger = logging.getLogger("services.auth_service")
+_db_logger = logging.getLogger("core.database")
+_auth_logger.setLevel(logging.INFO)
+_db_logger.setLevel(logging.INFO)
+
+print("===== APP.PY STARTED =====", flush=True)
+
+logging.warning(
+    "APP START auth=%s db=%s",
+    _auth_logger.level,
+    _db_logger.level,
+)
+
+append_signup_trace_line("APP.PY STARTED")
+append_signup_trace_line(
+    f"APP START auth={_auth_logger.level} db={_db_logger.level}"
+)
 
 import streamlit as st
 
