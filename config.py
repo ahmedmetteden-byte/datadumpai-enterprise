@@ -15,9 +15,32 @@ logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
 
+# DATADUMPAI_ENV_FILE values that mean "do not load any .env file".
+_SKIP_DOTENV_SENTINELS = frozenset({"none", "-", "off", "skip"})
 
-def _resolve_env_file_path() -> Path:
-    """Resolve the .env file path (override via DATADUMPAI_ENV_FILE for tests)."""
+
+def _dotenv_explicitly_disabled() -> bool:
+    """Return True when tests/tools ask to skip .env loading entirely."""
+
+    flag = os.getenv("DATADUMPAI_SKIP_DOTENV", "").strip().lower()
+    if flag in {"1", "true", "yes"}:
+        return True
+    override = os.getenv("DATADUMPAI_ENV_FILE", "").strip().lower()
+    return override in _SKIP_DOTENV_SENTINELS
+
+
+def _resolve_env_file_path() -> Path | None:
+    """
+    Resolve the .env file path.
+
+    - Default: project-root `.env`
+    - `DATADUMPAI_ENV_FILE=/path/to/file`: use that file (tests)
+    - `DATADUMPAI_ENV_FILE=none` (or `-` / `off` / `skip`), or
+      `DATADUMPAI_SKIP_DOTENV=true`: skip dotenv loading entirely
+    """
+
+    if _dotenv_explicitly_disabled():
+        return None
 
     override = os.getenv("DATADUMPAI_ENV_FILE", "").strip()
     if override:
@@ -25,7 +48,7 @@ def _resolve_env_file_path() -> Path:
     return (_PROJECT_ROOT / ".env").resolve()
 
 
-_ENV_FILE_PATH = _resolve_env_file_path()
+_ENV_FILE_PATH: Path | None = _resolve_env_file_path()
 
 # Keys checked for OS vs .env conflicts during bootstrap.
 _CONFIG_TRACKED_KEYS = ("ENVIRONMENT", "AUTH_DEV_BYPASS")
@@ -70,7 +93,7 @@ def running_locally() -> bool:
     if os_environment == "development":
         return True
 
-    if _ENV_FILE_PATH.is_file():
+    if _ENV_FILE_PATH is not None and _ENV_FILE_PATH.is_file():
         file_environment = (dotenv_values(_ENV_FILE_PATH).get("ENVIRONMENT") or "").strip().lower()
         if file_environment == "development":
             return True
@@ -101,8 +124,17 @@ def _bootstrap_environment() -> None:
     _ENV_FILE_PATH = _resolve_env_file_path()
     local = running_locally()
     _RUNNING_LOCALLY = local
+    _CONFIG_SOURCE = {}
+    _ENV_LOAD_CONFLICTS = []
 
     os_before = {key: os.environ[key] for key in _CONFIG_TRACKED_KEYS if key in os.environ}
+
+    if _ENV_FILE_PATH is None:
+        # Tests can clear OS vars and reload without the project .env filling them back in.
+        for key in _CONFIG_TRACKED_KEYS:
+            _CONFIG_SOURCE[key] = "OS Environment" if key in os_before else "default"
+        return
+
     file_values = dotenv_values(_ENV_FILE_PATH) if _ENV_FILE_PATH.is_file() else {}
 
     for key in _CONFIG_TRACKED_KEYS:
@@ -168,7 +200,7 @@ def print_startup_configuration_diagnostics() -> None:
         ENVIRONMENT,
         "",
         "Loaded .env:",
-        str(_ENV_FILE_PATH),
+        str(_ENV_FILE_PATH) if _ENV_FILE_PATH is not None else "(skipped)",
         "",
         "AUTH_DEV_BYPASS:",
         str(AUTH_DEV_BYPASS).lower(),
@@ -260,10 +292,21 @@ LOCKOUT_MAX_ATTEMPTS = int(os.getenv("LOCKOUT_MAX_ATTEMPTS", "5"))
 LOCKOUT_DURATION_MINUTES = int(os.getenv("LOCKOUT_DURATION_MINUTES", "15"))
 
 
+def is_supabase_configured() -> bool:
+    """Return True when Supabase URL and anon key are present in the environment."""
+
+    # Read live so tests can delete vars (with dotenv skipped) without stale module
+    # constants from a prior import, and so helpers stay accurate after monkeypatch.
+    url = os.getenv("SUPABASE_URL", "").strip()
+    anon_key = os.getenv("SUPABASE_ANON_KEY", "").strip()
+    return bool(url and anon_key)
+
+
 def use_database() -> bool:
     """Return True when metadata should be stored in Supabase PostgreSQL."""
 
-    return DATABASE_BACKEND == "supabase" and is_supabase_configured()
+    backend = os.getenv("DATABASE_BACKEND", "supabase").strip().lower()
+    return backend == "supabase" and is_supabase_configured()
 
 
 def use_supabase_storage() -> bool:
@@ -274,10 +317,6 @@ def use_supabase_storage() -> bool:
     if STORAGE_BACKEND == "supabase":
         return is_supabase_configured()
     return is_supabase_configured()
-
-
-def is_supabase_configured() -> bool:
-    return bool(SUPABASE_URL and SUPABASE_ANON_KEY)
 
 
 def validate_production_auth_configuration() -> list[str]:
@@ -293,7 +332,7 @@ def validate_production_auth_configuration() -> list[str]:
             f"ENVIRONMENT source: {config_source('ENVIRONMENT')}\n\n"
             f"AUTH_DEV_BYPASS: {str(_AUTH_DEV_BYPASS_REQUESTED).lower()}\n"
             f"AUTH_DEV_BYPASS source: {config_source('AUTH_DEV_BYPASS')}\n\n"
-            f"Loaded .env:\n{_ENV_FILE_PATH}\n\n"
+            f"Loaded .env:\n{_ENV_FILE_PATH if _ENV_FILE_PATH is not None else '(skipped)'}\n\n"
             "Reason\n\n"
             "Development authentication cannot be enabled in production."
         )

@@ -41,3 +41,12 @@ sources once to stderr on startup.
 
 Set `DATADUMPAI_ENV_FILE` to point at a temporary `.env` when testing bootstrap
 precedence (`tests/test_config_env_loading.py`).
+
+To simulate **missing** environment variables (without the project `.env` filling
+them back in under local `override=True`), either:
+
+- set `DATADUMPAI_SKIP_DOTENV=true`, or
+- set `DATADUMPAI_ENV_FILE` to `none` / `-` / `off` / `skip`
+
+Then delete the OS variables and `importlib.reload(config)`. See
+`tests/test_database.py`.

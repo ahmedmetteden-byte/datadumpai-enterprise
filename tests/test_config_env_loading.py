@@ -29,6 +29,7 @@ def _reload_config(
         "DATADUMPAI_LOCAL_DEV",
         "RUNNING_IN_DOCKER",
         "DATADUMPAI_ENV_FILE",
+        "DATADUMPAI_SKIP_DOTENV",
     ):
         monkeypatch.delenv(key, raising=False)
 

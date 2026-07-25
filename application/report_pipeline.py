@@ -57,7 +57,10 @@ class ReportPipeline:
 
             access_token = get_access_token()
         self._access_token = access_token
-        self._ai_service = ai_service or AIService()
+        # Lazily create AIService only when an AI operation runs — document
+        # loading and persistence must not require OPENAI_API_KEY.
+        self._injected_ai_service = ai_service
+        self._lazy_ai_service: AIService | None = None
         self._report_service = report_service or ReportService()
         self._project_service = project_service or ProjectService(
             current_user=self._current_user,
@@ -79,6 +82,14 @@ class ReportPipeline:
     @property
     def access_token(self) -> str | None:
         return self._access_token
+
+    @property
+    def _ai_service(self) -> AIService:
+        if self._injected_ai_service is not None:
+            return self._injected_ai_service
+        if self._lazy_ai_service is None:
+            self._lazy_ai_service = AIService()
+        return self._lazy_ai_service
 
     @staticmethod
     def _document_extraction_limits(
