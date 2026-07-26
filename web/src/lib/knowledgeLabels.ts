@@ -27,12 +27,12 @@ export const PROCESSING_STATUS_LABELS: Record<
   KnowledgeProcessingStatusValue,
   string
 > = {
-  uploaded: 'Uploaded',
-  extracting: 'Extracting',
-  processing: 'Processing',
-  indexed: 'Indexed',
-  linked: 'Linked',
-  verified: 'Verified',
+  uploaded: 'Indexing...',
+  extracting: 'Indexing...',
+  processing: 'Indexing...',
+  indexed: 'Done',
+  linked: 'Done',
+  verified: 'Done',
   archived: 'Archived',
   failed: 'Failed',
 };

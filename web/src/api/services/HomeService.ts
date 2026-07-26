@@ -12,14 +12,113 @@ import {
   mockNotifications,
   mockUser,
 } from '@/api/mock/data';
-import { getActiveWorkspace, listActiveWorkspaces } from '@/api/mock/workspaceStore';
-import type { HomePageData } from '@/types/home';
+import { mockListConversations } from '@/api/mock/intelligenceStore';
+import { mockListKnowledge } from '@/api/mock/knowledgeStore';
+import { mockListReports } from '@/api/mock/reportStore';
+import {
+  getActiveWorkspace,
+  listActiveWorkspaces,
+} from '@/api/mock/workspaceStore';
+import type {
+  DashboardMetric,
+  DashboardRecentItem,
+  HomeDashboard,
+  HomePageData,
+} from '@/types/home';
 import type { NotificationItem, User } from '@/types/api';
+
+function buildMockDashboard(workspaceIds: string[]): HomeDashboard {
+  const uploads: DashboardRecentItem[] = [];
+  const reports: DashboardRecentItem[] = [];
+  const conversations: DashboardRecentItem[] = [];
+  let documentCount = 0;
+  let indexedCount = 0;
+  let reportCount = 0;
+
+  for (const workspaceId of workspaceIds) {
+    const knowledge = mockListKnowledge(workspaceId, { limit: 200 });
+    documentCount += knowledge.total;
+    for (const item of knowledge.items) {
+      if (
+        item.status === 'indexed' ||
+        item.status === 'verified' ||
+        item.status === 'linked'
+      ) {
+        indexedCount += 1;
+      }
+      uploads.push({
+        id: item.id,
+        title: item.filename || item.title,
+        subtitle: item.status,
+        href: `/knowledge/${item.id}`,
+        kind: 'document',
+        at: item.createdAt,
+        meta: item.status,
+      });
+    }
+
+    const reportList = mockListReports(workspaceId);
+    reportCount += reportList.length;
+    for (const report of reportList) {
+      reports.push({
+        id: report.id,
+        title: report.name,
+        subtitle: report.periodName || report.reportType || 'Report',
+        href: `/reports/${report.id}`,
+        kind: 'report',
+        at: report.updatedAt || report.createdAt,
+        meta: report.status,
+      });
+    }
+
+    for (const conversation of mockListConversations(workspaceId)) {
+      conversations.push({
+        id: conversation.id,
+        title: conversation.title,
+        subtitle: conversation.preview,
+        href: '/copilot',
+        kind: 'conversation',
+        at: conversation.updatedAt,
+        meta: workspaceId,
+      });
+    }
+  }
+
+  const indexedPercent =
+    documentCount === 0
+      ? 100
+      : Math.round((indexedCount / documentCount) * 100);
+
+  const metrics: DashboardMetric[] = [
+    {
+      id: 'workspaces',
+      label: 'Workspaces',
+      value: workspaceIds.length,
+    },
+    { id: 'documents', label: 'Documents', value: documentCount },
+    { id: 'reports', label: 'Reports', value: reportCount },
+    {
+      id: 'indexed',
+      label: 'Indexed',
+      value: indexedPercent,
+      unit: 'percent',
+    },
+  ];
+
+  const byDateDesc = (a: DashboardRecentItem, b: DashboardRecentItem) =>
+    b.at.localeCompare(a.at);
+
+  return {
+    metrics,
+    recentUploads: uploads.sort(byDateDesc).slice(0, 6),
+    recentReports: reports.sort(byDateDesc).slice(0, 6),
+    recentConversations: conversations.sort(byDateDesc).slice(0, 6),
+  };
+}
 
 /**
  * Home is a composition facade.
- * Mock mode assembles domain services; HTTP mode prefers GET /api/v1/home
- * (BFF) so the backend can optimize the aggregate in one round-trip.
+ * Mock mode assembles domain services; HTTP mode prefers GET /api/v1/home.
  */
 export class MockHomeService implements HomeService {
   private readonly workspace: WorkspaceService;
@@ -63,11 +162,12 @@ export class MockHomeService implements HomeService {
       throw new Error('No workspaces available');
     }
     const id = active.id;
+    const workspaces = await this.workspace.listWorkspaces();
+    const dashboard = buildMockDashboard(workspaces.map((item) => item.id));
 
     const [
       greeting,
       notifications,
-      workspaces,
       search,
       quickActions,
       continueWorking,
@@ -83,7 +183,6 @@ export class MockHomeService implements HomeService {
     ] = await Promise.all([
       this.getGreeting(),
       this.listNotifications(),
-      this.workspace.listWorkspaces(),
       this.knowledge.getSearchSuggestions(id),
       this.report.getQuickActions(id),
       this.workspace.getContinueWorking(id),
@@ -98,6 +197,9 @@ export class MockHomeService implements HomeService {
       this.ai.listInsights(id),
     ]);
 
+    const indexedMetric = dashboard.metrics.find((m) => m.id === 'indexed');
+    const docsMetric = dashboard.metrics.find((m) => m.id === 'documents');
+
     return {
       user: greeting.user,
       greeting: greeting.greeting,
@@ -108,13 +210,33 @@ export class MockHomeService implements HomeService {
       search,
       quickActions,
       continueWorking,
-      insightsOverview,
+      insightsOverview: {
+        ...insightsOverview,
+        healthPercent: indexedMetric?.value ?? insightsOverview.healthPercent,
+        newInsightCount: dashboard.recentConversations.length,
+      },
+      dashboard,
       reportsAwaitingReview: awaitingReview,
       insights: {
-        brief,
+        brief: {
+          ...brief,
+          items: [
+            {
+              id: 'b_live',
+              headline: `${docsMetric?.value ?? 0} documents across ${workspaces.length} workspaces`,
+              detail: `${indexedMetric?.value ?? 0}% indexed and ready for Intelligence Studio.`,
+              priority: 'high',
+              href: '/knowledge',
+            },
+            ...brief.items.slice(0, 2),
+          ],
+        },
         recommendations,
         recentActivity,
-        health,
+        health: {
+          ...health,
+          overallPercent: indexedMetric?.value ?? health.overallPercent,
+        },
         team,
         organizationalIntelligence,
         items,

@@ -78,6 +78,15 @@ export function useBreadcrumbs(): BreadcrumbItem[] {
       return items;
     }
 
+    if (
+      pathname.startsWith(`${ROUTES.reports}/`) &&
+      pathname !== ROUTES.reportsNew
+    ) {
+      items.push({ label: UI_COPY.reportsTitle, href: ROUTES.reports });
+      items.push({ label: 'Report' });
+      return items;
+    }
+
     const pageLabel = PAGE_CRUMBS[pathname];
     if (pageLabel) {
       items.push({ label: pageLabel });

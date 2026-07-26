@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ApiError } from '@/api/client';
 import { services } from '@/api/services';
+import { useAuth } from '@/context/AuthContext';
 import { useWorkspace } from '@/context/WorkspaceContext';
 import type { ActivityLog, Project } from '@/types/api';
 import type {
@@ -33,6 +34,8 @@ export function useWorkspaceDetail(
   workspaceId: string | undefined,
 ): WorkspaceDetailState {
   const { revision } = useWorkspace();
+  const { accessToken } = useAuth();
+  const auth = { accessToken };
   const [data, setData] = useState<WorkspaceDetailData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -65,13 +68,13 @@ export function useWorkspaceDetail(
           continueWorking,
           membership,
         ] = await Promise.all([
-          services.workspace.getWorkspace(workspaceId),
-          services.workspace.getHealth(workspaceId),
-          services.workspace.getInsightsOverview(workspaceId),
-          services.workspace.getTeam(workspaceId),
-          services.workspace.getRecentActivity(workspaceId, 20),
-          services.workspace.getContinueWorking(workspaceId),
-          services.workspace.getMyMembership(workspaceId),
+          services.workspace.getWorkspace(workspaceId, auth),
+          services.workspace.getHealth(workspaceId, auth),
+          services.workspace.getInsightsOverview(workspaceId, auth),
+          services.workspace.getTeam(workspaceId, auth),
+          services.workspace.getRecentActivity(workspaceId, 20, auth),
+          services.workspace.getContinueWorking(workspaceId, auth),
+          services.workspace.getMyMembership(workspaceId, auth),
         ]);
 
         if (!cancelled) {
@@ -107,7 +110,7 @@ export function useWorkspaceDetail(
     return () => {
       cancelled = true;
     };
-  }, [workspaceId, revision, tick]);
+  }, [workspaceId, revision, tick, accessToken]);
 
   return {
     data,

@@ -1,7 +1,10 @@
 import { useState } from 'react';
 import { services } from '@/api/services';
+import { InlineRequestStatus } from '@/components/feedback';
 import { Button, Input, Modal } from '@/components/ui';
 import { UI_COPY } from '@/constants/ui';
+import { useAuth } from '@/context/AuthContext';
+import { useRequestFeedback } from '@/context/RequestFeedbackContext';
 import { useWorkspace } from '@/context/WorkspaceContext';
 import type { CreateWorkspaceInput } from '@/types/workspace';
 
@@ -15,6 +18,8 @@ export function CreateWorkspaceDialog({
   onCreated: (workspaceId: string) => void;
 }) {
   const { bumpRevision } = useWorkspace();
+  const { accessToken } = useAuth();
+  const feedback = useRequestFeedback();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -33,7 +38,17 @@ export function CreateWorkspaceDialog({
     setSubmitting(true);
     setError(null);
     try {
-      const created = await services.workspace.createWorkspace(input);
+      const created = await feedback.run(
+        () =>
+          services.workspace.createWorkspace(input, {
+            accessToken,
+          }),
+        {
+          loading: UI_COPY.requestLoading,
+          success: UI_COPY.requestSuccess,
+          error: UI_COPY.createError,
+        },
+      );
       bumpRevision();
       setName('');
       setDescription('');
@@ -57,7 +72,7 @@ export function CreateWorkspaceDialog({
             {UI_COPY.cancel}
           </Button>
           <Button onClick={() => void handleSubmit()} disabled={submitting}>
-            {UI_COPY.createWorkspace}
+            {submitting ? UI_COPY.requestLoading : UI_COPY.createWorkspace}
           </Button>
         </>
       }
@@ -88,7 +103,21 @@ export function CreateWorkspaceDialog({
         rows={3}
         className="w-full rounded-lg border border-surface-border bg-white px-4 py-3 text-body text-ink shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
       />
-      {error ? <p className="mt-3 text-small text-danger">{error}</p> : null}
+      {submitting ? (
+        <InlineRequestStatus
+          className="mt-3"
+          kind="loading"
+          message={UI_COPY.requestLoading}
+        />
+      ) : null}
+      {error ? (
+        <InlineRequestStatus
+          className="mt-3"
+          kind="error"
+          message={error}
+          onRetry={() => void handleSubmit()}
+        />
+      ) : null}
     </Modal>
   );
 }

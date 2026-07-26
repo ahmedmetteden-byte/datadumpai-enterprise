@@ -17,7 +17,7 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173). Phase 1 uses mock Home data (`VITE_USE_MOCK_API=true`).
+Open [http://localhost:5173](http://localhost:5173). By default the SPA uses the live product API (`VITE_USE_MOCK_API=false`). Start the FastAPI API (and set Supabase env vars) so Home, Library, Studio, and Reports load real workspace data.
 
 ## Scripts
 
@@ -32,20 +32,24 @@ Open [http://localhost:5173](http://localhost:5173). Phase 1 uses mock Home data
 
 ```
 src/
-  pages/Home/          # Horizon Home composition
-  components/          # cards, drawers, layout, ui
+  pages/
+    Auth/              # Login, register, forgot password
+    Account/           # Profile + organisation membership
+    Home/              # Horizon Home composition
+  components/
+    auth/              # ProtectedRoute / PublicOnlyRoute
+    cards, drawers, layout, ui
   api/
-    services/          # Home, Workspace, Knowledge, Report, Publish, AI
+    services/          # Auth, Profile, Home, Workspace, Knowledge, Report, Publish, AI
     mock/data.ts       # Domain fixtures for Mock*Service
-    client.ts          # Shared fetch + Bearer helper
-  types/               # Typed API models
-  hooks/               # Data + disclosure hooks
-  context/             # Workspace selection
+    client.ts          # Shared fetch + Bearer helper (+ 401 → /auth/login)
+  context/             # Auth + Workspace selection
   constants/           # Routes + chrome copy
 ```
 
 UI imports `services` from `@/api/services` (never mock data or URLs).
 
+Auth (Phase 1): with `VITE_USE_MOCK_API=true`, any email + password (≥6 chars) signs in and the session persists in `localStorage`. With real Supabase env vars and mocks off, the SPA uses Supabase Auth JWTs.
 Architecture references:
 
 - [BACKEND_INTEGRATION.md](./BACKEND_INTEGRATION.md) — FastAPI / Supabase connection

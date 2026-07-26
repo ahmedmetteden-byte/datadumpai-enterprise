@@ -59,6 +59,7 @@ export interface WorkspaceService {
     auth?: ServiceAuth,
   ): Promise<Project>;
   archiveWorkspace(workspaceId: string, auth?: ServiceAuth): Promise<void>;
+  deleteWorkspace(workspaceId: string, auth?: ServiceAuth): Promise<void>;
   getMyMembership(
     workspaceId: string,
     auth?: ServiceAuth,
@@ -139,6 +140,16 @@ export interface KnowledgeService {
     knowledgeId: string,
     auth?: ServiceAuth,
   ): Promise<KnowledgeProcessingStatus>;
+  reindex(
+    workspaceId: string,
+    knowledgeId: string,
+    auth?: ServiceAuth,
+  ): Promise<KnowledgeProcessingStatus>;
+  download(
+    workspaceId: string,
+    knowledgeId: string,
+    auth?: ServiceAuth,
+  ): Promise<Blob>;
   getFilterOptions(
     workspaceId: string,
     auth?: ServiceAuth,
@@ -155,6 +166,40 @@ export interface ReportService {
     workspaceId: string,
     auth?: ServiceAuth,
   ): Promise<QuickAction[]>;
+  listTemplates(
+    workspaceId: string,
+    auth?: ServiceAuth,
+  ): Promise<import('@/types/reports').ReportTemplate[]>;
+  listPeriods(
+    workspaceId: string,
+    auth?: ServiceAuth,
+  ): Promise<import('@/types/reports').ReportPeriod[]>;
+  listReportDetails(
+    workspaceId: string,
+    auth?: ServiceAuth,
+  ): Promise<import('@/types/reports').ReportDetail[]>;
+  getReport(
+    workspaceId: string,
+    reportId: string,
+    auth?: ServiceAuth,
+  ): Promise<import('@/types/reports').ReportDetail>;
+  generate(
+    workspaceId: string,
+    input: import('@/types/reports').GenerateReportInput,
+    auth?: ServiceAuth,
+  ): Promise<import('@/types/reports').ReportDetail>;
+  save(
+    workspaceId: string,
+    reportId: string,
+    status?: import('@/types/reports').ReportStatus,
+    auth?: ServiceAuth,
+  ): Promise<import('@/types/reports').ReportDetail>;
+  export(
+    workspaceId: string,
+    reportId: string,
+    format: import('@/types/reports').ReportExportFormat,
+    auth?: ServiceAuth,
+  ): Promise<Blob>;
 }
 
 export interface PublishJob {
@@ -232,6 +277,17 @@ export interface IntelligenceService {
   listSuggestions(workspaceId: string, auth?: ServiceAuth): Promise<string[]>;
 }
 
+export interface ProfileService {
+  getProfile(auth?: ServiceAuth): Promise<import('@/types/auth').UserProfile>;
+  updateProfile(
+    input: import('@/types/auth').UpdateProfileInput,
+    auth?: ServiceAuth,
+  ): Promise<import('@/types/auth').UserProfile>;
+  listOrganisationMemberships(
+    auth?: ServiceAuth,
+  ): Promise<import('@/types/auth').OrganisationMembership[]>;
+}
+
 export interface ServiceContainer {
   home: HomeService;
   workspace: WorkspaceService;
@@ -240,4 +296,5 @@ export interface ServiceContainer {
   publish: PublishService;
   ai: AIService;
   intelligence: IntelligenceService;
+  profile: ProfileService;
 }

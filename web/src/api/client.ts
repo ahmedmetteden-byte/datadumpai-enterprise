@@ -1,5 +1,8 @@
 import type { ApiErrorBody } from '@/types/api';
 
+const NETWORK_ERROR_MESSAGE =
+  'Network error. Check your connection and try again.';
+
 export class ApiError extends Error {
   readonly status: number;
   readonly body?: ApiErrorBody;
@@ -36,16 +39,24 @@ export async function apiRequest<T>(
   const { body, token, headers, ...rest } = options;
   const url = `${resolveBaseUrl()}${path.startsWith('/') ? path : `/${path}`}`;
 
-  const response = await fetch(url, {
-    ...rest,
-    headers: {
-      Accept: 'application/json',
-      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...headers,
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...rest,
+      headers: {
+        Accept: 'application/json',
+        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...headers,
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw err;
+    }
+    throw new ApiError(NETWORK_ERROR_MESSAGE, 0);
+  }
 
   if (!response.ok) {
     let errorBody: ApiErrorBody | undefined;
@@ -54,8 +65,18 @@ export async function apiRequest<T>(
     } catch {
       errorBody = undefined;
     }
+
+    if (response.status === 401 && typeof window !== 'undefined') {
+      const path = window.location.pathname;
+      if (!path.startsWith('/auth')) {
+        window.location.assign('/auth/login');
+      }
+    }
+
     throw new ApiError(
-      errorBody?.detail ?? `Request failed (${response.status})`,
+      typeof errorBody?.detail === 'string'
+        ? errorBody.detail
+        : `Request failed (${response.status})`,
       response.status,
       errorBody,
     );
@@ -66,4 +87,83 @@ export async function apiRequest<T>(
   }
 
   return (await response.json()) as T;
+}
+
+export interface UploadOptions {
+  token?: string | null;
+  signal?: AbortSignal;
+  /** 0–100 while bytes are transferring to the API */
+  onProgress?: (percent: number) => void;
+}
+
+/** Multipart upload helper with optional transfer progress (XHR). */
+export async function apiUpload<T>(
+  path: string,
+  formData: FormData,
+  options: UploadOptions = {},
+): Promise<T> {
+  const url = `${resolveBaseUrl()}${path.startsWith('/') ? path : `/${path}`}`;
+
+  return new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.responseType = 'json';
+    xhr.setRequestHeader('Accept', 'application/json');
+    if (options.token) {
+      xhr.setRequestHeader('Authorization', `Bearer ${options.token}`);
+    }
+
+    if (options.signal) {
+      if (options.signal.aborted) {
+        reject(new DOMException('Upload aborted', 'AbortError'));
+        return;
+      }
+      options.signal.addEventListener('abort', () => xhr.abort(), {
+        once: true,
+      });
+    }
+
+    xhr.upload.onprogress = (event) => {
+      if (!options.onProgress || !event.lengthComputable || event.total <= 0) {
+        return;
+      }
+      const percent = Math.max(
+        0,
+        Math.min(100, Math.round((event.loaded / event.total) * 100)),
+      );
+      options.onProgress(percent);
+    };
+
+    xhr.onload = () => {
+      if (xhr.status === 401 && typeof window !== 'undefined') {
+        const current = window.location.pathname;
+        if (!current.startsWith('/auth')) {
+          window.location.assign('/auth/login');
+        }
+      }
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        options.onProgress?.(100);
+        resolve(xhr.response as T);
+        return;
+      }
+
+      const errorBody = (xhr.response ?? undefined) as ApiErrorBody | undefined;
+      const detail =
+        typeof errorBody?.detail === 'string'
+          ? errorBody.detail
+          : `Upload failed (${xhr.status})`;
+      reject(new ApiError(detail, xhr.status, errorBody));
+    };
+
+    xhr.onerror = () => {
+      reject(new ApiError(NETWORK_ERROR_MESSAGE, 0));
+    };
+
+    xhr.onabort = () => {
+      reject(new DOMException('Upload aborted', 'AbortError'));
+    };
+
+    xhr.send(formData);
+  });
 }

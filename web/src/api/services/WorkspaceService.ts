@@ -63,6 +63,11 @@ export class MockWorkspaceService implements WorkspaceService {
     archiveWorkspaceRecord(workspaceId);
   }
 
+  async deleteWorkspace(workspaceId: string): Promise<void> {
+    await mockLatency(120);
+    archiveWorkspaceRecord(workspaceId);
+  }
+
   async getMyMembership(
     workspaceId: string,
   ): Promise<WorkspaceMembership | null> {
@@ -142,6 +147,13 @@ export class HttpWorkspaceService implements WorkspaceService {
   async archiveWorkspace(workspaceId: string, auth?: ServiceAuth) {
     await apiRequest<void>(`/api/v1/workspaces/${workspaceId}/archive`, {
       method: 'POST',
+      token: auth?.accessToken,
+    });
+  }
+
+  async deleteWorkspace(workspaceId: string, auth?: ServiceAuth) {
+    await apiRequest<void>(`/api/v1/workspaces/${workspaceId}`, {
+      method: 'DELETE',
       token: auth?.accessToken,
     });
   }

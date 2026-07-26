@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { InlineRequestStatus } from '@/components/feedback';
 import { Button } from '@/components/ui/Button';
 import { Drawer } from '@/components/drawers/Drawer';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -12,7 +13,10 @@ import { useWorkspaceList } from '@/hooks/useWorkspaceList';
 import { CitationPanel } from './CitationPanel';
 import { ConversationList } from './ConversationList';
 import { ConversationView } from './ConversationView';
-import type { IntelligenceSource } from '@/types/intelligence';
+import type {
+  IntelligenceCitation,
+  IntelligenceSource,
+} from '@/types/intelligence';
 
 export function IntelligenceStudioPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -22,6 +26,9 @@ export function IntelligenceStudioPage() {
   const sourcesDrawer = useDisclosure(false);
   const conversationsDrawer = useDisclosure(false);
   const [preview, setPreview] = useState<IntelligenceSource | null>(null);
+  const [panelCitations, setPanelCitations] = useState<IntelligenceCitation[]>(
+    [],
+  );
 
   const workspaceName =
     workspaces.find((item) => item.id === activeWorkspaceId)?.name ?? null;
@@ -43,9 +50,14 @@ export function IntelligenceStudioPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeWorkspaceId]);
 
-  const latestConfidence = [...(studio.conversation?.messages ?? [])]
+  const latestAssistant = [...(studio.conversation?.messages ?? [])]
     .reverse()
-    .find((message) => typeof message.confidence === 'number')?.confidence;
+    .find((message) => message.role === 'assistant' && message.status === 'complete');
+  const latestConfidence = latestAssistant?.confidence;
+  const evidenceCitations =
+    panelCitations.length > 0
+      ? panelCitations
+      : (latestAssistant?.citations ?? []);
 
   function handleRename(id: string) {
     const current = studio.conversations.find((item) => item.id === id);
@@ -84,10 +96,20 @@ export function IntelligenceStudioPage() {
 
   return (
     <div className="-mx-4 -mb-6 flex min-h-[calc(100vh-7.5rem)] flex-col sm:-mx-6 lg:-mx-10 lg:min-h-[calc(100vh-6.5rem)]">
+      {studio.listLoading && !studio.error ? (
+        <InlineRequestStatus
+          kind="loading"
+          message={UI_COPY.requestLoading}
+          className="rounded-none border-x-0 border-t-0"
+        />
+      ) : null}
       {studio.error ? (
-        <div className="border-b border-danger/20 bg-red-50 px-4 py-2 text-small text-danger">
-          {studio.error}
-        </div>
+        <InlineRequestStatus
+          kind="error"
+          message={studio.error}
+          onRetry={() => void studio.refreshList()}
+          className="rounded-none border-x-0 border-t-0"
+        />
       ) : null}
       {askDisabled ? (
         <div className="border-b border-warning/30 bg-amber-50 px-4 py-2 text-small text-warning">
@@ -149,7 +171,12 @@ export function IntelligenceStudioPage() {
             onModeChange={studio.setMode}
             onSend={(content) => void studio.sendMessage(content)}
             onSelectSources={(message) => {
-              studio.setSelectedSources(message.sources ?? []);
+              studio.setSelectedSources(
+                message.linkedDocuments?.length
+                  ? message.linkedDocuments
+                  : (message.sources ?? []),
+              );
+              setPanelCitations(message.citations ?? []);
               sourcesDrawer.open();
             }}
           />
@@ -158,6 +185,7 @@ export function IntelligenceStudioPage() {
         <div className="hidden min-h-0 lg:block">
           <CitationPanel
             sources={studio.selectedSources}
+            citations={evidenceCitations}
             confidence={latestConfidence}
             onOpenSource={openSource}
           />
@@ -201,6 +229,7 @@ export function IntelligenceStudioPage() {
       >
         <CitationPanel
           sources={studio.selectedSources}
+          citations={evidenceCitations}
           confidence={latestConfidence}
           onOpenSource={openSource}
         />

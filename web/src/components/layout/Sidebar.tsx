@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom';
-import { APP_NAME, PRIMARY_NAV, ROUTES } from '@/constants/ui';
+import { APP_NAME, PRIMARY_NAV, ROUTES, UI_COPY } from '@/constants/ui';
+import { useAuth } from '@/context/AuthContext';
 import { cn } from '@/lib/cn';
 
 export function Sidebar({
@@ -9,6 +10,10 @@ export function Sidebar({
   open: boolean;
   onNavigate?: () => void;
 }) {
+  const { user, profile, signOut } = useAuth();
+  const label =
+    profile?.fullName || user?.fullName || user?.email?.split('@')[0] || 'User';
+
   return (
     <aside
       className={cn(
@@ -51,6 +56,9 @@ export function Sidebar({
       </nav>
 
       <div className="border-t border-white/10 px-3 py-4">
+        <div className="mb-2 truncate px-3 text-caption text-white/50">
+          {label}
+        </div>
         <NavLink
           to={ROUTES.settings}
           onClick={onNavigate}
@@ -65,6 +73,16 @@ export function Sidebar({
         >
           Account
         </NavLink>
+        <button
+          type="button"
+          onClick={() => {
+            onNavigate?.();
+            void signOut();
+          }}
+          className="mt-1 w-full rounded-md px-3 py-2.5 text-left text-small text-white/70 hover:bg-sidebar-hover hover:text-white"
+        >
+          {UI_COPY.authSignOut}
+        </button>
       </div>
     </aside>
   );

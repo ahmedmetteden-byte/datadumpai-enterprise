@@ -1,4 +1,4 @@
-import { useMockApi } from '@/api/config';
+import { isMockApiEnabled } from '@/api/config';
 import type { ServiceContainer } from '@/api/services/contracts';
 import { HttpAIService, MockAIService } from '@/api/services/AIService';
 import { HttpHomeService, MockHomeService } from '@/api/services/HomeService';
@@ -22,13 +22,16 @@ import {
   HttpWorkspaceService,
   MockWorkspaceService,
 } from '@/api/services/WorkspaceService';
+import { createProfileService } from '@/api/services/ProfileService';
 
 /**
  * Builds the application service container.
- * Swap mock → HTTP with VITE_USE_MOCK_API=false; method signatures stay identical.
+ * Uses HTTP services by default. Set VITE_USE_MOCK_API=true only for offline demos.
  */
 export function createServices(): ServiceContainer {
-  if (useMockApi()) {
+  const profile = createProfileService();
+
+  if (isMockApiEnabled()) {
     const workspace = new MockWorkspaceService();
     const knowledge = new MockKnowledgeService();
     const report = new MockReportService();
@@ -44,6 +47,7 @@ export function createServices(): ServiceContainer {
       ai,
       intelligence,
       home: new MockHomeService(workspace, knowledge, report, ai),
+      profile,
     };
   }
 
@@ -55,6 +59,7 @@ export function createServices(): ServiceContainer {
     publish: new HttpPublishService(),
     ai: new HttpAIService(),
     intelligence: new HttpIntelligenceService(),
+    profile,
   };
 }
 

@@ -1,4 +1,4 @@
-import { apiRequest } from '@/api/client';
+import { apiRequest, apiUpload } from '@/api/client';
 import { mockLatency, type ServiceAuth } from '@/api/config';
 import type { KnowledgeService } from '@/api/services/contracts';
 import { mockSearchSuggestions } from '@/api/mock/data';
@@ -9,6 +9,7 @@ import {
   mockListKnowledge,
   mockPreview,
   mockProcessingStatus,
+  mockReindex,
   mockRelated,
   mockTag,
   mockUpload,
@@ -72,6 +73,11 @@ export class MockKnowledgeService implements KnowledgeService {
 
   async upload(workspaceId: string, input: KnowledgeUploadInput) {
     await mockLatency(180);
+    input.onProgress?.(35);
+    await mockLatency(80);
+    input.onProgress?.(70);
+    await mockLatency(60);
+    input.onProgress?.(100);
     return mockUpload(workspaceId, input);
   }
 
@@ -98,6 +104,18 @@ export class MockKnowledgeService implements KnowledgeService {
   async processingStatus(workspaceId: string, knowledgeId: string) {
     await mockLatency(40);
     return mockProcessingStatus(workspaceId, knowledgeId);
+  }
+
+  async reindex(workspaceId: string, knowledgeId: string) {
+    await mockLatency(80);
+    return mockReindex(workspaceId, knowledgeId);
+  }
+
+  async download(workspaceId: string, knowledgeId: string) {
+    await mockLatency(60);
+    void workspaceId;
+    void knowledgeId;
+    return new Blob(['mock file contents'], { type: 'text/plain' });
   }
 
   async getFilterOptions(workspaceId: string) {
@@ -152,13 +170,15 @@ export class HttpKnowledgeService implements KnowledgeService {
     input: KnowledgeUploadInput,
     auth?: ServiceAuth,
   ) {
-    return apiRequest<KnowledgeListItem>(
+    const form = new FormData();
+    form.append('file', input.file, input.file.name);
+    if (input.title?.trim()) {
+      form.append('title', input.title.trim());
+    }
+    return apiUpload<KnowledgeListItem>(
       `/api/v1/workspaces/${workspaceId}/knowledge/upload`,
-      {
-        method: 'POST',
-        body: input,
-        token: auth?.accessToken,
-      },
+      form,
+      { token: auth?.accessToken, onProgress: input.onProgress },
     );
   }
 
@@ -220,6 +240,42 @@ export class HttpKnowledgeService implements KnowledgeService {
       `/api/v1/workspaces/${workspaceId}/knowledge/${knowledgeId}/processing`,
       { token: auth?.accessToken },
     );
+  }
+
+  async reindex(
+    workspaceId: string,
+    knowledgeId: string,
+    auth?: ServiceAuth,
+  ) {
+    return apiRequest<KnowledgeProcessingStatus>(
+      `/api/v1/workspaces/${workspaceId}/knowledge/${knowledgeId}/reindex`,
+      { method: 'POST', token: auth?.accessToken },
+    );
+  }
+
+  async download(
+    workspaceId: string,
+    knowledgeId: string,
+    auth?: ServiceAuth,
+  ) {
+    const base = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(
+      /\/$/,
+      '',
+    ) ?? '';
+    const response = await fetch(
+      `${base}/api/v1/workspaces/${workspaceId}/knowledge/${knowledgeId}/download`,
+      {
+        headers: {
+          ...(auth?.accessToken
+            ? { Authorization: `Bearer ${auth.accessToken}` }
+            : {}),
+        },
+      },
+    );
+    if (!response.ok) {
+      throw new Error(`Download failed (${response.status})`);
+    }
+    return response.blob();
   }
 
   async getFilterOptions(workspaceId: string, auth?: ServiceAuth) {

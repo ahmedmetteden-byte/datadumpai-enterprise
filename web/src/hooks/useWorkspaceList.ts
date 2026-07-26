@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { services } from '@/api/services';
+import { useAuth } from '@/context/AuthContext';
 import { useWorkspace } from '@/context/WorkspaceContext';
 import type { Project } from '@/types/api';
 
@@ -12,6 +13,7 @@ interface WorkspaceListState {
 
 export function useWorkspaceList(): WorkspaceListState {
   const { revision } = useWorkspace();
+  const { accessToken } = useAuth();
   const [workspaces, setWorkspaces] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -24,7 +26,9 @@ export function useWorkspaceList(): WorkspaceListState {
       setLoading(true);
       setError(null);
       try {
-        const items = await services.workspace.listWorkspaces();
+        const items = await services.workspace.listWorkspaces({
+          accessToken,
+        });
         if (!cancelled) {
           setWorkspaces(items);
         }
@@ -46,7 +50,7 @@ export function useWorkspaceList(): WorkspaceListState {
     return () => {
       cancelled = true;
     };
-  }, [revision, tick]);
+  }, [revision, tick, accessToken]);
 
   return {
     workspaces,

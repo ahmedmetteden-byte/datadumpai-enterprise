@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { Drawer } from '@/components/drawers/Drawer';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -8,6 +8,7 @@ import { KnowledgeLibrary } from '@/pages/Knowledge/KnowledgeLibrary';
 import { KnowledgePreview } from '@/pages/Knowledge/KnowledgePreview';
 import { KnowledgeUploadDialog } from '@/pages/Knowledge/KnowledgeUploadDialog';
 import { ROUTES, UI_COPY } from '@/constants/ui';
+import { useRequestFeedback } from '@/context/RequestFeedbackContext';
 import { useDisclosure } from '@/hooks/useDisclosure';
 import { useOrganisationalMemory } from '@/hooks/useOrganisationalMemory';
 import { useWorkspace } from '@/context/WorkspaceContext';
@@ -15,8 +16,11 @@ import { useWorkspaceList } from '@/hooks/useWorkspaceList';
 
 export function KnowledgePage() {
   const { id: routeId } = useParams<{ id?: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { activeWorkspaceId, setActiveWorkspaceId } = useWorkspace();
+  const feedback = useRequestFeedback();
+  const { activeWorkspaceId, setActiveWorkspaceId, bumpRevision } =
+    useWorkspace();
   const { workspaces } = useWorkspaceList();
   const [selectedId, setSelectedId] = useState<string | null>(routeId ?? null);
   const memory = useOrganisationalMemory(selectedId);
@@ -29,6 +33,16 @@ export function KnowledgePage() {
       setActiveWorkspaceId(workspaces[0].id);
     }
   }, [activeWorkspaceId, workspaces, setActiveWorkspaceId]);
+
+  useEffect(() => {
+    if (searchParams.get('upload') === '1') {
+      uploadDialog.open();
+      const next = new URLSearchParams(searchParams);
+      next.delete('upload');
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   useEffect(() => {
     setSelectedId(routeId ?? null);
@@ -58,6 +72,18 @@ export function KnowledgePage() {
     navigate(ROUTES.knowledge, { replace: true });
   }
 
+  function runAction(action: () => Promise<unknown>, successMessage?: string) {
+    void feedback
+      .run(action, {
+        loading: UI_COPY.requestLoading,
+        success: successMessage ?? UI_COPY.requestSuccess,
+        error: UI_COPY.requestError,
+      })
+      .catch(() => {
+        /* Error toast includes Retry */
+      });
+  }
+
   if (!memory.activeWorkspaceId) {
     return (
       <EmptyState
@@ -84,9 +110,31 @@ export function KnowledgePage() {
   const previewPanel = (
     <KnowledgePreview
       detail={memory.detail}
+      preview={memory.preview}
       processing={memory.processing}
       loading={memory.detailLoading}
       onOpenRelated={selectItem}
+      onReindex={() => {
+        if (!selectedId) return;
+        runAction(() => memory.reindex(selectedId));
+      }}
+      onDownload={() => {
+        if (!selectedId) return;
+        runAction(() =>
+          memory.download(
+            selectedId,
+            memory.detail?.filename || memory.detail?.title,
+          ),
+        );
+      }}
+      onDelete={() => {
+        if (!selectedId) return;
+        if (!window.confirm(UI_COPY.knowledgeBulkDeleteConfirm)) return;
+        runAction(async () => {
+          await memory.remove(selectedId);
+          clearSelectionNav();
+        });
+      }}
     />
   );
 
@@ -141,7 +189,8 @@ export function KnowledgePage() {
             if (!window.confirm(UI_COPY.knowledgeBulkDeleteConfirm)) return;
             const removingSelected =
               selectedId != null && memory.selectedIds.includes(selectedId);
-            void memory.removeSelected().then(() => {
+            runAction(async () => {
+              await memory.removeSelected();
               if (removingSelected) clearSelectionNav();
             });
           }}
@@ -154,6 +203,21 @@ export function KnowledgePage() {
             memory.resetFilters();
           }}
           onRetry={() => void memory.reload()}
+          onView={selectItem}
+          onDelete={(id) => {
+            if (!window.confirm(UI_COPY.knowledgeBulkDeleteConfirm)) return;
+            runAction(async () => {
+              await memory.remove(id);
+              if (selectedId === id) clearSelectionNav();
+            });
+          }}
+          onReindex={(id) => runAction(() => memory.reindex(id))}
+          onDownload={(id) => {
+            const item = memory.items.find((row) => row.id === id);
+            runAction(() =>
+              memory.download(id, item?.filename || item?.title),
+            );
+          }}
         />
 
         <div className="hidden lg:block">{previewPanel}</div>
@@ -189,6 +253,8 @@ export function KnowledgePage() {
         onClose={uploadDialog.close}
         workspaceId={memory.activeWorkspaceId}
         onUploaded={(item) => {
+          bumpRevision();
+          feedback.notifySuccess(UI_COPY.knowledgeUploadSuccessToast);
           selectItem(item.id);
         }}
       />

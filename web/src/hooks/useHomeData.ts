@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { services } from '@/api/services';
+import { useAuth } from '@/context/AuthContext';
 import type { HomePageData } from '@/types/home';
 
 interface HomeDataState {
@@ -10,6 +11,7 @@ interface HomeDataState {
 }
 
 export function useHomeData(workspaceId?: string): HomeDataState {
+  const { accessToken } = useAuth();
   const [data, setData] = useState<HomePageData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -22,7 +24,9 @@ export function useHomeData(workspaceId?: string): HomeDataState {
       setLoading(true);
       setError(null);
       try {
-        const result = await services.home.getHome(workspaceId);
+        const result = await services.home.getHome(workspaceId, {
+          accessToken,
+        });
         if (!cancelled) {
           setData(result);
         }
@@ -42,7 +46,7 @@ export function useHomeData(workspaceId?: string): HomeDataState {
     return () => {
       cancelled = true;
     };
-  }, [workspaceId, tick]);
+  }, [workspaceId, tick, accessToken]);
 
   return {
     data,

@@ -1,14 +1,17 @@
 /**
  * Shared API runtime config.
- * Flip VITE_USE_MOCK_API=false when FastAPI product routes are live.
+ * Mock data is off by default — set VITE_USE_MOCK_API=true only for offline demos.
  */
 
-export function useMockApi(): boolean {
+export function isMockApiEnabled(): boolean {
   return (
-    (import.meta.env.VITE_USE_MOCK_API ?? 'true').toString().toLowerCase() !==
-    'false'
+    (import.meta.env.VITE_USE_MOCK_API ?? 'false').toString().toLowerCase() ===
+    'true'
   );
 }
+
+/** @deprecated Prefer isMockApiEnabled — name avoided "use*" for oxlint hooks rule. */
+export const useMockApi = isMockApiEnabled;
 
 export async function mockLatency(ms = 160): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));

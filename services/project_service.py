@@ -212,6 +212,7 @@ class ProjectService:
             "exports": [],
             "storage_used": 0,
             "last_activity": timestamp,
+            "archived_at": None,
         }
 
         self._document_service.create_project_folders(project["id"])

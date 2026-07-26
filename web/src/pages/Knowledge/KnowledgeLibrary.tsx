@@ -1,3 +1,4 @@
+import { InlineRequestStatus } from '@/components/feedback';
 import { Button } from '@/components/ui/Button';
 import { EmptyKnowledge } from '@/pages/Knowledge/EmptyKnowledge';
 import { KnowledgeCard } from '@/pages/Knowledge/KnowledgeCard';
@@ -37,6 +38,10 @@ export function KnowledgeLibrary({
   onUpload,
   onClearSearch,
   onRetry,
+  onView,
+  onDelete,
+  onReindex,
+  onDownload,
 }: {
   items: KnowledgeListItem[];
   total: number;
@@ -64,6 +69,10 @@ export function KnowledgeLibrary({
   onUpload: () => void;
   onClearSearch: () => void;
   onRetry: () => void;
+  onView: (id: string) => void;
+  onDelete: (id: string) => void;
+  onReindex: (id: string) => void;
+  onDownload: (id: string) => void;
   filters?: KnowledgeFiltersState;
 }) {
   return (
@@ -73,9 +82,9 @@ export function KnowledgeLibrary({
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-page-title text-ink">{UI_COPY.knowledgeTitle}</h1>
+          <h1 className="text-page-title text-ink">{UI_COPY.knowledgeLibrary}</h1>
           <p className="mt-1 text-small text-ink-muted">
-            {UI_COPY.knowledgeSubtitle}
+            {UI_COPY.knowledgeLibrarySubtitle}
           </p>
         </div>
         <Button onClick={onUpload}>{UI_COPY.knowledgeUpload}</Button>
@@ -113,20 +122,13 @@ export function KnowledgeLibrary({
       ) : null}
 
       {error ? (
-        <div className="rounded-xl border border-dashed border-surface-border bg-white px-6 py-10 text-center">
-          <p className="text-section text-ink">{UI_COPY.knowledgeLoadError}</p>
-          <p className="mt-1 text-small text-ink-muted">{error}</p>
-          <Button className="mt-4" onClick={onRetry}>
-            {UI_COPY.retry}
-          </Button>
-        </div>
+        <InlineRequestStatus
+          kind="error"
+          message={error || UI_COPY.knowledgeLoadError}
+          onRetry={onRetry}
+        />
       ) : loading ? (
-        <div
-          className="rounded-xl border border-surface-border bg-white px-6 py-16 text-center text-small text-ink-muted"
-          role="status"
-        >
-          {UI_COPY.knowledgeLoading}
-        </div>
+        <InlineRequestStatus kind="loading" message={UI_COPY.knowledgeLoading} />
       ) : items.length === 0 ? (
         <EmptyKnowledge
           variant={hasQuery ? 'search' : 'none'}
@@ -151,9 +153,12 @@ export function KnowledgeLibrary({
           items={items}
           selectedId={selectedId}
           selectedIds={selectedIds}
-          onSelect={onSelect}
           onToggleCheck={onToggleCheck}
           onToggleAll={onToggleAll}
+          onView={onView}
+          onDelete={onDelete}
+          onReindex={onReindex}
+          onDownload={onDownload}
         />
       )}
 

@@ -22,6 +22,17 @@ export interface IntelligenceSource {
   location?: string;
   excerpt?: string;
   previewUrl?: string;
+  documentId?: string | null;
+  score?: number | null;
+}
+
+export interface IntelligenceCitation {
+  id: string;
+  index: number;
+  sourceId: string;
+  label: string;
+  quote: string;
+  location?: string;
 }
 
 export interface StudioReadiness {
@@ -53,6 +64,8 @@ export interface IntelligenceMessage {
   confidence?: number;
   followUps?: string[];
   sources?: IntelligenceSource[];
+  citations?: IntelligenceCitation[];
+  linkedDocuments?: IntelligenceSource[];
   notice?: string | null;
   status: 'pending' | 'streaming' | 'complete' | 'error';
   createdAt: IsoDateTime;

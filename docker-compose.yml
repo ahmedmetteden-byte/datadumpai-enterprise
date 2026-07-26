@@ -6,6 +6,8 @@ services:
     restart: unless-stopped
     ports:
       - "3001:80"
+    depends_on:
+      - api
 
   app:
     build: .
@@ -26,6 +28,7 @@ services:
       - ./models:/app/models:ro
       - ./repositories:/app/repositories:ro
       - ./storage:/app/storage:ro
+      - ./api:/app/api:ro
       - ./.streamlit:/app/.streamlit:ro
     restart: unless-stopped
     healthcheck:
@@ -40,6 +43,59 @@ services:
       timeout: 10s
       retries: 3
       start_period: 90s
+
+  api:
+    build: .
+    env_file:
+      - .env
+    environment:
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+    command:
+      [
+        "uvicorn",
+        "api.app:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+      ]
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - app_data:/app/data
+      - ./api:/app/api:ro
+      - ./services:/app/services:ro
+      - ./repositories:/app/repositories:ro
+      - ./storage:/app/storage:ro
+      - ./core:/app/core:ro
+      - ./models:/app/models:ro
+      - ./application:/app/application:ro
+      - ./config.py:/app/config.py:ro
+    depends_on:
+      - qdrant
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  qdrant:
+    image: qdrant/qdrant:v1.13.2
+    container_name: datadumpai-enterprise-qdrant
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
 
   webhooks:
     build: .
@@ -74,3 +130,4 @@ services:
 
 volumes:
   app_data:
+  qdrant_data:

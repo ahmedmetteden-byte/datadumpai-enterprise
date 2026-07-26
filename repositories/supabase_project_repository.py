@@ -71,6 +71,7 @@ class SupabaseProjectRepository:
             "updated_at": row["updated_at"],
             "last_activity": row["last_activity"],
             "storage_used": int(row.get("storage_used", 0)),
+            "archived_at": row.get("archived_at"),
             "documents": self._load_documents(safe_project_id),
             "reports": self._load_reports(safe_project_id),
             "exports": self._load_exports(safe_project_id),
@@ -90,10 +91,19 @@ class SupabaseProjectRepository:
 
         return [
             {
+                "id": str(row["id"]),
                 "filename": row["filename"],
                 "size": int(row["size"]),
                 "uploaded_at": row["uploaded_at"],
                 "path": row["storage_path"],
+                "mime_type": row.get("mime_type") or "",
+                "status": row.get("status") or "uploaded",
+                "index_stage": row.get("index_stage") or "queued",
+                "progress_percent": int(row.get("progress_percent") or 0),
+                "error_message": row.get("error_message"),
+                "indexed_at": row.get("indexed_at"),
+                "chunk_count": int(row.get("chunk_count") or 0),
+                "title": row.get("title") or "",
             }
             for row in (response.data or [])
         ]
@@ -173,6 +183,7 @@ class SupabaseProjectRepository:
             "created_at": project.get("created_at"),
             "updated_at": project.get("updated_at"),
             "last_activity": project.get("last_activity"),
+            "archived_at": project.get("archived_at"),
         }
 
         handle_response(
@@ -189,19 +200,23 @@ class SupabaseProjectRepository:
         project_id: str,
         documents: list[dict[str, Any]],
     ) -> None:
+        import uuid as uuid_mod
+
         safe_project_id = require_real_project_uuid(project_id)
         existing = handle_response(
             self._client.table("documents")
-            .select("filename")
+            .select("id, filename")
             .eq("project_id", safe_project_id)
             .eq("user_id", self._user_id)
             .execute(),
             action="list documents",
         )
-        existing_names = {row["filename"] for row in (existing.data or [])}
+        existing_by_name = {
+            row["filename"]: str(row["id"]) for row in (existing.data or [])
+        }
         incoming_names = {doc["filename"] for doc in documents}
 
-        for filename in existing_names - incoming_names:
+        for filename in set(existing_by_name) - incoming_names:
             handle_response(
                 self._client.table("documents")
                 .delete()
@@ -213,13 +228,26 @@ class SupabaseProjectRepository:
             )
 
         for document in documents:
+            doc_id = str(document.get("id") or "").strip()
+            if not doc_id:
+                doc_id = existing_by_name.get(document["filename"]) or str(uuid_mod.uuid4())
+                document["id"] = doc_id
             row = {
+                "id": doc_id,
                 "project_id": safe_project_id,
                 "user_id": self._user_id,
                 "filename": document["filename"],
                 "size": int(document.get("size", 0)),
                 "storage_path": document.get("path", ""),
                 "uploaded_at": document.get("uploaded_at"),
+                "mime_type": document.get("mime_type") or "",
+                "status": document.get("status") or "uploaded",
+                "index_stage": document.get("index_stage") or "queued",
+                "progress_percent": int(document.get("progress_percent") or 0),
+                "error_message": document.get("error_message"),
+                "indexed_at": document.get("indexed_at"),
+                "chunk_count": int(document.get("chunk_count") or 0),
+                "title": document.get("title") or "",
             }
             handle_response(
                 self._client.table("documents")

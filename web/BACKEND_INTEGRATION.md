@@ -45,11 +45,24 @@ Implementations live under `src/api/services/`:
 | Surface | Status |
 |---------|--------|
 | Streamlit app (`app.py`) | Live product UI (being replaced) |
-| `api/webhook_server.py` | Billing webhooks only |
+| `api/webhook_server.py` | Billing webhooks only (`:8001`) |
+| `api/app.py` | **Product REST** `/api/v1/*` (`:8000`) — workspaces, knowledge, indexing |
+| Qdrant | Local compose service `:6333` |
 | Supabase Auth + Postgres + Storage | Source of truth |
-| Product REST (`/api/v1/*`) | **Not implemented yet** |
+| Product REST (`/api/v1/*`) | **Implemented for Sprint 2 flow** |
 
-Do not call webhook routes from this SPA. Do not expose `SUPABASE_SERVICE_ROLE_KEY` to the browser.
+## Auth
+
+1. `@supabase/supabase-js` is wired via `src/lib/supabase.ts`.
+2. `AuthProvider` persists the session (Supabase storage).
+3. Pass `{ accessToken }` into service methods / `apiRequest` / `apiUpload`.
+4. Unauthenticated users are redirected to `/auth/login`; HTTP `401` also redirects there.
+5. Product API validates Supabase JWT via `SUPABASE_JWT_SECRET`.
+6. Set `VITE_USE_MOCK_API=false` for real API.
+
+## Sprint 2 flow
+
+Login → Create workspace → Open → Upload (multipart) → Background index (extract → chunk → embed → Qdrant) → Library with Preview / Delete / Re-index / Download.
 
 ## Environment
 
@@ -83,18 +96,20 @@ Wire routers to existing Python services—do not reimplement logic in React:
 
 ## Auth
 
-1. Add `@supabase/supabase-js`.
-2. Persist session; pass `accessToken` into service methods / `apiRequest`.
-3. Update `AUTH_REDIRECT_URL` when cutting over from Streamlit.
+1. `@supabase/supabase-js` is wired via `src/lib/supabase.ts`.
+2. `AuthProvider` persists the session (Supabase storage, or mock localStorage when `VITE_USE_MOCK_API=true`).
+3. Pass `{ accessToken }` into service methods / `apiRequest` (see `useHomeData`).
+4. Unauthenticated users are redirected to `/auth/login`; HTTP `401` also redirects there.
+5. Profile + organisation membership: `services.profile` (`GET/PATCH /api/v1/me/profile`, `GET /api/v1/me/memberships`, or Supabase `user_profiles` + owned `projects`).
+6. Update `AUTH_REDIRECT_URL` when cutting over from Streamlit.
 
-## JSON naming
-
-Frontend types use **camelCase**. Prefer FastAPI serializers that emit camelCase, or map once inside `Http*Service` classes (never in React components).
+JWT issuance and password hashing are handled by **Supabase Auth** (not a custom FastAPI issuer).
 
 ## Verification checklist
 
 - [ ] `VITE_USE_MOCK_API=false` loads Home via `HttpHomeService`
 - [ ] Granular services work for non-Home screens
-- [ ] Unauthorized requests redirect to a future `/auth` route
+- [x] Unauthorized requests redirect to `/auth/login`
 - [ ] Workspace switch still uses `services.home.getHome(workspaceId)`
 - [ ] Marketing site untouched
+- [x] Login / logout / session restore / protected dashboard

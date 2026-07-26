@@ -1,14 +1,19 @@
 import { UI_COPY } from '@/constants/ui';
 import { ConfidenceBadge } from './ConfidenceBadge';
 import { SourceCard } from './SourceCard';
-import type { IntelligenceSource } from '@/types/intelligence';
+import type {
+  IntelligenceCitation,
+  IntelligenceSource,
+} from '@/types/intelligence';
 
 export function CitationPanel({
   sources,
+  citations = [],
   confidence,
   onOpenSource,
 }: {
   sources: IntelligenceSource[];
+  citations?: IntelligenceCitation[];
   confidence?: number;
   onOpenSource: (source: IntelligenceSource) => void;
 }) {
@@ -40,12 +45,40 @@ export function CitationPanel({
       </div>
 
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
-        {sources.length === 0 ? (
+        {sources.length === 0 && citations.length === 0 ? (
           <p className="text-small text-ink-muted">{UI_COPY.studioNoEvidence}</p>
         ) : (
           <>
+            {citations.length > 0 ? (
+              <section>
+                <h3 className="mb-2 text-caption uppercase tracking-wide text-ink-faint">
+                  {UI_COPY.studioCitations}
+                </h3>
+                <ol className="space-y-2">
+                  {citations.map((citation) => (
+                    <li
+                      key={citation.id}
+                      className="rounded-lg border border-surface-border px-3 py-2"
+                    >
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-caption font-semibold text-brand-600">
+                          [{citation.index}]
+                        </span>
+                        <span className="text-small font-medium text-ink">
+                          {citation.label}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-caption text-ink-muted">
+                        “{citation.quote}”
+                      </p>
+                    </li>
+                  ))}
+                </ol>
+              </section>
+            ) : null}
+
             <SourceGroup
-              title={UI_COPY.studioReferencedDocuments}
+              title={UI_COPY.studioLinkedDocuments}
               items={documents}
               onOpen={onOpenSource}
             />
@@ -60,7 +93,7 @@ export function CitationPanel({
               onOpen={onOpenSource}
             />
             <SourceGroup
-              title={UI_COPY.studioCitations}
+              title={UI_COPY.studioSources}
               items={other}
               onOpen={onOpenSource}
             />

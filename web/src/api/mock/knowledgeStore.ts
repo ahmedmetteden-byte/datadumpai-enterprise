@@ -18,320 +18,83 @@ import type {
 } from '@/types/knowledge';
 import { ApiError } from '@/api/client';
 
-const DEFAULT_WORKSPACE = 'ws_ops';
+const DEFAULT_WORKSPACE = 'ws_local';
 
-const tags: KnowledgeTag[] = [
-  { id: 'tag_finance', workspaceId: DEFAULT_WORKSPACE, label: 'Finance', color: '#2563EB' },
-  { id: 'tag_risk', workspaceId: DEFAULT_WORKSPACE, label: 'Risk', color: '#D97706' },
-  { id: 'tag_board', workspaceId: DEFAULT_WORKSPACE, label: 'Board', color: '#0F172A' },
-  { id: 'tag_ops', workspaceId: DEFAULT_WORKSPACE, label: 'Operations', color: '#06B6D4' },
+const tags: KnowledgeTag[] = [];
+
+const projects: Array<{ id: string; name: string }> = [];
+
+const authors: Array<{ id: string; name: string }> = [];
+
+const collections: Array<{ id: string; name: string }> = [
+  { id: 'col_core', name: 'Library' },
 ];
 
-const projects = [
-  { id: 'kp_growth', name: 'Growth FY26' },
-  { id: 'kp_compliance', name: 'Compliance Uplift' },
-  { id: 'kp_board', name: 'Board Pack 2026' },
-];
+/** Live library items come from the product API; mock mode starts empty. */
+let items: KnowledgeListItem[] = [];
 
-const authors = [
-  { id: 'usr_01', name: 'Alex Morgan' },
-  { id: 'usr_02', name: 'Jordan Lee' },
-  { id: 'usr_03', name: 'Sam Rivera' },
-];
+const relationships: KnowledgeRelationship[] = [];
 
-const collections = [
-  { id: 'col_core', name: 'Core corpus' },
-  { id: 'col_board', name: 'Board materials' },
-  { id: 'col_risk', name: 'Risk & policy' },
-];
+const timelines: Record<string, KnowledgeTimelineEvent[]> = {};
 
-let items: KnowledgeListItem[] = [
-  {
-    id: 'kn_doc_q2',
-    workspaceId: DEFAULT_WORKSPACE,
-    type: 'document',
-    title: 'Q2 Operating Pack.pdf',
-    summary: 'Margin bridges, EMEA variance, and KPI appendix.',
-    status: 'verified',
-    tagIds: ['tag_finance', 'tag_ops'],
-    projectId: 'kp_growth',
-    projectName: 'Growth FY26',
-    authorId: 'usr_01',
-    authorName: 'Alex Morgan',
-    createdAt: '2026-07-10T09:00:00Z',
-    updatedAt: '2026-07-22T14:00:00Z',
-    collectionIds: ['col_core', 'col_board'],
-  },
-  {
-    id: 'kn_doc_supplier',
-    workspaceId: DEFAULT_WORKSPACE,
-    type: 'document',
-    title: 'Supplier Concentration Memo.docx',
-    summary: 'Top vendor exposure and mitigation options.',
-    status: 'indexed',
-    tagIds: ['tag_risk'],
-    projectId: 'kp_compliance',
-    projectName: 'Compliance Uplift',
-    authorId: 'usr_02',
-    authorName: 'Jordan Lee',
-    createdAt: '2026-07-12T11:20:00Z',
-    updatedAt: '2026-07-20T08:10:00Z',
-    collectionIds: ['col_risk'],
-  },
-  {
-    id: 'kn_mtg_exec',
-    workspaceId: DEFAULT_WORKSPACE,
-    type: 'meeting',
-    title: 'Executive Sync — 12 Jul',
-    summary: 'Actions on margin, suppliers, and board narrative.',
-    status: 'linked',
-    tagIds: ['tag_ops', 'tag_board'],
-    projectId: 'kp_board',
-    projectName: 'Board Pack 2026',
-    authorId: 'usr_01',
-    authorName: 'Alex Morgan',
-    createdAt: '2026-07-12T16:00:00Z',
-    updatedAt: '2026-07-12T18:30:00Z',
-    collectionIds: ['col_board'],
-  },
-  {
-    id: 'kn_mtg_risk',
-    workspaceId: DEFAULT_WORKSPACE,
-    type: 'meeting',
-    title: 'Risk Committee — 8 Jul',
-    summary: 'Policy refresh cadence and open actions.',
-    status: 'indexed',
-    tagIds: ['tag_risk'],
-    projectId: 'kp_compliance',
-    projectName: 'Compliance Uplift',
-    authorId: 'usr_03',
-    authorName: 'Sam Rivera',
-    createdAt: '2026-07-08T13:00:00Z',
-    updatedAt: '2026-07-09T10:00:00Z',
-    collectionIds: ['col_risk'],
-  },
-  {
-    id: 'kn_rpt_q2',
-    workspaceId: DEFAULT_WORKSPACE,
-    type: 'report',
-    title: 'Q2 Operating Review',
-    summary: 'Executive narrative awaiting review.',
-    status: 'verified',
-    tagIds: ['tag_finance', 'tag_board'],
-    projectId: 'kp_board',
-    projectName: 'Board Pack 2026',
-    authorId: 'usr_01',
-    authorName: 'Alex Morgan',
-    createdAt: '2026-07-18T12:00:00Z',
-    updatedAt: '2026-07-24T12:00:00Z',
-    collectionIds: ['col_board', 'col_core'],
-  },
-  {
-    id: 'kn_rpt_retention',
-    workspaceId: DEFAULT_WORKSPACE,
-    type: 'report',
-    title: 'Customer Retention Brief',
-    summary: 'Enterprise cohort retention +3pts QoQ.',
-    status: 'indexed',
-    tagIds: ['tag_ops'],
-    projectId: 'kp_growth',
-    projectName: 'Growth FY26',
-    authorId: 'usr_02',
-    authorName: 'Jordan Lee',
-    createdAt: '2026-07-15T09:30:00Z',
-    updatedAt: '2026-07-22T09:30:00Z',
-    collectionIds: ['col_core'],
-  },
-  {
-    id: 'kn_pol_access',
-    workspaceId: DEFAULT_WORKSPACE,
-    type: 'policy',
-    title: 'Data Access Policy v3',
-    summary: 'Role-based access for knowledge and exports.',
-    status: 'verified',
-    tagIds: ['tag_risk'],
-    projectId: 'kp_compliance',
-    projectName: 'Compliance Uplift',
-    authorId: 'usr_03',
-    authorName: 'Sam Rivera',
-    createdAt: '2026-05-01T08:00:00Z',
-    updatedAt: '2026-06-15T08:00:00Z',
-    collectionIds: ['col_risk'],
-  },
-  {
-    id: 'kn_proj_growth',
-    workspaceId: DEFAULT_WORKSPACE,
-    type: 'project',
-    title: 'Growth FY26',
-    summary: 'Initiative linking operating and retention artefacts.',
-    status: 'linked',
-    tagIds: ['tag_ops', 'tag_finance'],
-    projectId: 'kp_growth',
-    projectName: 'Growth FY26',
-    authorId: 'usr_01',
-    authorName: 'Alex Morgan',
-    createdAt: '2026-01-10T08:00:00Z',
-    updatedAt: '2026-07-20T08:00:00Z',
-    collectionIds: ['col_core'],
-  },
-  {
-    id: 'kn_dec_margin',
-    workspaceId: DEFAULT_WORKSPACE,
-    type: 'decision',
-    title: 'Refresh board KPI narrative',
-    summary: 'Accepted decision from executive sync.',
-    status: 'linked',
-    tagIds: ['tag_board', 'tag_finance'],
-    projectId: 'kp_board',
-    projectName: 'Board Pack 2026',
-    authorId: 'usr_01',
-    authorName: 'Alex Morgan',
-    createdAt: '2026-07-12T17:00:00Z',
-    updatedAt: '2026-07-12T17:00:00Z',
-    collectionIds: ['col_board'],
-  },
-  {
-    id: 'kn_act_supplier',
-    workspaceId: DEFAULT_WORKSPACE,
-    type: 'action_item',
-    title: 'Assign owner for supplier concentration',
-    summary: 'Open action from 12 Jul sync.',
-    status: 'processing',
-    tagIds: ['tag_risk'],
-    projectId: 'kp_compliance',
-    projectName: 'Compliance Uplift',
-    authorId: 'usr_02',
-    authorName: 'Jordan Lee',
-    createdAt: '2026-07-12T17:10:00Z',
-    updatedAt: '2026-07-24T09:00:00Z',
-    collectionIds: ['col_risk'],
-  },
-  {
-    id: 'kn_doc_upload_demo',
-    workspaceId: DEFAULT_WORKSPACE,
-    type: 'document',
-    title: 'Board Appendix Draft.pdf',
-    summary: 'Recently uploaded — still indexing.',
-    status: 'extracting',
-    tagIds: ['tag_board'],
-    projectId: 'kp_board',
-    projectName: 'Board Pack 2026',
-    authorId: 'usr_01',
-    authorName: 'Alex Morgan',
-    createdAt: '2026-07-24T18:00:00Z',
-    updatedAt: '2026-07-24T18:05:00Z',
-    collectionIds: ['col_board'],
-  },
-];
+const processing: Record<string, KnowledgeProcessingStatus> = {};
 
-const relationships: KnowledgeRelationship[] = [
-  {
-    id: 'rel_1',
-    workspaceId: DEFAULT_WORKSPACE,
-    fromId: 'kn_rpt_q2',
-    toId: 'kn_doc_q2',
-    fromType: 'report',
-    toType: 'document',
-    predicate: 'derived_from',
-    label: 'Derived from operating pack',
-  },
-  {
-    id: 'rel_2',
-    workspaceId: DEFAULT_WORKSPACE,
-    fromId: 'kn_mtg_exec',
-    toId: 'kn_dec_margin',
-    fromType: 'meeting',
-    toType: 'decision',
-    predicate: 'decides',
-    label: 'Produced decision',
-  },
-  {
-    id: 'rel_3',
-    workspaceId: DEFAULT_WORKSPACE,
-    fromId: 'kn_mtg_exec',
-    toId: 'kn_act_supplier',
-    fromType: 'meeting',
-    toType: 'action_item',
-    predicate: 'assigns',
-    label: 'Created action',
-  },
-  {
-    id: 'rel_4',
-    workspaceId: DEFAULT_WORKSPACE,
-    fromId: 'kn_rpt_q2',
-    toId: 'kn_mtg_exec',
-    fromType: 'report',
-    toType: 'meeting',
-    predicate: 'mentions',
-    label: 'References sync outcomes',
-  },
-  {
-    id: 'rel_5',
-    workspaceId: DEFAULT_WORKSPACE,
-    fromId: 'kn_pol_access',
-    toId: 'kn_doc_supplier',
-    fromType: 'policy',
-    toType: 'document',
-    predicate: 'related_to',
-    label: 'Governs handling',
-  },
-  {
-    id: 'rel_6',
-    workspaceId: DEFAULT_WORKSPACE,
-    fromId: 'kn_proj_growth',
-    toId: 'kn_rpt_retention',
-    fromType: 'project',
-    toType: 'report',
-    predicate: 'related_to',
-    label: 'Project deliverable',
-  },
-  {
-    id: 'rel_7',
-    workspaceId: DEFAULT_WORKSPACE,
-    fromId: 'kn_rpt_q2',
-    toId: 'kn_pol_access',
-    fromType: 'report',
-    toType: 'policy',
-    predicate: 'cites',
-    label: 'Cites access policy',
-  },
-];
+function resolveTags(tagIds: string[]): string[] {
+  return tagIds
+    .map((id) => tags.find((tag) => tag.id === id)?.label)
+    .filter((label): label is string => Boolean(label));
+}
 
-const timelines: Record<string, KnowledgeTimelineEvent[]> = {
-  kn_doc_q2: [
-    { id: 't1', at: '2026-07-10T09:00:00Z', label: 'Uploaded' },
-    { id: 't2', at: '2026-07-10T09:04:00Z', label: 'Extracted', detail: '48 pages' },
-    { id: 't3', at: '2026-07-10T09:12:00Z', label: 'Indexed' },
-    { id: 't4', at: '2026-07-22T14:00:00Z', label: 'Verified' },
-  ],
-  kn_doc_upload_demo: [
-    { id: 't1', at: '2026-07-24T18:00:00Z', label: 'Uploaded' },
-    { id: 't2', at: '2026-07-24T18:05:00Z', label: 'Extracting', detail: 'OCR in progress' },
-  ],
-};
-
-const processing: Record<string, KnowledgeProcessingStatus> = {
-  kn_doc_upload_demo: {
-    knowledgeId: 'kn_doc_upload_demo',
-    status: 'extracting',
-    stage: 'Extracting text and tables',
-    progressPercent: 42,
-    updatedAt: '2026-07-24T18:05:00Z',
-  },
-  kn_act_supplier: {
-    knowledgeId: 'kn_act_supplier',
-    status: 'processing',
-    stage: 'Linking to meetings and owners',
-    progressPercent: 68,
-    updatedAt: '2026-07-24T09:00:00Z',
-  },
-};
+function resolveCollectionName(collectionIds?: string[]): string {
+  const first = collectionIds?.[0];
+  if (!first) return 'Library';
+  return collections.find((c) => c.id === first)?.name ?? 'Library';
+}
 
 function cloneItem(entry: KnowledgeListItem): KnowledgeListItem {
+  const filename = entry.filename || entry.title;
+  const terminal =
+    entry.status === 'indexed' ||
+    entry.status === 'verified' ||
+    entry.status === 'linked';
   return {
     ...entry,
     tagIds: [...entry.tagIds],
+    tags: entry.tags ?? resolveTags(entry.tagIds),
     collectionIds: entry.collectionIds ? [...entry.collectionIds] : undefined,
+    collectionName:
+      entry.collectionName ?? resolveCollectionName(entry.collectionIds),
+    filename,
+    sizeBytes:
+      typeof entry.sizeBytes === 'number'
+        ? entry.sizeBytes
+        : Math.max(12_000, filename.length * 4200),
+    indexedAt:
+      entry.indexedAt ??
+      (terminal ? entry.updatedAt : null),
+    progressPercent:
+      typeof entry.progressPercent === 'number'
+        ? entry.progressPercent
+        : terminal
+          ? 100
+          : entry.status === 'extracting'
+            ? 22
+            : entry.status === 'processing'
+              ? 58
+              : entry.status === 'uploaded'
+                ? 8
+                : 0,
+    indexStage:
+      entry.indexStage ??
+      (terminal
+        ? 'indexed'
+        : entry.status === 'extracting'
+          ? 'extracting'
+          : entry.status === 'processing'
+            ? 'embedding'
+            : entry.status === 'uploaded'
+              ? 'queued'
+              : null),
   };
 }
 
@@ -509,11 +272,19 @@ export function mockProcessingStatus(
   }
   const entry = items.find((row) => row.id === knowledgeId);
   const status: KnowledgeProcessingStatusValue = entry?.status ?? 'indexed';
+  const terminal = status === 'verified' || status === 'indexed' || status === 'linked';
   return {
     knowledgeId,
     status,
     stage: statusLabel(status),
-    progressPercent: status === 'verified' || status === 'indexed' ? 100 : 50,
+    indexStage: terminal
+      ? 'indexed'
+      : status === 'extracting'
+        ? 'extracting'
+        : status === 'processing'
+          ? 'embedding'
+          : 'queued',
+    progressPercent: terminal ? 100 : (entry?.progressPercent ?? 50),
     updatedAt: entry?.updatedAt ?? new Date().toISOString(),
   };
 }
@@ -524,36 +295,82 @@ export function mockUpload(
 ): KnowledgeListItem {
   const id = `kn_up_${Date.now().toString(36)}`;
   const now = new Date().toISOString();
+  const fileName = input.file.name;
   const created: KnowledgeListItem = {
     id,
     workspaceId,
     type: 'document',
-    title: input.title?.trim() || input.fileName,
-    summary: 'Upload accepted — processing started.',
+    title: input.title?.trim() || fileName.replace(/\.[^.]+$/, ''),
+    summary: 'Upload accepted — indexing started.',
     status: 'uploaded',
     tagIds: [],
-    authorId: 'usr_01',
-    authorName: 'Alex Morgan',
+    tags: [],
+    authorId: 'usr_local',
+    authorName: 'You',
     createdAt: now,
     updatedAt: now,
     collectionIds: ['col_core'],
+    collectionName: 'Library',
+    filename: fileName,
+    mimeType: input.file.type || 'application/octet-stream',
+    sizeBytes: input.file.size,
+    indexedAt: null,
+    progressPercent: 8,
+    indexStage: 'queued',
   };
   items = [created, ...items];
   processing[id] = {
     knowledgeId: id,
     status: 'uploaded',
-    stage: 'Upload complete',
+    stage: 'Indexing...',
+    indexStage: 'queued',
     progressPercent: 8,
     updatedAt: now,
   };
 
-  scheduleAdvance(id, 'extracting', 35, 'Extracting text', 600);
-  scheduleAdvance(id, 'processing', 55, 'Processing structure', 1400);
-  scheduleAdvance(id, 'indexed', 82, 'Building search index', 2200);
-  scheduleAdvance(id, 'linked', 94, 'Linking related knowledge', 3000);
-  scheduleAdvance(id, 'verified', 100, 'Verified and available to AI', 3800);
+  // Upload → Extract text → Chunk → Embeddings → Qdrant → Indexed
+  scheduleAdvance(id, 'extracting', 22, 'Extract text', 'extracting', 700);
+  scheduleAdvance(id, 'processing', 34, 'Chunk', 'chunking', 1400);
+  scheduleAdvance(id, 'processing', 58, 'Embeddings', 'embedding', 2200);
+  scheduleAdvance(id, 'processing', 82, 'Qdrant', 'upserting', 3000);
+  scheduleAdvance(id, 'indexed', 100, 'Done', 'indexed', 3800);
 
   return cloneItem(created);
+}
+
+export function mockReindex(
+  workspaceId: string,
+  knowledgeId: string,
+): KnowledgeProcessingStatus {
+  const entry = items.find((row) => row.id === knowledgeId);
+  if (
+    !entry ||
+    !forWorkspace(workspaceId).some((row) => row.id === knowledgeId)
+  ) {
+    throw new ApiError('Knowledge item not found', 404, {
+      detail: 'Knowledge item not found',
+    });
+  }
+  const now = new Date().toISOString();
+  entry.status = 'uploaded';
+  entry.progressPercent = 8;
+  entry.indexStage = 'queued';
+  entry.indexedAt = null;
+  entry.updatedAt = now;
+  processing[knowledgeId] = {
+    knowledgeId,
+    status: 'uploaded',
+    stage: 'Indexing...',
+    indexStage: 'queued',
+    progressPercent: 8,
+    updatedAt: now,
+  };
+  scheduleAdvance(knowledgeId, 'extracting', 22, 'Extract text', 'extracting', 700);
+  scheduleAdvance(knowledgeId, 'processing', 34, 'Chunk', 'chunking', 1400);
+  scheduleAdvance(knowledgeId, 'processing', 58, 'Embeddings', 'embedding', 2200);
+  scheduleAdvance(knowledgeId, 'processing', 82, 'Qdrant', 'upserting', 3000);
+  scheduleAdvance(knowledgeId, 'indexed', 100, 'Done', 'indexed', 3800);
+  return { ...processing[knowledgeId]! };
 }
 
 function scheduleAdvance(
@@ -561,6 +378,7 @@ function scheduleAdvance(
   status: KnowledgeProcessingStatusValue,
   progressPercent: number,
   stage: string,
+  indexStage: string,
   delayMs: number,
 ) {
   if (typeof window === 'undefined') return;
@@ -568,14 +386,18 @@ function scheduleAdvance(
     const entry = items.find((row) => row.id === id);
     if (!entry) return;
     entry.status = status;
+    entry.progressPercent = progressPercent;
+    entry.indexStage = indexStage;
     entry.updatedAt = new Date().toISOString();
-    if (status === 'verified') {
+    if (status === 'indexed') {
+      entry.indexedAt = entry.updatedAt;
       entry.summary = 'Indexed and available to Intelligence Studio.';
     }
     processing[id] = {
       knowledgeId: id,
       status,
       stage,
+      indexStage,
       progressPercent,
       updatedAt: entry.updatedAt,
     };
@@ -624,14 +446,14 @@ export function mockRelated(
 
 function statusLabel(status: KnowledgeProcessingStatusValue): string {
   const map: Record<KnowledgeProcessingStatusValue, string> = {
-    uploaded: 'Uploaded',
-    extracting: 'Extracting',
-    processing: 'Processing',
-    indexed: 'Indexed',
-    linked: 'Linked',
-    verified: 'Verified',
+    uploaded: 'Indexing...',
+    extracting: 'Extract text',
+    processing: 'Chunk',
+    indexed: 'Done',
+    linked: 'Done',
+    verified: 'Done',
     archived: 'Archived',
-    failed: 'Failed',
+    failed: 'Indexing failed',
   };
   return map[status];
 }

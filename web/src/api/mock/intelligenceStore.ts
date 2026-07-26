@@ -15,47 +15,14 @@ import type {
 import { ApiError } from '@/api/client';
 
 const SUGGESTED = [
-  "Summarise this month's meetings",
-  'Compare Q2 and Q3 reports',
-  'Generate board recommendations',
-  'Identify unresolved actions',
-  'What decisions were made last month?',
+  'What are the key risks in this workspace?',
+  'Summarise the latest uploaded documents',
+  'Which actions are still unresolved?',
+  'Compare themes across the indexed sources',
+  'Recommend next steps for leadership',
 ] as const;
 
-const MOCK_SOURCES: IntelligenceSource[] = [
-  {
-    id: 'src_doc_1',
-    kind: 'document',
-    title: 'Q2 Operating Pack.pdf',
-    location: '/documents/q2-operating-pack.pdf',
-    excerpt: 'Gross margin in EMEA declined 1.8pts versus prior quarter.',
-    previewUrl: '/documents/q2-operating-pack.pdf',
-  },
-  {
-    id: 'src_mtg_1',
-    kind: 'meeting',
-    title: 'Executive Sync — 12 Jul',
-    location: '/meetings/exec-sync-2026-07-12',
-    excerpt: 'Action: assign owner for supplier concentration risk by Friday.',
-    previewUrl: '/meetings/exec-sync-2026-07-12',
-  },
-  {
-    id: 'src_rpt_1',
-    kind: 'report',
-    title: 'Q2 Operating Review',
-    location: '/reports/q2-operating-review',
-    excerpt: 'Board narrative recommends refreshing KPI pack before distribution.',
-    previewUrl: '/reports/q2-operating-review',
-  },
-  {
-    id: 'src_rpt_2',
-    kind: 'report',
-    title: 'Customer Retention Brief',
-    location: '/reports/retention-brief',
-    excerpt: 'Enterprise cohort retention improved 3pts QoQ.',
-    previewUrl: '/reports/retention-brief',
-  },
-];
+const MOCK_SOURCES: IntelligenceSource[] = [];
 
 function nowIso() {
   return new Date().toISOString();
@@ -86,16 +53,18 @@ function buildAssistantReply(
     content: '',
     answer: `${modeLead[mode]}: ${question.trim() || 'your question'}.
 
-EMEA gross margin pressure remains the clearest signal (−1.8pts QoQ), while enterprise retention improved. Two reports still await executive review, and one supplier action from the 12 Jul sync lacks an owner.`,
+Connect the live API and index documents to retrieve grounded evidence, citations, and linked sources.`,
     evidence:
-      'Operating pack margin tables, executive sync actions, and the Q2 Operating Review narrative align on margin pressure and open ownership gaps. Retention brief corroborates cohort improvement.',
-    confidence: 0.86,
+      'No indexed evidence is available in mock mode. Use the live API for RAG answers.',
+    confidence: 0.2,
     followUps: [
-      'Which suppliers drive concentration risk?',
-      'Draft talking points for the board pack',
-      'List unresolved actions with owners',
+      'Upload documents to the Library',
+      'Re-index existing documents',
+      'Ask again after indexing shows Done',
     ],
     sources: MOCK_SOURCES,
+    citations: [],
+    linkedDocuments: [],
     notice: null,
     status: 'complete',
     createdAt: nowIso(),
@@ -110,73 +79,7 @@ function seedWorkspace(workspaceId: string): IntelligenceConversation[] {
   if (store.has(workspaceId)) {
     return store.get(workspaceId)!;
   }
-
-  const convId = `conv_seed_${workspaceId}`;
-  const seeded: IntelligenceConversation = {
-    id: convId,
-    workspaceId,
-    title: 'EMEA margin pressure',
-    pinned: true,
-    updatedAt: '2026-07-24T16:40:00Z',
-    messages: [
-      {
-        id: 'msg_seed_u',
-        conversationId: convId,
-        role: 'user',
-        content: 'What is driving EMEA margin pressure this quarter?',
-        status: 'complete',
-        createdAt: '2026-07-24T16:38:00Z',
-        mode: 'ask',
-      },
-      {
-        id: 'msg_seed_a',
-        conversationId: convId,
-        role: 'assistant',
-        content: '',
-        answer:
-          'EMEA gross margin declined 1.8pts versus the prior quarter, concentrated in product mix shifts and a higher share of discount-led deals. Retention improved in enterprise cohorts, so the pressure is not broad demand destruction.',
-        evidence:
-          'Q2 Operating Pack margin bridges and the Operating Review both cite mix and discounting. The July executive sync logged a follow-up on supplier concentration that remains unowned.',
-        confidence: 0.88,
-        followUps: [
-          'Break down margin by product line',
-          'Show discount trends by segment',
-          'Who owns the supplier action?',
-        ],
-        sources: MOCK_SOURCES.slice(0, 3),
-        notice: null,
-        status: 'complete',
-        createdAt: '2026-07-24T16:39:00Z',
-        mode: 'ask',
-      },
-    ],
-  };
-
-  const second: IntelligenceConversation = {
-    id: `conv_seed2_${workspaceId}`,
-    workspaceId,
-    title: 'Board recommendations',
-    pinned: false,
-    updatedAt: '2026-07-23T11:20:00Z',
-    messages: [
-      {
-        id: 'msg_seed2_u',
-        conversationId: `conv_seed2_${workspaceId}`,
-        role: 'user',
-        content: 'Generate board recommendations from this workspace.',
-        status: 'complete',
-        createdAt: '2026-07-23T11:18:00Z',
-        mode: 'recommend',
-      },
-      buildAssistantReply(
-        `conv_seed2_${workspaceId}`,
-        'Generate board recommendations from this workspace.',
-        'recommend',
-      ),
-    ],
-  };
-
-  const list = [seeded, second];
+  const list: IntelligenceConversation[] = [];
   store.set(workspaceId, list);
   return list;
 }
@@ -200,10 +103,10 @@ export function mockCheckReadiness(_workspaceId: string): StudioReadiness {
   void _workspaceId;
   return {
     ready: true,
-    status: 'AI ready — 128 documents indexed',
-    documentCount: 128,
-    reportCount: 14,
-    canAsk: true,
+    status: 'Upload and index documents to enable asking.',
+    documentCount: 0,
+    reportCount: 0,
+    canAsk: false,
     webResearchAvailable: false,
   };
 }

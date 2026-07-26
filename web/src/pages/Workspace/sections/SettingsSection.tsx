@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
 import { services } from '@/api/services';
+import { InlineRequestStatus } from '@/components/feedback';
 import { Button, Input } from '@/components/ui';
 import { UI_COPY } from '@/constants/ui';
+import { useAuth } from '@/context/AuthContext';
+import { useRequestFeedback } from '@/context/RequestFeedbackContext';
 import { useWorkspace } from '@/context/WorkspaceContext';
 import { useDisclosure } from '@/hooks/useDisclosure';
 import type { Project } from '@/types/api';
@@ -18,10 +21,13 @@ export function SettingsSection({
   onArchived: () => void;
 }) {
   const { bumpRevision } = useWorkspace();
+  const { accessToken } = useAuth();
+  const feedback = useRequestFeedback();
   const archiveDialog = useDisclosure(false);
   const [name, setName] = useState(workspace.name);
   const [description, setDescription] = useState(workspace.description);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -44,16 +50,58 @@ export function SettingsSection({
     setError(null);
     setMessage(null);
     try {
-      await services.workspace.updateWorkspace(workspace.id, {
-        name: name.trim(),
-        description: description.trim(),
-      });
+      await feedback.run(
+        () =>
+          services.workspace.updateWorkspace(
+            workspace.id,
+            {
+              name: name.trim(),
+              description: description.trim(),
+            },
+            { accessToken },
+          ),
+        {
+          loading: UI_COPY.requestLoading,
+          success: UI_COPY.settingsSaved,
+          error: UI_COPY.settingsSaveError,
+        },
+      );
       bumpRevision();
       setMessage(UI_COPY.settingsSaved);
     } catch (err) {
       setError(err instanceof Error ? err.message : UI_COPY.settingsSaveError);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (
+      !window.confirm(
+        `Permanently delete workspace "${workspace.name}"? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    setDeleting(true);
+    setError(null);
+    try {
+      await feedback.run(
+        () => services.workspace.deleteWorkspace(workspace.id, { accessToken }),
+        {
+          loading: UI_COPY.requestLoading,
+          success: UI_COPY.requestSuccess,
+          error: UI_COPY.deleteWorkspaceError,
+        },
+      );
+      bumpRevision();
+      onArchived();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : UI_COPY.deleteWorkspaceError,
+      );
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -100,16 +148,21 @@ export function SettingsSection({
               onClick={() => void handleSave()}
               disabled={saving || !dirty}
             >
-              {UI_COPY.saveChanges}
+              {saving ? UI_COPY.requestLoading : UI_COPY.saveChanges}
             </Button>
           ) : null}
 
-          {message ? (
-            <p className="text-small text-success" role="status">
-              {message}
-            </p>
+          {saving ? (
+            <InlineRequestStatus kind="loading" />
+          ) : message ? (
+            <InlineRequestStatus kind="success" message={message} />
+          ) : error ? (
+            <InlineRequestStatus
+              kind="error"
+              message={error}
+              onRetry={() => void handleSave()}
+            />
           ) : null}
-          {error ? <p className="text-small text-danger">{error}</p> : null}
         </div>
       </section>
 
@@ -119,13 +172,18 @@ export function SettingsSection({
           <p className="mt-2 max-w-xl text-small text-ink-muted">
             {UI_COPY.archiveConfirmBody}
           </p>
-          <Button
-            variant="danger"
-            className="mt-4"
-            onClick={archiveDialog.open}
-          >
-            {UI_COPY.archiveWorkspace}
-          </Button>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button variant="danger" onClick={archiveDialog.open}>
+              {UI_COPY.archiveWorkspace}
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => void handleDelete()}
+              disabled={deleting}
+            >
+              {deleting ? UI_COPY.requestLoading : UI_COPY.deleteWorkspace}
+            </Button>
+          </div>
         </section>
       ) : null}
 

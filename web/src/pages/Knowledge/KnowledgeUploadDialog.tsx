@@ -2,27 +2,46 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
-import { ProcessingBadge } from '@/pages/Knowledge/ProcessingBadge';
+import {
+  INDEX_PIPELINE_STEPS,
+  IndexingProgress,
+  pipelineStepActive,
+} from '@/pages/Knowledge/IndexingProgress';
 import { EmptyKnowledge } from '@/pages/Knowledge/EmptyKnowledge';
 import { services } from '@/api/services';
+import { useAuth } from '@/context/AuthContext';
 import { UI_COPY } from '@/constants/ui';
 import type {
   KnowledgeListItem,
   KnowledgeProcessingStatus,
 } from '@/types/knowledge';
 
-const PIPELINE: Array<{
-  status: KnowledgeProcessingStatus['status'];
-  stage: string;
-  progress: number;
-}> = [
-  { status: 'uploaded', stage: 'Upload complete', progress: 10 },
-  { status: 'extracting', stage: 'Extracting text and tables', progress: 35 },
-  { status: 'processing', stage: 'Processing structure', progress: 55 },
-  { status: 'indexed', stage: 'Building search index', progress: 78 },
-  { status: 'linked', stage: 'Linking related knowledge', progress: 92 },
-  { status: 'verified', stage: 'Verified and available to AI', progress: 100 },
-];
+const ALLOWED_EXTENSIONS = new Set([
+  '.pdf',
+  '.docx',
+  '.xlsx',
+  '.pptx',
+  '.txt',
+]);
+
+const ACCEPT =
+  '.pdf,.docx,.xlsx,.pptx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain';
+
+function extensionOf(name: string): string {
+  const match = /\.[^.]+$/.exec(name.toLowerCase());
+  return match?.[0] ?? '';
+}
+
+function isTerminal(status: KnowledgeProcessingStatus['status']): boolean {
+  return (
+    status === 'indexed' ||
+    status === 'verified' ||
+    status === 'failed' ||
+    status === 'archived'
+  );
+}
+
+type Phase = 'pick' | 'transferring' | 'indexing' | 'done' | 'failed';
 
 export function KnowledgeUploadDialog({
   open,
@@ -35,91 +54,124 @@ export function KnowledgeUploadDialog({
   workspaceId: string | null;
   onUploaded: (item: KnowledgeListItem) => void;
 }) {
+  const { accessToken } = useAuth();
   const fileRef = useRef<HTMLInputElement>(null);
-  const [fileName, setFileName] = useState('');
+  const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [phase, setPhase] = useState<Phase>('pick');
+  const [transferPercent, setTransferPercent] = useState(0);
   const [created, setCreated] = useState<KnowledgeListItem | null>(null);
   const [status, setStatus] = useState<KnowledgeProcessingStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [stepIndex, setStepIndex] = useState(0);
 
   useEffect(() => {
     if (!open) {
-      setFileName('');
+      setFile(null);
       setTitle('');
-      setBusy(false);
+      setPhase('pick');
+      setTransferPercent(0);
       setCreated(null);
       setStatus(null);
       setError(null);
-      setStepIndex(0);
     }
   }, [open]);
 
   useEffect(() => {
     if (!created || !workspaceId) return;
+    if (phase === 'done' || phase === 'failed') return;
+
     let cancelled = false;
     const timer = window.setInterval(() => {
       void services.knowledge
-        .processingStatus(workspaceId, created.id)
+        .processingStatus(workspaceId, created.id, { accessToken })
         .then((next) => {
-          if (!cancelled) setStatus(next);
+          if (cancelled) return;
+          setStatus(next);
+          if (next.status === 'failed') {
+            setPhase('failed');
+            return;
+          }
+          if (isTerminal(next.status)) {
+            setPhase('done');
+            return;
+          }
+          setPhase('indexing');
+        })
+        .catch(() => {
+          /* keep polling */
         });
-    }, 500);
+    }, 600);
+
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [created, workspaceId]);
+  }, [created, workspaceId, accessToken, phase]);
 
-  // Animated UI pipeline for feedback even before poll catches up
-  useEffect(() => {
-    if (!created) return;
-    if (stepIndex >= PIPELINE.length - 1) return;
-    const timer = window.setTimeout(() => {
-      setStepIndex((index) => Math.min(index + 1, PIPELINE.length - 1));
-    }, 650);
-    return () => window.clearTimeout(timer);
-  }, [created, stepIndex]);
+  function chooseFile(next: File | null) {
+    setError(null);
+    if (!next) {
+      setFile(null);
+      return;
+    }
+    const ext = extensionOf(next.name);
+    if (!ALLOWED_EXTENSIONS.has(ext)) {
+      setFile(null);
+      setError(UI_COPY.knowledgeUploadTypeError);
+      return;
+    }
+    setFile(next);
+    if (!title) {
+      setTitle(next.name.replace(/\.[^.]+$/, ''));
+    }
+  }
 
   async function handleUpload() {
-    if (!workspaceId || !fileName.trim()) {
+    if (!workspaceId || !file) {
       setError(UI_COPY.knowledgeUploadNeedFile);
       return;
     }
-    setBusy(true);
+
+    setPhase('transferring');
+    setTransferPercent(0);
     setError(null);
+
     try {
-      const item = await services.knowledge.upload(workspaceId, {
-        fileName: fileName.trim(),
-        mimeType: 'application/pdf',
-        sizeBytes: 1_200_000,
-        title: title.trim() || undefined,
-      });
+      const item = await services.knowledge.upload(
+        workspaceId,
+        {
+          file,
+          title: title.trim() || undefined,
+          onProgress: (percent) => setTransferPercent(percent),
+        },
+        { accessToken },
+      );
       setCreated(item);
+      setTransferPercent(100);
+      setPhase('indexing');
       setStatus({
         knowledgeId: item.id,
         status: 'uploaded',
-        stage: 'Upload complete',
-        progressPercent: 8,
+        stage: UI_COPY.knowledgeIndexIndexing,
+        progressPercent: item.progressPercent ?? 8,
         updatedAt: item.updatedAt,
       });
       onUploaded(item);
     } catch (err) {
-      setError(err instanceof Error ? err.message : UI_COPY.knowledgeUploadError);
-    } finally {
-      setBusy(false);
+      setPhase('pick');
+      setError(
+        err instanceof Error ? err.message : UI_COPY.knowledgeUploadError,
+      );
     }
   }
 
-  const animated = PIPELINE[stepIndex]!;
-  const displayStatus = status ?? {
-    knowledgeId: created?.id ?? '',
-    status: animated.status,
-    stage: animated.stage,
-    progressPercent: animated.progress,
-    updatedAt: new Date().toISOString(),
-  };
+  const indexStage =
+    status?.indexStage ||
+    (status?.status === 'indexed'
+      ? 'indexed'
+      : status?.status === 'extracting'
+        ? 'extracting'
+        : 'queued');
 
   return (
     <Modal
@@ -131,20 +183,32 @@ export function KnowledgeUploadDialog({
           <Button onClick={onClose}>{UI_COPY.knowledgeUploadDone}</Button>
         ) : (
           <>
-            <Button variant="ghost" onClick={onClose} disabled={busy}>
+            <Button
+              variant="ghost"
+              onClick={onClose}
+              disabled={phase === 'transferring'}
+            >
               {UI_COPY.cancel}
             </Button>
-            <Button onClick={() => void handleUpload()} disabled={busy || !workspaceId}>
-              {busy ? UI_COPY.knowledgeUploading : UI_COPY.knowledgeUploadStart}
+            <Button
+              onClick={() => void handleUpload()}
+              disabled={phase === 'transferring' || !workspaceId || !file}
+            >
+              {phase === 'transferring'
+                ? UI_COPY.knowledgeUploading
+                : UI_COPY.knowledgeUploadStart}
             </Button>
           </>
         )
       }
     >
-      {!created ? (
+      {phase === 'pick' ? (
         <div className="space-y-4">
           <p className="text-small text-ink-muted">
             {UI_COPY.knowledgeUploadBody}
+          </p>
+          <p className="text-caption text-ink-faint">
+            {UI_COPY.knowledgeUploadFormats}
           </p>
           <div>
             <label className="mb-1 block text-caption font-medium text-ink-muted">
@@ -153,13 +217,10 @@ export function KnowledgeUploadDialog({
             <input
               ref={fileRef}
               type="file"
+              accept={ACCEPT}
               className="sr-only"
               onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) {
-                  setFileName(file.name);
-                  if (!title) setTitle(file.name.replace(/\.[^.]+$/, ''));
-                }
+                chooseFile(event.target.files?.[0] ?? null);
               }}
             />
             <Button
@@ -167,8 +228,14 @@ export function KnowledgeUploadDialog({
               className="w-full"
               onClick={() => fileRef.current?.click()}
             >
-              {fileName || UI_COPY.knowledgeChooseFile}
+              {file?.name || UI_COPY.knowledgeChooseFile}
             </Button>
+            {file ? (
+              <p className="mt-2 text-caption text-ink-muted">
+                {(file.size / 1024).toFixed(1)} KB ·{' '}
+                {extensionOf(file.name).replace('.', '').toUpperCase()}
+              </p>
+            ) : null}
           </div>
           <div>
             <label
@@ -184,7 +251,7 @@ export function KnowledgeUploadDialog({
               placeholder={UI_COPY.knowledgeUploadTitlePlaceholder}
             />
           </div>
-          {!fileName ? <EmptyKnowledge variant="uploads" /> : null}
+          {!file ? <EmptyKnowledge variant="uploads" /> : null}
           {error ? (
             <p className="text-small text-danger" role="alert">
               {error}
@@ -193,39 +260,103 @@ export function KnowledgeUploadDialog({
         </div>
       ) : (
         <div className="space-y-4" aria-live="polite">
-          <p className="text-small text-ink">
-            <span className="font-medium">{created.title}</span>
-          </p>
-          <div className="flex items-center gap-2">
-            <ProcessingBadge status={displayStatus.status} pulse />
-            <span className="text-small text-ink-muted">{displayStatus.stage}</span>
-          </div>
-          <div
-            className="h-2 overflow-hidden rounded-full bg-surface-alt"
-            role="progressbar"
-            aria-valuenow={displayStatus.progressPercent ?? animated.progress}
-            aria-valuemin={0}
-            aria-valuemax={100}
-          >
+          {phase === 'done' ? (
             <div
-              className="h-full rounded-full bg-brand-500 transition-all duration-500"
-              style={{
-                width: `${displayStatus.progressPercent ?? animated.progress}%`,
-              }}
-            />
-          </div>
-          <ol className="space-y-1.5">
-            {PIPELINE.map((step, index) => (
-              <li
-                key={step.status}
-                className={`text-small ${
-                  index <= stepIndex ? 'text-ink' : 'text-ink-muted'
-                }`}
+              className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-small text-success"
+              role="status"
+            >
+              {UI_COPY.knowledgeUploadSuccessDetail.replace(
+                '{name}',
+                created?.filename || created?.title || 'Document',
+              )}
+            </div>
+          ) : null}
+
+          <p className="text-small text-ink">
+            <span className="font-medium">
+              {created?.title || file?.name}
+            </span>
+          </p>
+
+          {phase === 'transferring' ? (
+            <div>
+              <div className="mb-1 flex items-baseline justify-between gap-2">
+                <span className="text-small font-medium text-ink">
+                  {UI_COPY.knowledgeIndexStepUpload}
+                </span>
+                <span className="text-caption tabular-nums font-semibold text-ink">
+                  {transferPercent}%
+                </span>
+              </div>
+              <div
+                className="h-2 overflow-hidden rounded-full bg-surface-alt"
+                role="progressbar"
+                aria-valuenow={transferPercent}
+                aria-valuemin={0}
+                aria-valuemax={100}
               >
-                {index <= stepIndex ? '●' : '○'} {step.stage}
-              </li>
-            ))}
+                <div
+                  className="h-full rounded-full bg-brand-500 transition-all duration-300"
+                  style={{ width: `${Math.max(2, transferPercent)}%` }}
+                />
+              </div>
+            </div>
+          ) : status ? (
+            <IndexingProgress
+              status={
+                phase === 'done'
+                  ? 'indexed'
+                  : phase === 'failed'
+                    ? 'failed'
+                    : status.status
+              }
+              progressPercent={
+                phase === 'done' ? 100 : status.progressPercent
+              }
+              stage={status.stage}
+              indexStage={indexStage}
+            />
+          ) : null}
+
+          <ol className="space-y-1.5 text-small">
+            {INDEX_PIPELINE_STEPS.map((step) => {
+              const state =
+                phase === 'transferring'
+                  ? step.key === 'upload'
+                    ? 'active'
+                    : 'pending'
+                  : pipelineStepActive(
+                      step.key,
+                      phase === 'done' ? 'indexed' : indexStage,
+                      phase === 'done'
+                        ? 'indexed'
+                        : phase === 'failed'
+                          ? 'failed'
+                          : status?.status,
+                    );
+              return (
+                <li
+                  key={step.key}
+                  className={
+                    state === 'pending'
+                      ? 'text-ink-faint'
+                      : state === 'active'
+                        ? 'font-medium text-ink'
+                        : 'text-ink-muted'
+                  }
+                >
+                  {state === 'done' ? '●' : state === 'active' ? '◉' : '○'}{' '}
+                  {UI_COPY[step.labelKey]}
+                </li>
+              );
+            })}
           </ol>
+
+          {phase === 'failed' && status?.errorMessage ? (
+            <p className="text-small text-danger" role="alert">
+              {status.errorMessage}
+            </p>
+          ) : null}
         </div>
       )}
     </Modal>

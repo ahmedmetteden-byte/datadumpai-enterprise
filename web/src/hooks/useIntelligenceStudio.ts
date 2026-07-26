@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { services } from '@/api/services';
+import { useAuth } from '@/context/AuthContext';
 import { useWorkspace } from '@/context/WorkspaceContext';
 import type {
   IntelligenceConversation,
@@ -42,6 +43,8 @@ interface StudioState {
 
 export function useIntelligenceStudio(): StudioState {
   const { activeWorkspaceId } = useWorkspace();
+  const { accessToken } = useAuth();
+  const auth = useMemo(() => ({ accessToken }), [accessToken]);
   const workspaceId = activeWorkspaceId;
 
   const [readiness, setReadiness] = useState<StudioReadiness | null>(null);
@@ -76,9 +79,9 @@ export function useIntelligenceStudio(): StudioState {
     setError(null);
     try {
       const [ready, list, tips] = await Promise.all([
-        services.intelligence.checkReadiness(workspaceId),
-        services.intelligence.listConversations(workspaceId),
-        services.intelligence.listSuggestions(workspaceId),
+        services.intelligence.checkReadiness(workspaceId, auth),
+        services.intelligence.listConversations(workspaceId, auth),
+        services.intelligence.listSuggestions(workspaceId, auth),
       ]);
       setReadiness(ready);
       setConversations(list);
@@ -93,7 +96,7 @@ export function useIntelligenceStudio(): StudioState {
     } finally {
       setListLoading(false);
     }
-  }, [workspaceId]);
+  }, [workspaceId, auth]);
 
   useEffect(() => {
     setConversation(null);
@@ -117,13 +120,18 @@ export function useIntelligenceStudio(): StudioState {
         const detail = await services.intelligence.getConversation(
           workspaceId!,
           activeConversationId!,
+          auth,
         );
         if (!cancelled) {
           setConversation(detail);
           const lastAssistant = [...detail.messages]
             .reverse()
             .find((message) => message.role === 'assistant' && message.sources);
-          setSelectedSources(lastAssistant?.sources ?? []);
+          setSelectedSources(
+            lastAssistant?.linkedDocuments?.length
+              ? lastAssistant.linkedDocuments
+              : (lastAssistant?.sources ?? []),
+          );
         }
       } catch (err) {
         if (!cancelled) {
@@ -140,13 +148,17 @@ export function useIntelligenceStudio(): StudioState {
     return () => {
       cancelled = true;
     };
-  }, [workspaceId, activeConversationId]);
+  }, [workspaceId, activeConversationId, auth]);
 
   const startNewConversation = useCallback(async () => {
     if (!workspaceId) return;
     setError(null);
     try {
-      const created = await services.intelligence.startConversation(workspaceId);
+      const created = await services.intelligence.startConversation(
+        workspaceId,
+        {},
+        auth,
+      );
       await refreshList();
       setActiveConversationId(created.id);
       setConversation(created);
@@ -156,7 +168,7 @@ export function useIntelligenceStudio(): StudioState {
         err instanceof Error ? err.message : 'Could not start conversation',
       );
     }
-  }, [workspaceId, refreshList]);
+  }, [workspaceId, refreshList, auth]);
 
   const sendMessage = useCallback(
     async (content: string) => {
@@ -212,6 +224,7 @@ export function useIntelligenceStudio(): StudioState {
           const created = await services.intelligence.startConversation(
             workspaceId,
             { title: content.trim().slice(0, 48) },
+            auth,
           );
           conversationId = created.id;
           setActiveConversationId(created.id);
@@ -221,12 +234,17 @@ export function useIntelligenceStudio(): StudioState {
           workspaceId,
           conversationId,
           { content: content.trim(), mode },
+          auth,
         );
         setConversation(updated);
         const lastAssistant = [...updated.messages]
           .reverse()
           .find((message) => message.role === 'assistant');
-        setSelectedSources(lastAssistant?.sources ?? []);
+        setSelectedSources(
+          lastAssistant?.linkedDocuments?.length
+            ? lastAssistant.linkedDocuments
+            : (lastAssistant?.sources ?? []),
+        );
         await refreshList();
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to send message');
@@ -258,25 +276,31 @@ export function useIntelligenceStudio(): StudioState {
       mode,
       readiness,
       refreshList,
+      auth,
     ],
   );
 
   const renameConversation = useCallback(
     async (id: string, title: string) => {
       if (!workspaceId) return;
-      await services.intelligence.renameConversation(workspaceId, id, title);
+      await services.intelligence.renameConversation(
+        workspaceId,
+        id,
+        title,
+        auth,
+      );
       await refreshList();
       if (conversation?.id === id) {
         setConversation({ ...conversation, title });
       }
     },
-    [workspaceId, refreshList, conversation],
+    [workspaceId, refreshList, conversation, auth],
   );
 
   const deleteConversation = useCallback(
     async (id: string) => {
       if (!workspaceId) return;
-      await services.intelligence.deleteConversation(workspaceId, id);
+      await services.intelligence.deleteConversation(workspaceId, id, auth);
       if (activeConversationId === id) {
         setActiveConversationId(null);
         setConversation(null);
@@ -284,16 +308,16 @@ export function useIntelligenceStudio(): StudioState {
       }
       await refreshList();
     },
-    [workspaceId, activeConversationId, refreshList],
+    [workspaceId, activeConversationId, refreshList, auth],
   );
 
   const togglePin = useCallback(
     async (id: string) => {
       if (!workspaceId) return;
-      await services.intelligence.togglePin(workspaceId, id);
+      await services.intelligence.togglePin(workspaceId, id, auth);
       await refreshList();
     },
-    [workspaceId, refreshList],
+    [workspaceId, refreshList, auth],
   );
 
   const filteredConversations = useMemo(() => {

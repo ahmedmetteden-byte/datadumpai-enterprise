@@ -111,10 +111,34 @@ export interface WorkspaceInsightsOverview {
   lastUpdated: IsoDateTime;
 }
 
-/** Full Home page DTO — future GET /api/v1/home */
+export interface DashboardMetric {
+  id: string;
+  label: string;
+  value: number;
+  unit?: 'count' | 'percent';
+}
+
+export interface DashboardRecentItem {
+  id: string;
+  title: string;
+  subtitle: string;
+  href: string;
+  kind: 'document' | 'report' | 'conversation' | 'workspace';
+  at: IsoDateTime;
+  meta?: string | null;
+}
+
+export interface HomeDashboard {
+  metrics: DashboardMetric[];
+  recentUploads: DashboardRecentItem[];
+  recentReports: DashboardRecentItem[];
+  recentConversations: DashboardRecentItem[];
+}
+
+/** Full Home page DTO — GET /api/v1/home */
 export interface HomePageData {
   user: User;
-  activeWorkspace: Project;
+  activeWorkspace?: Project | null;
   workspaces: Project[];
   notifications: NotificationItem[];
   unreadNotificationCount: number;
@@ -123,6 +147,7 @@ export interface HomePageData {
   quickActions: QuickAction[];
   continueWorking: ContinueWorkingItem[];
   insightsOverview: WorkspaceInsightsOverview;
+  dashboard: HomeDashboard;
   insights: {
     brief: TodaysBrief;
     recommendations: AiRecommendation[];

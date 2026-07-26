@@ -26,6 +26,14 @@ export function formatPercent(value: number): string {
   return `${Math.round(value)}%`;
 }
 
+export function formatNumber(value: number): string {
+  try {
+    return new Intl.NumberFormat(undefined).format(value);
+  } catch {
+    return String(value);
+  }
+}
+
 export function formatConfidence(value: number): string {
   return `${Math.round(value * 100)}% confidence`;
 }

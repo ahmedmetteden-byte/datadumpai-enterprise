@@ -3,6 +3,7 @@ export type {
   HomeService,
   IntelligenceService,
   KnowledgeService,
+  ProfileService,
   PublishJob,
   PublishService,
   ReportService,
@@ -25,3 +26,16 @@ export {
   MockIntelligenceService,
   HttpIntelligenceService,
 } from './IntelligenceService';
+export {
+  AuthError,
+  MockAuthService,
+  SupabaseAuthService,
+  createAuthService,
+} from './AuthService';
+export type { AuthService } from './AuthService';
+export {
+  MockProfileService,
+  HttpProfileService,
+  SupabaseProfileService,
+  createProfileService,
+} from './ProfileService';

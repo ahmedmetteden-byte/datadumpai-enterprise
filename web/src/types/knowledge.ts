@@ -35,6 +35,8 @@ export interface KnowledgeListItem {
   summary?: string;
   status: KnowledgeProcessingStatusValue;
   tagIds: string[];
+  /** Display labels for tags */
+  tags?: string[];
   projectId?: string | null;
   projectName?: string | null;
   authorId?: string;
@@ -42,6 +44,15 @@ export interface KnowledgeListItem {
   updatedAt: IsoDateTime;
   createdAt: IsoDateTime;
   collectionIds?: string[];
+  collectionName?: string | null;
+  filename?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  indexedAt?: IsoDateTime | null;
+  /** 0–100 while indexing */
+  progressPercent?: number;
+  /** Pipeline stage key: queued | extracting | chunking | embedding | upserting | indexed */
+  indexStage?: string | null;
 }
 
 export interface KnowledgeRelationship {
@@ -93,6 +104,8 @@ export interface KnowledgeProcessingStatus {
   knowledgeId: string;
   status: KnowledgeProcessingStatusValue;
   stage: string;
+  /** Pipeline stage key from the API */
+  indexStage?: string | null;
   progressPercent?: number;
   errorMessage?: string;
   updatedAt: IsoDateTime;
@@ -115,10 +128,10 @@ export interface KnowledgeListQuery {
 }
 
 export interface KnowledgeUploadInput {
-  fileName: string;
-  mimeType: string;
-  sizeBytes: number;
+  file: File;
   title?: string;
+  /** Transfer progress 0–100 while posting to the API */
+  onProgress?: (percent: number) => void;
 }
 
 export interface KnowledgeFilterOptions {

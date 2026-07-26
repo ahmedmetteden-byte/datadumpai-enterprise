@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { services } from '@/api/services';
 import { Button, Modal } from '@/components/ui';
 import { UI_COPY } from '@/constants/ui';
+import { useAuth } from '@/context/AuthContext';
 import { useWorkspace } from '@/context/WorkspaceContext';
 
 export function ArchiveWorkspaceDialog({
@@ -19,6 +20,7 @@ export function ArchiveWorkspaceDialog({
 }) {
   const { bumpRevision, setActiveWorkspaceId, activeWorkspaceId } =
     useWorkspace();
+  const { accessToken } = useAuth();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -26,7 +28,7 @@ export function ArchiveWorkspaceDialog({
     setSubmitting(true);
     setError(null);
     try {
-      await services.workspace.archiveWorkspace(workspaceId);
+      await services.workspace.archiveWorkspace(workspaceId, { accessToken });
       if (activeWorkspaceId === workspaceId) {
         setActiveWorkspaceId(null);
       }

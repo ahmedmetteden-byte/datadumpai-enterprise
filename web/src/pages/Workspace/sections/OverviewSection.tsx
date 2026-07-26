@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ProgressRing } from '@/components/ui/ProgressRing';
 import { SectionHeader } from '@/components/ui/SectionHeader';
-import { UI_COPY } from '@/constants/ui';
+import { ROUTES, UI_COPY } from '@/constants/ui';
 import { formatPercent, formatRelativeTime } from '@/lib/format';
 import { formatStorageBytes } from '@/lib/workspacePermissions';
 import { WORKSPACE_ROUTES } from '@/lib/workspaceRoutes';
@@ -16,6 +16,23 @@ export function OverviewSection({ data }: { data: WorkspaceDetailData }) {
 
   return (
     <div className="space-y-8 animate-slide-up">
+      <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-surface-border bg-white p-5">
+        <div>
+          <h2 className="text-section text-ink">
+            {UI_COPY.knowledgeUploadFromWorkspace}
+          </h2>
+          <p className="mt-1 text-small text-ink-muted">
+            {UI_COPY.knowledgeUploadFromWorkspaceHint}
+          </p>
+        </div>
+        <Link
+          to={`${ROUTES.knowledge}?upload=1`}
+          className="inline-flex h-10 items-center justify-center rounded-md bg-brand-500 px-4 text-body font-medium text-white transition-colors hover:bg-brand-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"
+        >
+          {UI_COPY.knowledgeUpload}
+        </Link>
+      </section>
+
       <section className="grid gap-4 sm:grid-cols-3">
         <MetricCard
           label={UI_COPY.workspaceHealth}

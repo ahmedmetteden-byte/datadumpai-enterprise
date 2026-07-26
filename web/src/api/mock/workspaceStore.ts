@@ -1,6 +1,6 @@
 /**
  * Mutable in-memory workspace store for MockWorkspaceService.
- * Lets create / update / archive work without a backend.
+ * Starts empty — workspaces are created through the UI.
  */
 
 import type { Project } from '@/types/api';
@@ -16,43 +16,20 @@ import { mockUser, mockWorkspaces as seedWorkspaces } from '@/api/mock/data';
 let workspaces: Project[] = seedWorkspaces.map((item) => ({ ...item }));
 let archivedIds = new Set<string>();
 
-const seedTeam: TeamMember[] = [
-  {
-    id: mockUser.id,
-    name: mockUser.fullName,
-    role: 'owner',
-    title: 'Workspace owner',
-    status: 'online',
-  },
-  {
-    id: 'usr_02',
-    name: 'Jordan Lee',
-    role: 'editor',
-    title: 'Analyst',
-    status: 'online',
-  },
-  {
-    id: 'usr_03',
-    name: 'Sam Rivera',
-    role: 'reviewer',
-    title: 'Reviewer',
-    status: 'away',
-  },
-  {
-    id: 'usr_04',
-    name: 'Casey Nguyen',
-    role: 'viewer',
-    title: 'Contributor',
-    status: 'offline',
-  },
-];
-
-/** Per-workspace team overrides; defaults to seedTeam */
-const teamByWorkspace = new Map<string, TeamMember[]>();
-
-function cloneTeam(): TeamMember[] {
-  return seedTeam.map((member) => ({ ...member }));
+function ownerTeam(): TeamMember[] {
+  return [
+    {
+      id: mockUser.id,
+      name: mockUser.fullName,
+      role: 'owner',
+      title: 'Owner',
+      status: 'online',
+    },
+  ];
 }
+
+/** Per-workspace team overrides; defaults to owner only */
+const teamByWorkspace = new Map<string, TeamMember[]>();
 
 export function listActiveWorkspaces(): Project[] {
   return workspaces
@@ -87,7 +64,7 @@ export function createWorkspaceRecord(input: CreateWorkspaceInput): Project {
     storageUsed: 0,
   };
   workspaces = [workspace, ...workspaces];
-  teamByWorkspace.set(workspace.id, cloneTeam());
+  teamByWorkspace.set(workspace.id, ownerTeam());
   return { ...workspace };
 }
 
@@ -118,7 +95,7 @@ export function archiveWorkspaceRecord(workspaceId: string): void {
 
 export function getTeamForWorkspace(workspaceId: string): TeamMember[] {
   getActiveWorkspace(workspaceId);
-  const team = teamByWorkspace.get(workspaceId) ?? cloneTeam();
+  const team = teamByWorkspace.get(workspaceId) ?? ownerTeam();
   return team.map((member) => ({ ...member }));
 }
 

@@ -392,6 +392,15 @@ CURRENT_ROLE = "Workspace"
 
 AI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5")
 AI_REPORT_MODEL = os.getenv("OPENAI_REPORT_MODEL", "gpt-4.1-mini")
+OPENAI_EMBEDDING_MODEL = os.getenv(
+    "OPENAI_EMBEDDING_MODEL",
+    "text-embedding-3-small",
+).strip()
+QDRANT_URL = os.getenv("QDRANT_URL", "http://127.0.0.1:6333").strip()
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", "").strip()
+QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "datadumpai_chunks").strip()
+QDRANT_VECTOR_SIZE = int(os.getenv("QDRANT_VECTOR_SIZE", "1536"))
+SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "").strip()
 AI_TEMPERATURE = 0.2
 AI_MAX_OUTPUT_TOKENS = 4000
 AI_REPORT_MAX_OUTPUT_TOKENS = int(os.getenv("AI_REPORT_MAX_OUTPUT_TOKENS", "2500"))
