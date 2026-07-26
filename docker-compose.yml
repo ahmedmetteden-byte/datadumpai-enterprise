@@ -1,4 +1,12 @@
 services:
+  frontend:
+    build:
+      context: ./web
+    container_name: datadumpai-enterprise-frontend
+    restart: unless-stopped
+    ports:
+      - "3001:80"
+
   app:
     build: .
     env_file:
