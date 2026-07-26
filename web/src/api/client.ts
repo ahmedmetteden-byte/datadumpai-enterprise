@@ -86,7 +86,23 @@ export async function apiRequest<T>(
     return undefined as T;
   }
 
-  return (await response.json()) as T;
+  const contentType = response.headers.get('content-type') ?? '';
+  if (!contentType.includes('application/json')) {
+    // Often HTML (SPA fallback / proxy misconfig) when the API is unreachable.
+    throw new ApiError(
+      'API returned a non-JSON response. Is the product API running?',
+      response.status,
+    );
+  }
+
+  try {
+    return (await response.json()) as T;
+  } catch {
+    throw new ApiError(
+      'API returned invalid JSON. Is the product API running?',
+      response.status,
+    );
+  }
 }
 
 export interface UploadOptions {

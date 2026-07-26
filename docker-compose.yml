@@ -2,10 +2,10 @@ services:
   frontend:
     build:
       context: ./web
-    container_name: datadumpai-enterprise-frontend
+    container_name: datadumpai-frontend
     restart: unless-stopped
     ports:
-      - "3001:80"
+      - "${FRONTEND_PORT:-3000}:80"
     depends_on:
       - api
 
