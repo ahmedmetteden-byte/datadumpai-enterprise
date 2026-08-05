@@ -1,7 +1,8 @@
 import { apiRequest } from '@/api/client';
 import { mockLatency, isMockApiEnabled, type ServiceAuth } from '@/api/config';
 import { mockUser, mockWorkspaces } from '@/api/mock/data';
-import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabase';
+import { getSupabaseClient } from '@/lib/supabase';
+import { logAuth } from '@/utils/debugAuth';
 import type {
   OrganisationMembership,
   UpdateProfileInput,
@@ -96,9 +97,31 @@ export class MockProfileService implements ProfileService {
 
 export class HttpProfileService implements ProfileService {
   async getProfile(auth?: ServiceAuth): Promise<UserProfile> {
-    return apiRequest<UserProfile>('/api/v1/me/profile', {
-      token: auth?.accessToken,
+    const url = '/api/v1/me/profile';
+    const token = auth?.accessToken ?? null;
+    logAuth('ProfileService.getProfile BEFORE', {
+      url,
+      tokenExists: Boolean(token),
+      tokenPrefix: token ? token.slice(0, 20) : null,
     });
+    try {
+      const profile = await apiRequest<UserProfile>(url, {
+        token,
+      });
+      logAuth('ProfileService.getProfile AFTER', {
+        url,
+        status: 200,
+        responseBody: profile,
+      });
+      return profile;
+    } catch (err) {
+      logAuth('ProfileService.getProfile AFTER (error)', {
+        url,
+        status: err instanceof Error && 'status' in err ? (err as { status: number }).status : 'unknown',
+        responseBody: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
   }
 
   async updateProfile(
@@ -241,11 +264,9 @@ export class SupabaseProfileService implements ProfileService {
 }
 
 export function createProfileService(): ProfileService {
-  if (isMockApiEnabled()) {
+  // Offline demos only — production always uses the product API (JWT).
+  if (!import.meta.env.PROD && isMockApiEnabled()) {
     return new MockProfileService();
-  }
-  if (isSupabaseConfigured()) {
-    return new SupabaseProfileService();
   }
   return new HttpProfileService();
 }

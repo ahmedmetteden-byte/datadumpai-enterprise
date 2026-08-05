@@ -1,6 +1,11 @@
 import { mockLatency, isMockApiEnabled } from '@/api/config';
-import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabase';
+import { getSupabaseClient, getSupabaseConfigErrorMessage } from '@/lib/supabase';
 import { mockUser } from '@/api/mock/data';
+import {
+  logAuth,
+  logAuthStateChanged,
+  summarizeSession,
+} from '@/utils/debugAuth';
 import type { User } from '@/types/api';
 import type {
   AuthSession,
@@ -135,11 +140,15 @@ export class MockAuthService implements AuthService {
   }
 
   async getSession(): Promise<AuthSession | null> {
+    logAuth('AuthService.getSession (mock)');
     await mockLatency(40);
-    return readMockSession();
+    const session = readMockSession();
+    logAuth('AuthService.getSession (mock) result', summarizeSession(session));
+    return session;
   }
 
   async signIn(input: SignInInput): Promise<AuthSession> {
+    logAuth('AuthService.signIn (mock)', { email: input.email });
     await mockLatency(220);
     const email = input.email.trim().toLowerCase();
     if (!email || !input.password) {
@@ -168,6 +177,7 @@ export class MockAuthService implements AuthService {
     writeMockSession(session);
     syncMockProfile(session.user);
     this.notify(session);
+    logAuth('AuthService.signIn (mock) success', summarizeSession(session));
     return session;
   }
 
@@ -200,6 +210,7 @@ export class MockAuthService implements AuthService {
   }
 
   async signOut(): Promise<void> {
+    logAuth('AuthService.signOut (mock)');
     await mockLatency(80);
     writeMockSession(null);
     this.notify(null);
@@ -216,9 +227,14 @@ export class MockAuthService implements AuthService {
   onAuthStateChange(
     callback: (session: AuthSession | null) => void,
   ): () => void {
-    this.listeners.add(callback);
+    logAuth('AuthService.onAuthStateChange subscribed (mock)');
+    const wrapped = (session: AuthSession | null) => {
+      logAuthStateChanged(session);
+      callback(session);
+    };
+    this.listeners.add(wrapped);
     return () => {
-      this.listeners.delete(callback);
+      this.listeners.delete(wrapped);
     };
   }
 }
@@ -228,23 +244,32 @@ export class SupabaseAuthService implements AuthService {
   private client() {
     const supabase = getSupabaseClient();
     if (!supabase) {
-      throw new AuthError(
-        'Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.',
-      );
+      throw new AuthError(getSupabaseConfigErrorMessage());
     }
     return supabase;
   }
 
   async getSession(): Promise<AuthSession | null> {
+    logAuth('AuthService.getSession (supabase)');
     const { data, error } = await this.client().auth.getSession();
     if (error) {
+      logAuth('AuthService.getSession (supabase) error', {
+        message: error.message,
+        name: error.name,
+      });
       throw new AuthError(error.message, error.name);
     }
-    if (!data.session) return null;
-    return mapSupabaseSession(data.session);
+    if (!data.session) {
+      logAuth('AuthService.getSession (supabase) result', summarizeSession(null));
+      return null;
+    }
+    const mapped = mapSupabaseSession(data.session);
+    logAuth('AuthService.getSession (supabase) result', summarizeSession(mapped));
+    return mapped;
   }
 
   async signIn(input: SignInInput): Promise<AuthSession> {
+    logAuth('AuthService.signIn (supabase)', { email: input.email });
     const email = input.email.trim().toLowerCase();
     const { data, error } = await this.client().auth.signInWithPassword({
       email,
@@ -252,12 +277,18 @@ export class SupabaseAuthService implements AuthService {
     });
 
     if (error) {
+      logAuth('AuthService.signIn (supabase) error', {
+        message: error.message,
+        name: error.name,
+      });
       throw new AuthError(error.message, error.name);
     }
     if (!data.session) {
       throw new AuthError('Sign-in did not return a session.');
     }
-    return mapSupabaseSession(data.session);
+    const mapped = mapSupabaseSession(data.session);
+    logAuth('AuthService.signIn (supabase) success', summarizeSession(mapped));
+    return mapped;
   }
 
   async signUp(input: SignUpInput): Promise<AuthSession | null> {
@@ -290,10 +321,15 @@ export class SupabaseAuthService implements AuthService {
   }
 
   async signOut(): Promise<void> {
+    logAuth('AuthService.signOut (supabase)');
     const { error } = await this.client().auth.signOut();
     if (error) {
+      logAuth('AuthService.signOut (supabase) error', {
+        message: error.message,
+      });
       throw new AuthError(error.message, error.name);
     }
+    logAuth('AuthService.signOut (supabase) complete');
   }
 
   async sendPasswordReset(input: ForgotPasswordInput): Promise<void> {
@@ -314,8 +350,11 @@ export class SupabaseAuthService implements AuthService {
   onAuthStateChange(
     callback: (session: AuthSession | null) => void,
   ): () => void {
+    logAuth('AuthService.onAuthStateChange subscribed (supabase)');
     const { data } = this.client().auth.onAuthStateChange((_event, session) => {
-      callback(session ? mapSupabaseSession(session) : null);
+      const mapped = session ? mapSupabaseSession(session) : null;
+      logAuthStateChanged(mapped);
+      callback(mapped);
     });
     return () => {
       data.subscription.unsubscribe();
@@ -324,7 +363,12 @@ export class SupabaseAuthService implements AuthService {
 }
 
 export function createAuthService(): AuthService {
-  if (isMockApiEnabled() || !isSupabaseConfigured()) {
+  // Production: Supabase Auth is the only provider — never fall back to mock.
+  if (import.meta.env.PROD) {
+    return new SupabaseAuthService();
+  }
+  // Local offline demos only when explicitly enabled.
+  if (isMockApiEnabled()) {
     return new MockAuthService();
   }
   return new SupabaseAuthService();

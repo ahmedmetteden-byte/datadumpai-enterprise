@@ -8,16 +8,53 @@ Authenticated React frontend for DataDumpAI Enterprise (Project Horizon). This a
 - React Router 7
 - Tailwind CSS 3 (tokens aligned with `core/theme.py`)
 
+## Frontend environment
+
+Backend and frontend use **different** env files. Mixing them up is the most common setup failure.
+
+| Surface | File | Notes |
+|---------|------|--------|
+| Backend (FastAPI / Streamlit / Compose) | Repository root `.env` | `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, … |
+| Frontend (React / Vite) | `web/.env` | **Must** use the `VITE_` prefix |
+
+Vite only loads env files from the `web/` directory (where `vite.config.ts` lives). The repository root `.env` is **not** visible to the browser bundle.
+
+Why `VITE_`? Vite exposes only variables prefixed with `VITE_` to client code (`import.meta.env`). Unprefixed names stay on the server and never reach React.
+
+The product API verifies Supabase **ES256** access tokens via JWKS at `{SUPABASE_URL}/auth/v1/.well-known/jwks.json`. A shared `SUPABASE_JWT_SECRET` is not required for that path.
+
+Required SPA variables (see `web/.env.example`):
+
+```env
+VITE_SUPABASE_URL=
+VITE_SUPABASE_ANON_KEY=
+VITE_API_BASE_URL=http://localhost:8000
+```
+
+1. `cp web/.env.example web/.env`
+2. Copy the same Supabase project URL + anon key you use in the root `.env`, but name them `VITE_SUPABASE_*`
+3. Restart `npm run dev` after any change (Vite reads env at startup)
+
+Docker frontend builds bake these in at **image build** time via compose `build.args` (mapped from root `SUPABASE_*` / `VITE_*`). Rebuild the frontend image after changing secrets:
+
+```bash
+docker compose build --no-cache frontend
+docker compose up -d frontend
+```
+
 ## Quick start
 
 ```bash
 cd web
 cp .env.example .env
+# Fill VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY
 npm install
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173). By default the SPA uses the live product API (`VITE_USE_MOCK_API=false`). Start the FastAPI API (and set Supabase env vars) so Home, Library, Studio, and Reports load real workspace data.
+Open [http://localhost:5173](http://localhost:5173). By default the SPA uses the live product API (`VITE_USE_MOCK_API=false`). Start the FastAPI API (and set Supabase env vars in **both** root `.env` and `web/.env`) so Home, Library, Studio, and Reports load real workspace data.
+
+In development, the console prints a **Frontend configuration** summary (`configured` / `missing`) without secrets.
 
 ## Scripts
 
@@ -42,14 +79,15 @@ src/
   api/
     services/          # Auth, Profile, Home, Workspace, Knowledge, Report, Publish, AI
     mock/data.ts       # Domain fixtures for Mock*Service
-    client.ts          # Shared fetch + Bearer helper (+ 401 → /auth/login)
+    client.ts          # Shared fetch + Bearer helper
   context/             # Auth + Workspace selection
   constants/           # Routes + chrome copy
 ```
 
 UI imports `services` from `@/api/services` (never mock data or URLs).
 
-Auth (Phase 1): with `VITE_USE_MOCK_API=true`, any email + password (≥6 chars) signs in and the session persists in `localStorage`. With real Supabase env vars and mocks off, the SPA uses Supabase Auth JWTs.
+Auth: with `VITE_USE_MOCK_API=true` (non-production only), any email + password (≥6 chars) signs in and the session persists in `localStorage`. With real `VITE_SUPABASE_*` env vars and mocks off, the SPA uses Supabase Auth JWTs.
+
 Architecture references:
 
 - [BACKEND_INTEGRATION.md](./BACKEND_INTEGRATION.md) — FastAPI / Supabase connection

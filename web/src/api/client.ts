@@ -1,4 +1,10 @@
 import type { ApiErrorBody } from '@/types/api';
+import { notifyUnauthorized } from '@/lib/authEvents';
+import {
+  logApiRequest,
+  logApiResponse,
+  logFirst401,
+} from '@/utils/debugAuth';
 
 const NETWORK_ERROR_MESSAGE =
   'Network error. Check your connection and try again.';
@@ -23,14 +29,42 @@ function resolveBaseUrl(): string {
   return '';
 }
 
+function handleUnauthorized(status: number) {
+  if (status === 401) {
+    notifyUnauthorized();
+  }
+}
+
+function headersToObject(headers: Headers): Record<string, string> {
+  const out: Record<string, string> = {};
+  headers.forEach((value, key) => {
+    out[key] = value;
+  });
+  return out;
+}
+
+async function readBodyClone(response: Response): Promise<unknown> {
+  try {
+    const clone = response.clone();
+    const contentType = clone.headers.get('content-type') ?? '';
+    if (contentType.includes('application/json')) {
+      return await clone.json();
+    }
+    return await clone.text();
+  } catch {
+    return '[unreadable body]';
+  }
+}
+
 export interface RequestOptions extends Omit<RequestInit, 'body'> {
   body?: unknown;
   token?: string | null;
 }
 
 /**
- * Thin fetch wrapper for the future FastAPI product API.
+ * Thin fetch wrapper for the FastAPI product API.
  * Attaches Bearer tokens the same way Streamlit does for Supabase RLS.
+ * 401s notify AuthProvider for diagnostics only — no redirects here.
  */
 export async function apiRequest<T>(
   path: string,
@@ -38,11 +72,22 @@ export async function apiRequest<T>(
 ): Promise<T> {
   const { body, token, headers, ...rest } = options;
   const url = `${resolveBaseUrl()}${path.startsWith('/') ? path : `/${path}`}`;
+  const method = (rest.method ?? (body !== undefined ? 'POST' : 'GET')).toUpperCase();
+  const tokenPrefix = token ? token.slice(0, 20) : null;
+
+  logApiRequest({
+    url,
+    method,
+    hasAuthorization: Boolean(token),
+    tokenPrefix,
+    body,
+  });
 
   let response: Response;
   try {
     response = await fetch(url, {
       ...rest,
+      method,
       headers: {
         Accept: 'application/json',
         ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
@@ -58,20 +103,39 @@ export async function apiRequest<T>(
     throw new ApiError(NETWORK_ERROR_MESSAGE, 0);
   }
 
+  const responseBody = await readBodyClone(response);
+  const responseHeaders = headersToObject(response.headers);
+
+  logApiResponse({
+    url,
+    status: response.status,
+    headers: responseHeaders,
+    body: responseBody,
+  });
+
+  if (response.status === 401) {
+    logFirst401({
+      url,
+      method,
+      status: response.status,
+      headers: responseHeaders,
+      body: responseBody,
+      tokenPrefix,
+    });
+  }
+
   if (!response.ok) {
     let errorBody: ApiErrorBody | undefined;
     try {
-      errorBody = (await response.json()) as ApiErrorBody;
+      errorBody =
+        responseBody && typeof responseBody === 'object'
+          ? (responseBody as ApiErrorBody)
+          : undefined;
     } catch {
       errorBody = undefined;
     }
 
-    if (response.status === 401 && typeof window !== 'undefined') {
-      const path = window.location.pathname;
-      if (!path.startsWith('/auth')) {
-        window.location.assign('/auth/login');
-      }
-    }
+    handleUnauthorized(response.status);
 
     throw new ApiError(
       typeof errorBody?.detail === 'string'
@@ -88,7 +152,6 @@ export async function apiRequest<T>(
 
   const contentType = response.headers.get('content-type') ?? '';
   if (!contentType.includes('application/json')) {
-    // Often HTML (SPA fallback / proxy misconfig) when the API is unreachable.
     throw new ApiError(
       'API returned a non-JSON response. Is the product API running?',
       response.status,
@@ -119,6 +182,15 @@ export async function apiUpload<T>(
   options: UploadOptions = {},
 ): Promise<T> {
   const url = `${resolveBaseUrl()}${path.startsWith('/') ? path : `/${path}`}`;
+  const tokenPrefix = options.token ? options.token.slice(0, 20) : null;
+
+  logApiRequest({
+    url,
+    method: 'POST',
+    hasAuthorization: Boolean(options.token),
+    tokenPrefix,
+    body: '[FormData]',
+  });
 
   return new Promise<T>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -151,11 +223,21 @@ export async function apiUpload<T>(
     };
 
     xhr.onload = () => {
-      if (xhr.status === 401 && typeof window !== 'undefined') {
-        const current = window.location.pathname;
-        if (!current.startsWith('/auth')) {
-          window.location.assign('/auth/login');
-        }
+      logApiResponse({
+        url,
+        status: xhr.status,
+        body: xhr.response,
+      });
+
+      if (xhr.status === 401) {
+        logFirst401({
+          url,
+          method: 'POST',
+          status: xhr.status,
+          body: xhr.response,
+          tokenPrefix,
+        });
+        handleUnauthorized(401);
       }
 
       if (xhr.status >= 200 && xhr.status < 300) {

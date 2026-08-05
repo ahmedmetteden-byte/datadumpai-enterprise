@@ -12,7 +12,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from api.auth_jwt import AuthenticatedPrincipal
-from api.deps import get_principal, user_request_scope
+from models.user import User
+from api.deps import get_current_user, get_principal, user_request_scope
 from api.schemas import (
     IntelligenceCitationOut,
     IntelligenceConversationOut,
@@ -165,6 +166,7 @@ def _indexed_documents(project: dict[str, Any]) -> list[dict[str, Any]]:
 def check_readiness(
     workspace_id: str,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> StudioReadinessOut:
     project = _get_project(principal, workspace_id)
     docs = list(project.get("documents") or [])
@@ -190,6 +192,7 @@ def check_readiness(
 def list_suggestions(
     workspace_id: str,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> list[str]:
     _get_project(principal, workspace_id)
     return [
@@ -205,6 +208,7 @@ def list_suggestions(
 def list_conversations(
     workspace_id: str,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> list[IntelligenceConversationSummaryOut]:
     project = _get_project(principal, workspace_id)
     conversations = sorted(
@@ -224,6 +228,7 @@ def start_conversation(
     workspace_id: str,
     body: StartConversationBody,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> IntelligenceConversationOut:
     project = _get_project(principal, workspace_id)
     now = _utc_now()
@@ -260,6 +265,7 @@ def get_conversation(
     workspace_id: str,
     conversation_id: str,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> IntelligenceConversationOut:
     project = _get_project(principal, workspace_id)
     return _conversation_out(_find_conversation(project, conversation_id))
@@ -274,6 +280,7 @@ def send_message(
     conversation_id: str,
     body: SendMessageBody,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> IntelligenceConversationOut:
     content = body.content.strip()
     if not content:
@@ -356,6 +363,7 @@ def rename_conversation(
     conversation_id: str,
     body: RenameConversationBody,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> IntelligenceConversationSummaryOut:
     title = body.title.strip()
     if not title:
@@ -376,6 +384,7 @@ def delete_conversation(
     workspace_id: str,
     conversation_id: str,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> Response:
     project = _get_project(principal, workspace_id)
     conversations = _conversations(project)
@@ -395,6 +404,7 @@ def toggle_pin(
     workspace_id: str,
     conversation_id: str,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> IntelligenceConversationSummaryOut:
     project = _get_project(principal, workspace_id)
     conversation = _find_conversation(project, conversation_id)

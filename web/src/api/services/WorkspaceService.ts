@@ -17,6 +17,7 @@ import {
   listActiveWorkspaces,
   updateWorkspaceRecord,
 } from '@/api/mock/workspaceStore';
+import { logAuth } from '@/utils/debugAuth';
 import type { ActivityLog, Project } from '@/types/api';
 import type {
   ContinueWorkingItem,
@@ -113,9 +114,34 @@ export class MockWorkspaceService implements WorkspaceService {
 
 export class HttpWorkspaceService implements WorkspaceService {
   async listWorkspaces(auth?: ServiceAuth) {
-    return apiRequest<Project[]>('/api/v1/workspaces', {
-      token: auth?.accessToken,
+    const url = '/api/v1/workspaces';
+    const token = auth?.accessToken ?? null;
+    logAuth('WorkspaceService.listWorkspaces BEFORE', {
+      url,
+      tokenExists: Boolean(token),
+      tokenPrefix: token ? token.slice(0, 20) : null,
     });
+    try {
+      const workspaces = await apiRequest<Project[]>(url, {
+        token,
+      });
+      logAuth('WorkspaceService.listWorkspaces AFTER', {
+        url,
+        status: 200,
+        responseBody: workspaces,
+      });
+      return workspaces;
+    } catch (err) {
+      logAuth('WorkspaceService.listWorkspaces AFTER (error)', {
+        url,
+        status:
+          err instanceof Error && 'status' in err
+            ? (err as { status: number }).status
+            : 'unknown',
+        responseBody: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
   }
 
   async getWorkspace(workspaceId: string, auth?: ServiceAuth) {

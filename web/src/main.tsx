@@ -5,7 +5,10 @@ import App from './App';
 import { RequestFeedbackHost } from '@/components/feedback';
 import { AuthProvider } from '@/context/AuthContext';
 import { RequestFeedbackProvider } from '@/context/RequestFeedbackContext';
+import { logFrontendConfiguration } from '@/lib/supabase';
 import './index.css';
+
+logFrontendConfiguration();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

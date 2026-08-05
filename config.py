@@ -400,6 +400,8 @@ QDRANT_URL = os.getenv("QDRANT_URL", "http://127.0.0.1:6333").strip()
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", "").strip()
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "datadumpai_chunks").strip()
 QDRANT_VECTOR_SIZE = int(os.getenv("QDRANT_VECTOR_SIZE", "1536"))
+# Legacy HS256 shared secret — unused by the product API (ES256 + JWKS).
+# Kept only so existing .env files do not break on import.
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "").strip()
 AI_TEMPERATURE = 0.2
 AI_MAX_OUTPUT_TOKENS = 4000

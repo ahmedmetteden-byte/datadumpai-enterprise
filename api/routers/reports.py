@@ -11,7 +11,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 
 from api.auth_jwt import AuthenticatedPrincipal
-from api.deps import get_principal, user_request_scope
+from models.user import User
+from api.deps import get_current_user, get_principal, user_request_scope
 from api.schemas import (
     GenerateReportBody,
     ReportDetailOut,
@@ -92,6 +93,7 @@ def _report_out(raw: dict[str, Any]) -> ReportDetailOut:
 def list_templates(
     workspace_id: str,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> list[ReportTemplateOut]:
     _get_project(principal, workspace_id)
     return [ReportTemplateOut(**item) for item in TEMPLATES]
@@ -101,6 +103,7 @@ def list_templates(
 def list_periods(
     workspace_id: str,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> list[ReportPeriodOut]:
     _get_project(principal, workspace_id)
     return [ReportPeriodOut(**item) for item in PERIODS]
@@ -111,6 +114,7 @@ def list_reports(
     workspace_id: str,
     status_filter: str | None = Query(default=None, alias="status"),
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> list[ReportDetailOut]:
     project = _get_project(principal, workspace_id)
     items = [_report_out(item) for item in _reports(project)]
@@ -128,6 +132,7 @@ def generate_report(
     workspace_id: str,
     body: GenerateReportBody,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> ReportDetailOut:
     project = _get_project(principal, workspace_id)
     with user_request_scope(principal):
@@ -156,6 +161,7 @@ def get_report(
     workspace_id: str,
     report_id: str,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> ReportDetailOut:
     project = _get_project(principal, workspace_id)
     return _report_out(_find_report(project, report_id))
@@ -167,6 +173,7 @@ def save_report(
     report_id: str,
     body: SaveReportBody,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> ReportDetailOut:
     project = _get_project(principal, workspace_id)
     report = _find_report(project, report_id)
@@ -184,6 +191,7 @@ def export_report(
     report_id: str,
     format: Literal["docx", "pdf", "pptx"] = Query(default="docx"),
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> Response:
     project = _get_project(principal, workspace_id)
     report = _find_report(project, report_id)

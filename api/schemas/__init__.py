@@ -337,3 +337,32 @@ class HomePageOut(CamelModel):
     search: dict[str, Any] = Field(default_factory=dict)
     reports_awaiting_review: list[Any] = Field(default_factory=list)
     insights: dict[str, Any] = Field(default_factory=dict)
+
+
+class UpdateProfileBody(CamelModel):
+    full_name: str | None = None
+    company: str | None = None
+    job_title: str | None = None
+
+
+class OrganisationMembershipOut(CamelModel):
+    workspace_id: str
+    workspace_name: str
+    role: Literal["owner", "admin", "editor", "reviewer", "viewer"] = "owner"
+    user_id: str
+
+
+class UserProfileOut(CamelModel):
+    """Matches the SPA `UserProfile` DTO (camelCase)."""
+
+    user_id: str
+    email: str
+    full_name: str = ""
+    company: str = ""
+    job_title: str = ""
+    photo_url: str = ""
+    role: str = "user"
+    email_verified: bool = False
+    organisation_name: str = ""
+    memberships: list[OrganisationMembershipOut] = Field(default_factory=list)
+    updated_at: str | None = None

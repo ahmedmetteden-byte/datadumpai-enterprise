@@ -10,7 +10,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query
 
 from api.auth_jwt import AuthenticatedPrincipal
-from api.deps import get_principal, user_request_scope
+from models.user import User
+from api.deps import get_current_user, get_principal, user_request_scope
 from api.mappers import project_to_workspace
 from api.schemas import (
     ContinueWorkingOut,
@@ -183,6 +184,7 @@ def build_dashboard(projects: list[dict[str, Any]]) -> dict[str, Any]:
 def get_home(
     workspace_id: str | None = Query(default=None),
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> HomePageOut:
     with user_request_scope(principal):
         projects = _svc(principal).get_projects()

@@ -200,6 +200,29 @@ Nginx cutovers do not require reissuing certificates — only upstream targets c
 
 ## Environment variables
 
+### Frontend environment
+
+Backend and the React SPA do **not** share the same env file.
+
+| Surface | File | Examples |
+|---------|------|----------|
+| **Backend** | Repository root `.env` | `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` |
+| **Frontend** | `web/.env` | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_API_BASE_URL` |
+
+Vite only reads env files next to `web/vite.config.ts`. The root `.env` is invisible to React.
+
+Vite requires the `VITE_` prefix so values can be embedded in the browser bundle (`import.meta.env`). Unprefixed variables never reach client code.
+
+**Product API JWT verification:** access tokens are ES256. The API fetches public signing keys from `{SUPABASE_URL}/auth/v1/.well-known/jwks.json` (cached). `SUPABASE_JWT_SECRET` is **not** required for the SPA/product API.
+
+For Docker, `docker-compose.yml` passes frontend build-args from the root `.env` (`SUPABASE_*` / optional `VITE_*`). Rebuild the frontend image after rotating keys — they are compile-time, not runtime:
+
+```bash
+docker compose build --no-cache frontend && docker compose up -d frontend
+```
+
+See `web/.env.example` and [web/README.md](./web/README.md#frontend-environment).
+
 ### Streamlit + webhooks (`.env` on server)
 
 Generated from `.env.example`. Production values are **never committed**. Use `scripts/generate_production_env.sh` to bootstrap from the legacy stack, then add Supabase keys manually.

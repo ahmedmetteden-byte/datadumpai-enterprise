@@ -23,7 +23,8 @@ from fastapi import (
 from fastapi.responses import StreamingResponse
 
 from api.auth_jwt import AuthenticatedPrincipal
-from api.deps import get_principal, user_request_scope
+from models.user import User
+from api.deps import get_current_user, get_principal, user_request_scope
 from api.mappers import (
     document_processing_status,
     document_to_knowledge_detail,
@@ -167,6 +168,7 @@ def list_or_search_knowledge(
     offset: int = 0,
     sort: str | None = "updated_at",
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> KnowledgeListResultOut:
     project = _get_project(principal, workspace_id)
     # Persist any newly assigned document ids
@@ -198,6 +200,7 @@ def list_or_search_knowledge(
 def knowledge_filters(
     workspace_id: str,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> KnowledgeFilterOptionsOut:
     project = _get_project(principal, workspace_id)
     return KnowledgeFilterOptionsOut(
@@ -217,6 +220,7 @@ def knowledge_filters(
 def search_suggestions(
     workspace_id: str,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> dict[str, Any]:
     project = _get_project(principal, workspace_id)
     recent = [
@@ -253,6 +257,7 @@ async def upload_knowledge(
     file: UploadFile = File(...),
     title: str | None = Form(default=None),
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> KnowledgeListItemOut:
     filename = Path(file.filename or "upload.bin").name
     extension = Path(filename).suffix.lower()
@@ -327,6 +332,7 @@ def get_knowledge(
     workspace_id: str,
     knowledge_id: str,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> KnowledgeDetailOut:
     project = _get_project(principal, workspace_id)
     document = _find_doc(project, knowledge_id)
@@ -344,6 +350,7 @@ def preview_knowledge(
     workspace_id: str,
     knowledge_id: str,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> KnowledgePreviewOut:
     project = _get_project(principal, workspace_id)
     document = _find_doc(project, knowledge_id)
@@ -370,6 +377,7 @@ def processing_status(
     workspace_id: str,
     knowledge_id: str,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> KnowledgeProcessingStatusOut:
     project = _get_project(principal, workspace_id)
     document = _find_doc(project, knowledge_id)
@@ -385,6 +393,7 @@ def reindex_knowledge(
     knowledge_id: str,
     background_tasks: BackgroundTasks,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> KnowledgeProcessingStatusOut:
     project = _get_project(principal, workspace_id)
     document = _find_doc(project, knowledge_id)
@@ -413,6 +422,7 @@ def download_knowledge(
     workspace_id: str,
     knowledge_id: str,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ):
     project = _get_project(principal, workspace_id)
     document = _find_doc(project, knowledge_id)
@@ -446,6 +456,7 @@ def delete_knowledge(
     workspace_id: str,
     knowledge_id: str,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> None:
     project = _get_project(principal, workspace_id)
     document = _find_doc(project, knowledge_id)
@@ -472,6 +483,7 @@ def related_knowledge(
     workspace_id: str,
     knowledge_id: str,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> list[Any]:
     _get_project(principal, workspace_id)
     _find_doc(_get_project(principal, workspace_id), knowledge_id)

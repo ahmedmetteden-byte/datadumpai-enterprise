@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from api.auth_jwt import AuthenticatedPrincipal
-from api.deps import get_principal, user_request_scope
+from api.deps import get_current_user, get_principal, user_request_scope
 from api.mappers import project_to_workspace
 from api.schemas import (
     ActivityLogOut,
@@ -23,6 +23,7 @@ from api.schemas import (
     WorkspaceMembershipOut,
     WorkspaceOut,
 )
+from models.user import User
 from services.project_service import ProjectService
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
@@ -50,6 +51,7 @@ def _get_active(principal: AuthenticatedPrincipal, workspace_id: str) -> dict:
 @router.get("", response_model=list[WorkspaceOut])
 def list_workspaces(
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> list[WorkspaceOut]:
     with user_request_scope(principal):
         projects = _svc(principal).get_projects()
@@ -64,6 +66,7 @@ def list_workspaces(
 def create_workspace(
     body: CreateWorkspaceBody,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> WorkspaceOut:
     with user_request_scope(principal):
         svc = _svc(principal)
@@ -82,6 +85,7 @@ def create_workspace(
 def get_workspace(
     workspace_id: str,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> WorkspaceOut:
     return project_to_workspace(_get_active(principal, workspace_id))
 
@@ -91,6 +95,7 @@ def update_workspace(
     workspace_id: str,
     body: UpdateWorkspaceBody,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> WorkspaceOut:
     with user_request_scope(principal):
         svc = _svc(principal)
@@ -116,6 +121,7 @@ def update_workspace(
 def delete_workspace(
     workspace_id: str,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> None:
     with user_request_scope(principal):
         svc = _svc(principal)
@@ -139,6 +145,7 @@ def delete_workspace(
 def archive_workspace(
     workspace_id: str,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> None:
     with user_request_scope(principal):
         svc = _svc(principal)
@@ -155,6 +162,7 @@ def archive_workspace(
 def my_membership(
     workspace_id: str,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> WorkspaceMembershipOut:
     project = _get_active(principal, workspace_id)
     return WorkspaceMembershipOut(
@@ -168,6 +176,7 @@ def my_membership(
 def workspace_health(
     workspace_id: str,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> WorkspaceHealthOut:
     project = _get_active(principal, workspace_id)
     docs = project.get("documents") or []
@@ -196,6 +205,7 @@ def workspace_health(
 def insights_overview(
     workspace_id: str,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> WorkspaceInsightsOverviewOut:
     project = _get_active(principal, workspace_id)
     docs = project.get("documents") or []
@@ -214,6 +224,7 @@ def insights_overview(
 def workspace_team(
     workspace_id: str,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> list[TeamMemberOut]:
     _get_active(principal, workspace_id)
     return [
@@ -233,6 +244,7 @@ def workspace_team(
 def org_intelligence(
     workspace_id: str,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> list[OrgIntelligenceSignalOut]:
     _get_active(principal, workspace_id)
     return []
@@ -243,6 +255,7 @@ def recent_activity(
     workspace_id: str,
     limit: int = 20,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> list[ActivityLogOut]:
     _get_active(principal, workspace_id)
     return []
@@ -255,6 +268,7 @@ def recent_activity(
 def continue_working(
     workspace_id: str,
     principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
 ) -> list[ContinueWorkingOut]:
     project = _get_active(principal, workspace_id)
     items: list[ContinueWorkingOut] = []

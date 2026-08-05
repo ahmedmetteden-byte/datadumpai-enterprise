@@ -57,7 +57,7 @@ Implementations live under `src/api/services/`:
 2. `AuthProvider` persists the session (Supabase storage).
 3. Pass `{ accessToken }` into service methods / `apiRequest` / `apiUpload`.
 4. Unauthenticated users are redirected to `/auth/login`; HTTP `401` also redirects there.
-5. Product API validates Supabase JWT via `SUPABASE_JWT_SECRET`.
+5. Product API validates Supabase **ES256** JWTs via JWKS (`{SUPABASE_URL}/auth/v1/.well-known/jwks.json`), checking issuer, audience `authenticated`, expiration, and signature. `SUPABASE_JWT_SECRET` is not used.
 6. Set `VITE_USE_MOCK_API=false` for real API.
 
 ## Sprint 2 flow

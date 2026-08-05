@@ -10,7 +10,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routers import home, intelligence, knowledge, reports, workspaces
+from api.routers import home, intelligence, knowledge, me, reports, workspaces
 
 app = FastAPI(title="DataDumpAI Product API", version="1.0.0")
 
@@ -19,6 +19,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
         "http://localhost:3001",
         "http://127.0.0.1:3001",
     ],
@@ -28,6 +30,7 @@ app.add_middleware(
 )
 
 app.include_router(home.router, prefix="/api/v1")
+app.include_router(me.router, prefix="/api/v1")
 app.include_router(workspaces.router, prefix="/api/v1")
 app.include_router(knowledge.router, prefix="/api/v1")
 app.include_router(intelligence.router, prefix="/api/v1")
