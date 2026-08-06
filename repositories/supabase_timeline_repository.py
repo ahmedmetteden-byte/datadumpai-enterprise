@@ -13,10 +13,12 @@ from core.project_access import require_real_project_uuid
 class SupabaseTimelineRepository:
     """Persist timeline events in PostgreSQL."""
 
-    def __init__(self, project_id: str, *, user_id: str) -> None:
+    def __init__(
+        self, project_id: str, *, user_id: str, access_token: str | None = None
+    ) -> None:
         self._project_id = require_real_project_uuid(project_id)
         self._user_id = user_id
-        self._client = get_database_client()
+        self._client = get_database_client(access_token=access_token)
 
     def load(self) -> list[dict[str, Any]]:
         response = handle_response(

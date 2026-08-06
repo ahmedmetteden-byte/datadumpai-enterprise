@@ -80,16 +80,6 @@ export function KnowledgeLibrary({
       className="flex min-w-0 flex-1 flex-col gap-4"
       aria-label={UI_COPY.knowledgeLibrary}
     >
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-page-title text-ink">{UI_COPY.knowledgeLibrary}</h1>
-          <p className="mt-1 text-small text-ink-muted">
-            {UI_COPY.knowledgeLibrarySubtitle}
-          </p>
-        </div>
-        <Button onClick={onUpload}>{UI_COPY.knowledgeUpload}</Button>
-      </div>
-
       <KnowledgeSearch
         q={q}
         onQueryChange={onQueryChange}
@@ -136,7 +126,7 @@ export function KnowledgeLibrary({
           onClearSearch={onClearSearch}
         />
       ) : viewMode === 'grid' ? (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
           {items.map((item) => (
             <KnowledgeCard
               key={item.id}

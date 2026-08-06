@@ -41,6 +41,12 @@ export default {
         success: '#16A34A',
         warning: '#D97706',
         danger: '#DC2626',
+        chip: {
+          rose: { DEFAULT: '#E11D48', soft: '#FFF1F2' },
+          teal: { DEFAULT: '#0D9488', soft: '#F0FDFA' },
+          violet: { DEFAULT: '#7C3AED', soft: '#F5F3FF' },
+          amber: { DEFAULT: '#B45309', soft: '#FFFBEB' },
+        },
       },
       fontFamily: {
         sans: [
@@ -52,8 +58,9 @@ export default {
         ],
       },
       fontSize: {
-        hero: ['2.25rem', { lineHeight: '1.15', letterSpacing: '-0.02em', fontWeight: '600' }],
-        'page-title': ['1.75rem', { lineHeight: '1.2', letterSpacing: '-0.02em', fontWeight: '600' }],
+        hero: ['2.5rem', { lineHeight: '1.1', letterSpacing: '-0.03em', fontWeight: '700' }],
+        'page-title': ['1.75rem', { lineHeight: '1.2', letterSpacing: '-0.02em', fontWeight: '700' }],
+        eyebrow: ['0.75rem', { lineHeight: '1.4', letterSpacing: '0.08em', fontWeight: '600' }],
         section: ['1.125rem', { lineHeight: '1.35', fontWeight: '600' }],
         card: ['0.9375rem', { lineHeight: '1.4', fontWeight: '600' }],
         body: ['0.9375rem', { lineHeight: '1.5', fontWeight: '400' }],

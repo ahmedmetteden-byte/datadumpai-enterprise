@@ -1,49 +1,76 @@
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useState } from 'react';
+import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { services } from '@/api/services';
+import { useAuth } from '@/context/AuthContext';
 import { UI_COPY } from '@/constants/ui';
 import { useWorkspace } from '@/context/WorkspaceContext';
 import { useWorkspaceList } from '@/hooks/useWorkspaceList';
-import { WORKSPACE_ROUTES, WORKSPACE_SECTIONS } from '@/lib/workspaceRoutes';
-import type { WorkspaceSectionId } from '@/types/workspace';
 
-function sectionFromPath(pathname: string): WorkspaceSectionId | null {
-  const match = pathname.match(/^\/workspaces\/[^/]+\/([^/]+)/);
-  if (!match?.[1]) return null;
-  const id = match[1] as WorkspaceSectionId;
-  return WORKSPACE_SECTIONS.some((section) => section.id === id) ? id : 'overview';
-}
+const CREATE_NEW_VALUE = '__create_new__';
 
 export function WorkspaceSwitcher({ className }: { className?: string }) {
-  const navigate = useNavigate();
-  const location = useLocation();
-  const { activeWorkspaceId, setActiveWorkspaceId } = useWorkspace();
+  const { accessToken } = useAuth();
+  const { activeWorkspaceId, setActiveWorkspaceId, bumpRevision } =
+    useWorkspace();
   const { workspaces, loading } = useWorkspaceList();
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
 
   const value =
     activeWorkspaceId && workspaces.some((item) => item.id === activeWorkspaceId)
       ? activeWorkspaceId
       : (workspaces[0]?.id ?? '');
 
-  function handleChange(workspaceId: string) {
-    setActiveWorkspaceId(workspaceId);
-    const section = sectionFromPath(location.pathname);
-    if (location.pathname.startsWith('/workspaces/') && section) {
-      navigate(WORKSPACE_ROUTES.section(workspaceId, section));
-      return;
+  async function handleCreate() {
+    if (!name.trim()) return;
+    setBusy(true);
+    try {
+      const created = await services.workspace.createWorkspace(
+        { name: name.trim() },
+        { accessToken },
+      );
+      bumpRevision();
+      setActiveWorkspaceId(created.id);
+      setCreating(false);
+      setName('');
+    } catch {
+      /* keep the form open so the user can retry */
+    } finally {
+      setBusy(false);
     }
-    if (location.pathname === WORKSPACE_ROUTES.list) {
-      navigate(WORKSPACE_ROUTES.section(workspaceId, 'overview'));
-    }
+  }
+
+  if (creating) {
+    return (
+      <div className={className ? `${className} flex items-center gap-2` : 'flex items-center gap-2'}>
+        <Input
+          autoFocus
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') void handleCreate();
+            if (event.key === 'Escape') setCreating(false);
+          }}
+          placeholder={UI_COPY.createWorkspaceTitle}
+          className="h-10 min-w-[10.5rem] max-w-[14rem]"
+        />
+        <Button size="sm" disabled={busy || !name.trim()} onClick={() => void handleCreate()}>
+          {UI_COPY.createWorkspace}
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => setCreating(false)}>
+          {UI_COPY.cancel}
+        </Button>
+      </div>
+    );
   }
 
   if (loading && workspaces.length === 0) {
     return (
       <div className="h-10 min-w-[10rem] animate-pulse rounded-md bg-surface-border/60" />
     );
-  }
-
-  if (workspaces.length === 0) {
-    return null;
   }
 
   return (
@@ -54,7 +81,13 @@ export function WorkspaceSwitcher({ className }: { className?: string }) {
       <Select
         id="global-workspace-switcher"
         value={value}
-        onChange={(event) => handleChange(event.target.value)}
+        onChange={(event) => {
+          if (event.target.value === CREATE_NEW_VALUE) {
+            setCreating(true);
+            return;
+          }
+          setActiveWorkspaceId(event.target.value);
+        }}
         className="min-w-[10.5rem] max-w-[14rem] truncate bg-white"
         aria-label={UI_COPY.workspaceSelector}
       >
@@ -63,6 +96,7 @@ export function WorkspaceSwitcher({ className }: { className?: string }) {
             {workspace.name}
           </option>
         ))}
+        <option value={CREATE_NEW_VALUE}>+ {UI_COPY.createWorkspace}</option>
       </Select>
     </div>
   );

@@ -228,11 +228,12 @@ export function useOrganisationalMemory(selectedId: string | null) {
 
   const removeSelected = useCallback(async () => {
     if (!activeWorkspaceId || selectedIds.length === 0) return;
-    await Promise.all(
-      selectedIds.map((id) =>
-        services.knowledge.delete(activeWorkspaceId, id, auth),
-      ),
-    );
+    // Deletes must run one at a time — the backend reads-modifies-writes the
+    // whole document list per delete, so parallel requests race and only the
+    // last write survives, silently undoing the others.
+    for (const id of selectedIds) {
+      await services.knowledge.delete(activeWorkspaceId, id, auth);
+    }
     setSelectedIds([]);
     bumpRevision();
   }, [activeWorkspaceId, selectedIds, bumpRevision, auth]);

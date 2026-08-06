@@ -20,6 +20,7 @@ import type {
 import type {
   IntelligenceConversation,
   IntelligenceConversationSummary,
+  IntelligenceMessage,
   SendMessageInput,
   StartConversationInput,
   StudioReadiness,
@@ -275,6 +276,12 @@ export interface IntelligenceService {
     auth?: ServiceAuth,
   ): Promise<IntelligenceConversationSummary>;
   listSuggestions(workspaceId: string, auth?: ServiceAuth): Promise<string[]>;
+  /** Answer a question without creating or saving a conversation ("temporary chat"). */
+  askTemporary(
+    workspaceId: string,
+    input: SendMessageInput,
+    auth?: ServiceAuth,
+  ): Promise<IntelligenceMessage>;
 }
 
 export interface ProfileService {

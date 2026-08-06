@@ -117,16 +117,22 @@ class DocumentService:
             uploaded_at=uploaded_at,
         )
 
-        TimelineService().record_document_uploaded(
-            project_id=project_id,
-            filename=filename,
-            timestamp=uploaded_at,
-        )
+        try:
+            TimelineService(access_token=self.access_token).record_document_uploaded(
+                project_id=project_id,
+                filename=filename,
+                timestamp=uploaded_at,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to record timeline event for document upload project=%s",
+                project_id,
+            )
 
         try:
             from services.activity_service import ActivityService
 
-            ActivityService().log(
+            ActivityService(access_token=self.access_token).log(
                 "document.uploaded",
                 f"Uploaded {filename}",
                 metadata={"project_id": project_id, "filename": filename},

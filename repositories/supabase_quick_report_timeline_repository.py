@@ -14,9 +14,9 @@ from core.database import get_database_client, handle_response
 class SupabaseQuickReportTimelineRepository:
     """Persist Quick Report timeline events without a project UUID."""
 
-    def __init__(self, *, user_id: str) -> None:
+    def __init__(self, *, user_id: str, access_token: str | None = None) -> None:
         self._user_id = user_id
-        self._client = get_database_client()
+        self._client = get_database_client(access_token=access_token)
 
     def load(self) -> list[dict[str, Any]]:
         response = handle_response(

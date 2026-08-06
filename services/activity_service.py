@@ -19,9 +19,15 @@ from core.user_paths import get_user_data_root
 class ActivityService:
     """Record and retrieve user-facing activity events."""
 
-    def __init__(self, *, current_user: CurrentUser | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        current_user: CurrentUser | None = None,
+        access_token: str | None = None,
+    ) -> None:
         self._current_user = current_user or require_current_user()
         self._user_id = self._current_user.id
+        self._access_token = access_token
 
     @staticmethod
     def _utc_now() -> str:
@@ -46,7 +52,7 @@ class ActivityService:
         if config.use_database() and config.is_supabase_configured():
             try:
                 handle_response(
-                    get_database_client()
+                    get_database_client(access_token=self._access_token)
                     .table("user_activity_logs")
                     .insert(
                         {
@@ -78,7 +84,7 @@ class ActivityService:
         if config.use_database() and config.is_supabase_configured():
             try:
                 response = handle_response(
-                    get_database_client()
+                    get_database_client(access_token=self._access_token)
                     .table("user_activity_logs")
                     .select("*")
                     .eq("user_id", self._user_id)

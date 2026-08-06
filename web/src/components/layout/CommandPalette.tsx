@@ -6,7 +6,6 @@ import { ROUTES, UI_COPY } from '@/constants/ui';
 import { useWorkspace } from '@/context/WorkspaceContext';
 import { useWorkspaceList } from '@/hooks/useWorkspaceList';
 import { cn } from '@/lib/cn';
-import { WORKSPACE_ROUTES } from '@/lib/workspaceRoutes';
 
 export interface CommandItem {
   id: string;
@@ -37,57 +36,15 @@ export function CommandPalette({
         id: 'nav-home',
         label: UI_COPY.homeCrumb,
         group: UI_COPY.commandGroupNavigate,
-        keywords: ['home'],
+        keywords: ['home', 'upload', 'ask', 'generate', 'report'],
         run: () => navigate(ROUTES.home),
       },
       {
-        id: 'nav-workspaces',
-        label: UI_COPY.workspacesTitle,
-        group: UI_COPY.commandGroupNavigate,
-        keywords: ['workspaces', 'list'],
-        run: () => navigate(ROUTES.workspaces),
-      },
-      {
-        id: 'nav-documents',
-        label: UI_COPY.commandCreateDocuments,
-        group: UI_COPY.commandGroupNavigate,
-        keywords: ['documents', 'upload', 'create'],
-        run: () => navigate(ROUTES.documents),
-      },
-      {
-        id: 'nav-reports',
-        label: UI_COPY.commandOpenReports,
-        group: UI_COPY.commandGroupNavigate,
-        keywords: ['reports'],
-        run: () => navigate(ROUTES.reports),
-      },
-      {
-        id: 'nav-report-new',
-        label: UI_COPY.createReport,
-        group: UI_COPY.commandGroupNavigate,
-        keywords: ['create', 'report'],
-        run: () => navigate(ROUTES.reportsNew),
-      },
-      {
-        id: 'nav-copilot',
-        label: UI_COPY.commandIntelligenceStudio,
-        group: UI_COPY.commandGroupNavigate,
-        keywords: ['copilot', 'intelligence', 'ai', 'studio'],
-        run: () => navigate(ROUTES.copilot),
-      },
-      {
-        id: 'nav-knowledge',
+        id: 'nav-library',
         label: UI_COPY.commandOrganisationalMemory,
         group: UI_COPY.commandGroupNavigate,
-        keywords: ['knowledge', 'library', 'memory', 'documents'],
-        run: () => navigate(ROUTES.knowledge),
-      },
-      {
-        id: 'nav-search',
-        label: UI_COPY.commandSearch,
-        group: UI_COPY.commandGroupNavigate,
-        keywords: ['search', 'ask'],
-        run: () => navigate(ROUTES.knowledge),
+        keywords: ['knowledge', 'library', 'documents', 'reports'],
+        run: () => navigate(ROUTES.library),
       },
     ];
 
@@ -99,7 +56,6 @@ export function CommandPalette({
       keywords: ['switch', 'workspace', workspace.name.toLowerCase()],
       run: () => {
         setActiveWorkspaceId(workspace.id);
-        navigate(WORKSPACE_ROUTES.section(workspace.id, 'overview'));
       },
     }));
 

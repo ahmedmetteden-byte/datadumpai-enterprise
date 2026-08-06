@@ -15,6 +15,7 @@ import {
 import type {
   IntelligenceConversation,
   IntelligenceConversationSummary,
+  IntelligenceMessage,
   SendMessageInput,
   StartConversationInput,
   StudioReadiness,
@@ -76,6 +77,15 @@ export class MockIntelligenceService implements IntelligenceService {
     await mockLatency(40);
     void workspaceId;
     return mockSuggestedPrompts();
+  }
+
+  async askTemporary(workspaceId: string, input: SendMessageInput) {
+    await mockLatency(500);
+    const scratch = mockStartConversation(workspaceId, {});
+    const conversation = mockSendMessage(workspaceId, scratch.id, input);
+    return (
+      conversation.messages[conversation.messages.length - 1] ?? conversation.messages[0]
+    );
   }
 }
 
@@ -184,6 +194,21 @@ export class HttpIntelligenceService implements IntelligenceService {
     return apiRequest<string[]>(
       `/api/v1/workspaces/${workspaceId}/intelligence/suggestions`,
       { token: auth?.accessToken },
+    );
+  }
+
+  async askTemporary(
+    workspaceId: string,
+    input: SendMessageInput,
+    auth?: ServiceAuth,
+  ) {
+    return apiRequest<IntelligenceMessage>(
+      `/api/v1/workspaces/${workspaceId}/intelligence/ask`,
+      {
+        method: 'POST',
+        body: input,
+        token: auth?.accessToken,
+      },
     );
   }
 }

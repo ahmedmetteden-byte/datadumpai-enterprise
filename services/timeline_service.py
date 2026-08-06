@@ -24,11 +24,14 @@ class TimelineService:
     ACTION_DOCUMENT_UPLOADED = "document_uploaded"
     ACTION_REPORT_GENERATED = "report_generated"
 
+    def __init__(self, *, access_token: str | None = None) -> None:
+        self._access_token = access_token
+
     def _utc_now(self) -> str:
         return datetime.now(timezone.utc).isoformat()
 
     def _repository(self, project_id: str) -> TimelineRepository:
-        return TimelineRepository(project_id)
+        return TimelineRepository(project_id, access_token=self._access_token)
 
     def _to_event(self, data: dict[str, Any]) -> TimelineEvent:
         return TimelineEvent(

@@ -30,10 +30,12 @@ export interface ReportDetail {
   status: ReportStatus;
   content?: string | null;
   sourceDocuments?: string[];
+  instructions?: string | null;
 }
 
 export interface GenerateReportInput {
   templateId: string;
   periodId: string;
   title?: string;
+  instructions?: string;
 }

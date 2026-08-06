@@ -24,6 +24,7 @@ from services.export_service import ExportService
 from services.premium_export_service import PremiumExportService, ReportExportContext
 from services.project_service import ProjectService
 from services.report_document import report_data_from_markdown
+from services.report_service import ReportService
 from services.spa_report_generation_service import (
     PERIODS,
     TEMPLATES,
@@ -50,21 +51,27 @@ def _get_project(principal: AuthenticatedPrincipal, workspace_id: str) -> dict[s
         return project
 
 
-def _save_project(principal: AuthenticatedPrincipal, project: dict[str, Any]) -> None:
+def _reports(
+    workspace_id: str, principal: AuthenticatedPrincipal
+) -> list[dict[str, Any]]:
+    """Reports generated via the SPA, sourced from their persisted metadata
+    sidecar (not `project["reports"]`, which is the legacy Streamlit path)."""
+
     with user_request_scope(principal):
-        _svc(principal).update_project(project)
+        entries = ReportService.get_reports(
+            workspace_id, access_token=principal.access_token
+        )
+    return [
+        entry["report_data"]
+        for entry in entries
+        if isinstance(entry.get("report_data"), dict)
+    ]
 
 
-def _reports(project: dict[str, Any]) -> list[dict[str, Any]]:
-    raw = project.get("spa_reports")
-    if not isinstance(raw, list):
-        raw = []
-        project["spa_reports"] = raw
-    return raw
-
-
-def _find_report(project: dict[str, Any], report_id: str) -> dict[str, Any]:
-    for report in _reports(project):
+def _find_report(
+    workspace_id: str, principal: AuthenticatedPrincipal, report_id: str
+) -> dict[str, Any]:
+    for report in _reports(workspace_id, principal):
         if str(report.get("id")) == report_id:
             return report
     raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Report not found.")
@@ -86,6 +93,7 @@ def _report_out(raw: dict[str, Any]) -> ReportDetailOut:
         status=raw.get("status") or "draft",
         content=raw.get("content"),
         source_documents=list(raw.get("sourceDocuments") or []),
+        instructions=raw.get("instructions"),
     )
 
 
@@ -116,8 +124,8 @@ def list_reports(
     principal: AuthenticatedPrincipal = Depends(get_principal),
     _current_user: User = Depends(get_current_user),
 ) -> list[ReportDetailOut]:
-    project = _get_project(principal, workspace_id)
-    items = [_report_out(item) for item in _reports(project)]
+    _get_project(principal, workspace_id)
+    items = [_report_out(item) for item in _reports(workspace_id, principal)]
     if status_filter == "awaiting_review":
         items = [item for item in items if item.status == "awaiting_review"]
     return items
@@ -145,6 +153,7 @@ def generate_report(
                 template_id=body.template_id,
                 period_id=body.period_id,
                 title=body.title,
+                instructions=body.instructions,
             )
         except Exception as exc:
             logger.exception("Report generation failed workspace=%s", workspace_id)
@@ -152,7 +161,6 @@ def generate_report(
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Report generation failed: {exc}",
             ) from exc
-    _save_project(principal, project)
     return _report_out(record)
 
 
@@ -163,8 +171,8 @@ def get_report(
     principal: AuthenticatedPrincipal = Depends(get_principal),
     _current_user: User = Depends(get_current_user),
 ) -> ReportDetailOut:
-    project = _get_project(principal, workspace_id)
-    return _report_out(_find_report(project, report_id))
+    _get_project(principal, workspace_id)
+    return _report_out(_find_report(workspace_id, principal, report_id))
 
 
 @router.post("/reports/{report_id}/save", response_model=ReportDetailOut)
@@ -175,13 +183,21 @@ def save_report(
     principal: AuthenticatedPrincipal = Depends(get_principal),
     _current_user: User = Depends(get_current_user),
 ) -> ReportDetailOut:
-    project = _get_project(principal, workspace_id)
-    report = _find_report(project, report_id)
+    _get_project(principal, workspace_id)
+    report = _find_report(workspace_id, principal, report_id)
     report["status"] = body.status
     from datetime import datetime, timezone
 
     report["updatedAt"] = datetime.now(timezone.utc).isoformat()
-    _save_project(principal, project)
+    with user_request_scope(principal):
+        ReportService.save_report_metadata(
+            workspace_id,
+            str(report["filename"]),
+            report_type=str(report.get("reportType") or ""),
+            source_documents=list(report.get("sourceDocuments") or []),
+            report_data=report,
+            access_token=principal.access_token,
+        )
     return _report_out(report)
 
 
@@ -194,7 +210,7 @@ def export_report(
     _current_user: User = Depends(get_current_user),
 ) -> Response:
     project = _get_project(principal, workspace_id)
-    report = _find_report(project, report_id)
+    report = _find_report(workspace_id, principal, report_id)
     content = str(report.get("content") or "").strip()
     if not content:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Report has no content.")
@@ -213,7 +229,9 @@ def export_report(
     )
 
     with user_request_scope(principal):
-        premium = PremiumExportService(ExportService())
+        premium = PremiumExportService(
+            ExportService(access_token=principal.access_token)
+        )
         try:
             if format == "pdf":
                 result = premium.export_executive_pdf(context)

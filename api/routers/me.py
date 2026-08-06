@@ -70,7 +70,7 @@ def get_my_profile(
     _current_user: User = Depends(get_current_user),
 ) -> UserProfileOut:
     with user_request_scope(principal):
-        service = ProfileService()
+        service = ProfileService(access_token=principal.access_token)
         raw = service.load()
         seed: dict[str, Any] = {}
         if not raw.get("email") and principal.user.email:
@@ -89,7 +89,7 @@ def update_my_profile(
     _current_user: User = Depends(get_current_user),
 ) -> UserProfileOut:
     with user_request_scope(principal):
-        service = ProfileService()
+        service = ProfileService(access_token=principal.access_token)
         current = service.load()
         patch: dict[str, Any] = dict(current)
         if body.full_name is not None:

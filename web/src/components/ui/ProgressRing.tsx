@@ -6,6 +6,7 @@ interface ProgressRingProps {
   strokeWidth?: number;
   className?: string;
   label?: string;
+  showLabel?: boolean;
 }
 
 export function ProgressRing({
@@ -14,6 +15,7 @@ export function ProgressRing({
   strokeWidth = 6,
   className,
   label,
+  showLabel = true,
 }: ProgressRingProps) {
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
@@ -50,7 +52,11 @@ export function ProgressRing({
           className="text-brand-500 transition-[stroke-dashoffset] duration-500"
         />
       </svg>
-      <span className="absolute text-card text-ink">{Math.round(clamped)}%</span>
+      {showLabel ? (
+        <span className="absolute text-card text-ink">
+          {Math.round(clamped)}%
+        </span>
+      ) : null}
     </div>
   );
 }

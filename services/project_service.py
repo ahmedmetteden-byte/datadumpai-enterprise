@@ -6,6 +6,7 @@ Project Service
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import uuid
 from copy import deepcopy
@@ -17,6 +18,8 @@ from core.current_user import CurrentUser, require_current_user
 from repositories.project_repository import ProjectRepository
 from services.document_service import DocumentService
 from services.timeline_service import TimelineService
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectService:
@@ -221,10 +224,16 @@ class ProjectService:
 
         self.repository.save(projects)
 
-        TimelineService().record_project_created(
-            project_id=project["id"],
-            timestamp=timestamp,
-        )
+        try:
+            TimelineService(access_token=self._access_token).record_project_created(
+                project_id=project["id"],
+                timestamp=timestamp,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to record timeline event for project creation project=%s",
+                project["id"],
+            )
 
         return deepcopy(project)
 

@@ -1,3 +1,4 @@
+import { CopyButton } from '@/components/ui/CopyButton';
 import { UI_COPY } from '@/constants/ui';
 import { ConfidenceBadge } from './ConfidenceBadge';
 import { SourceCard } from './SourceCard';
@@ -55,9 +56,12 @@ export function ConversationMessage({
         <h3 className="text-caption uppercase tracking-wide text-ink-faint">
           {UI_COPY.studioAnswer}
         </h3>
-        {typeof message.confidence === 'number' ? (
-          <ConfidenceBadge value={message.confidence} />
-        ) : null}
+        <div className="flex items-center gap-3">
+          {typeof message.confidence === 'number' ? (
+            <ConfidenceBadge value={message.confidence} />
+          ) : null}
+          <CopyButton text={message.answer ?? message.content} />
+        </div>
       </header>
 
       <section>

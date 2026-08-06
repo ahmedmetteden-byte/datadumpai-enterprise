@@ -4,9 +4,9 @@ export const ROUTES = {
   home: '/home',
   workspaces: '/workspaces',
   documents: '/documents',
-  /** @deprecated Prefer ROUTES.knowledge — kept for redirects */
   library: '/library',
-  knowledge: '/knowledge',
+  /** @deprecated Library is now canonical at ROUTES.library — kept so old links still resolve */
+  knowledge: '/library',
   reports: '/reports',
   reportsNew: '/reports/new',
   reportDetail: '/reports/:reportId',
@@ -26,11 +26,7 @@ export interface NavItem {
 
 export const PRIMARY_NAV: NavItem[] = [
   { id: 'home', label: 'Home', href: ROUTES.home },
-  { id: 'workspaces', label: 'Workspaces', href: ROUTES.workspaces },
-  { id: 'documents', label: 'AI Workspace', href: ROUTES.documents },
-  { id: 'knowledge', label: 'Library', href: ROUTES.knowledge },
-  { id: 'reports', label: 'Reports', href: ROUTES.reports },
-  { id: 'copilot', label: 'Intelligence Studio', href: ROUTES.copilot },
+  { id: 'library', label: 'Library', href: ROUTES.library },
 ];
 
 /** Chrome copy — product content still comes from API DTOs. */
@@ -111,6 +107,57 @@ export const UI_COPY = {
     'Network error. Check your connection and try again.',
   comingSoon: 'This section is coming in a later phase.',
   heroSupport: "Your organization's knowledge, ready when you are.",
+  homeComposerEyebrow: 'AI Reporting Workspace',
+  homeComposerTitle: 'What would you like DataDumpAI to do?',
+  homeComposerSubtitle:
+    'Upload documents, then generate a report or ask a question — grounded in your files and, when useful, the web.',
+  homeComposerReportTab: 'Generate a report',
+  homeComposerAskTab: 'Ask a question',
+  homeComposerReportInputLabel: 'Describe the report you want',
+  homeComposerAskInputLabel: 'Your question',
+  homeComposerReportPlaceholder:
+    "Describe the report you want — e.g. \"Summarize this quarter's board meetings and flag recurring risks\"",
+  homeComposerAskPlaceholder:
+    'Ask anything about your documents, or request the latest updates from the web…',
+  homeComposerAttach: 'Attach files',
+  homeComposerDropHint:
+    'Drop PDF, DOCX, XLSX, PPTX, or TXT files here, or click to browse',
+  homeComposerGenerate: 'Generate report',
+  homeComposerGenerating: 'Generating…',
+  homeComposerAsk: 'Ask',
+  homeComposerAdvanced: 'Advanced options',
+  homeComposerTemplateLabel: 'Report type',
+  homeComposerPeriodLabel: 'Period',
+  homeComposerRemoveFile: 'Remove',
+  homeComposerFileTypeError:
+    'Unsupported file type. Choose PDF, DOCX, XLSX, PPTX, or TXT.',
+  homeComposerUploadError: 'Upload failed.',
+  homeComposerGenerateError: 'Could not generate the report. Try again.',
+  homeComposerGenerateSuccess: 'Report ready.',
+  homeComposerGenerateLoading: 'Generating your report…',
+  homeComposerNeedText: 'Type a question first.',
+  homeComposerNeedTextOrFile: 'Attach a document or describe the report you want.',
+  homeComposerWorkspaceError:
+    'Could not prepare your workspace. Refresh and try again.',
+  homeComposerRecentTitle: 'Recent',
+  homeComposerHistory: 'History',
+  homeComposerNewChat: 'New chat',
+  homeComposerTemporaryChat: 'Temporary chat',
+  homeComposerTemporaryChatNotice:
+    "This chat won't be saved to your history.",
+  copy: 'Copy',
+  copied: 'Copied',
+  reportsRegenerate: 'Regenerate',
+  reportsRegenerating: 'Regenerating…',
+  reportsRegenerated: 'New version generated.',
+  homeComposerReportReadyTitle: 'Your report is ready',
+  homeComposerGenerateAnother: 'Generate another',
+  nameWorkspaceTitle: 'Name this workspace',
+  nameWorkspaceBody:
+    'Give this collection a name so related reports are easy to find later — e.g. "Quarterly Reports 2026".',
+  nameWorkspacePlaceholder: 'Workspace name',
+  nameWorkspaceSave: 'Save name',
+  nameWorkspaceDismiss: 'Not now',
   dashboardMetrics: 'Organisation metrics',
   dashboardRecentUploads: 'Recent Uploads',
   dashboardRecentReports: 'Recent Reports',
@@ -230,6 +277,9 @@ export const UI_COPY = {
   studioPreviewNote:
     'Full document preview will connect to Documents / Reports in a later phase.',
   studioOpenConversations: 'Conversations',
+  libraryEyebrow: 'Saved Work',
+  libraryTabDocuments: 'Documents',
+  libraryTabReports: 'Reports',
   knowledgeTitle: 'Organisational Memory',
   knowledgeSubtitle:
     'Browse, search, and relate the knowledge that powers Intelligence Studio and reports.',

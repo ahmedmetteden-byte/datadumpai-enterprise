@@ -1,6 +1,8 @@
+import { useEffect, useRef } from 'react';
 import { NavLink } from 'react-router-dom';
 import { APP_NAME, PRIMARY_NAV, ROUTES, UI_COPY } from '@/constants/ui';
 import { useAuth } from '@/context/AuthContext';
+import { useDisclosure } from '@/hooks/useDisclosure';
 import { cn } from '@/lib/cn';
 
 export function Sidebar({
@@ -11,8 +13,25 @@ export function Sidebar({
   onNavigate?: () => void;
 }) {
   const { user, profile, signOut } = useAuth();
+  const menu = useDisclosure(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
   const label =
     profile?.fullName || user?.fullName || user?.email?.split('@')[0] || 'User';
+  const initial = label.trim().charAt(0).toUpperCase() || 'U';
+  const organisation =
+    profile?.organisationName || profile?.company || UI_COPY.authPersonalOrg;
+
+  useEffect(() => {
+    if (!menu.isOpen) return;
+    function onPointerDown(event: MouseEvent) {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        menu.close();
+      }
+    }
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, [menu]);
 
   return (
     <aside
@@ -29,8 +48,17 @@ export function Sidebar({
           onClick={onNavigate}
           className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 rounded-md"
         >
-          <div className="text-lg font-semibold tracking-tight">{APP_NAME}</div>
-          <div className="mt-1 text-caption text-white/60">Enterprise</div>
+          <div className="flex items-center gap-2">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-500 text-sm font-bold text-white">
+              D
+            </span>
+            <div>
+              <div className="text-lg font-semibold tracking-tight">
+                {APP_NAME}
+              </div>
+              <div className="text-caption text-white/50">Enterprise</div>
+            </div>
+          </div>
         </NavLink>
       </div>
 
@@ -42,10 +70,10 @@ export function Sidebar({
             onClick={onNavigate}
             className={({ isActive }) =>
               cn(
-                'block rounded-md px-3 py-2.5 text-small transition-colors',
+                'block rounded-md border-l-2 px-3 py-2.5 text-small font-medium transition-colors',
                 isActive
-                  ? 'bg-sidebar-active text-white'
-                  : 'text-white/75 hover:bg-sidebar-hover hover:text-white',
+                  ? 'border-accent bg-white/10 text-white'
+                  : 'border-transparent text-white/70 hover:bg-sidebar-hover hover:text-white',
               )
             }
             end={item.href === ROUTES.home}
@@ -55,33 +83,50 @@ export function Sidebar({
         ))}
       </nav>
 
-      <div className="border-t border-white/10 px-3 py-4">
-        <div className="mb-2 truncate px-3 text-caption text-white/50">
-          {label}
-        </div>
-        <NavLink
-          to={ROUTES.settings}
-          onClick={onNavigate}
-          className="block rounded-md px-3 py-2.5 text-small text-white/70 hover:bg-sidebar-hover hover:text-white"
-        >
-          Settings
-        </NavLink>
-        <NavLink
-          to={ROUTES.account}
-          onClick={onNavigate}
-          className="block rounded-md px-3 py-2.5 text-small text-white/70 hover:bg-sidebar-hover hover:text-white"
-        >
-          Account
-        </NavLink>
+      <div ref={menuRef} className="relative border-t border-white/10 px-3 py-3">
+        {menu.isOpen ? (
+          <div className="absolute bottom-full left-3 right-3 mb-2 rounded-lg border border-white/10 bg-sidebar-hover p-3 shadow-float animate-fade-in">
+            <p className="truncate text-small font-medium text-white">{label}</p>
+            <p className="truncate text-caption text-white/50">
+              {user?.email}
+            </p>
+            <p className="mt-1 truncate text-caption text-white/40">
+              {organisation}
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                menu.close();
+                onNavigate?.();
+                void signOut();
+              }}
+              className="mt-3 w-full rounded-md bg-white/10 px-3 py-2 text-left text-small text-white transition-colors hover:bg-white/20"
+            >
+              {UI_COPY.authSignOut}
+            </button>
+          </div>
+        ) : null}
+
         <button
           type="button"
-          onClick={() => {
-            onNavigate?.();
-            void signOut();
-          }}
-          className="mt-1 w-full rounded-md px-3 py-2.5 text-left text-small text-white/70 hover:bg-sidebar-hover hover:text-white"
+          onClick={menu.toggle}
+          aria-expanded={menu.isOpen}
+          className="flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left transition-colors hover:bg-sidebar-hover"
         >
-          {UI_COPY.authSignOut}
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/15 text-small font-semibold text-white">
+            {initial}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-small font-medium text-white">
+              {label}
+            </span>
+            <span className="block truncate text-caption text-white/45">
+              {organisation}
+            </span>
+          </span>
+          <span aria-hidden className="text-white/40">
+            {menu.isOpen ? '▾' : '▴'}
+          </span>
         </button>
       </div>
     </aside>

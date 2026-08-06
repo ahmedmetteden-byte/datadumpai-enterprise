@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
+import { ProgressRing } from '@/components/ui/ProgressRing';
+import { StatusTimeline } from '@/components/ui/StatusTimeline';
 import {
   INDEX_PIPELINE_STEPS,
   IndexingProgress,
@@ -279,27 +281,16 @@ export function KnowledgeUploadDialog({
           </p>
 
           {phase === 'transferring' ? (
-            <div>
-              <div className="mb-1 flex items-baseline justify-between gap-2">
-                <span className="text-small font-medium text-ink">
-                  {UI_COPY.knowledgeIndexStepUpload}
-                </span>
-                <span className="text-caption tabular-nums font-semibold text-ink">
-                  {transferPercent}%
-                </span>
-              </div>
-              <div
-                className="h-2 overflow-hidden rounded-full bg-surface-alt"
-                role="progressbar"
-                aria-valuenow={transferPercent}
-                aria-valuemin={0}
-                aria-valuemax={100}
-              >
-                <div
-                  className="h-full rounded-full bg-brand-500 transition-all duration-300"
-                  style={{ width: `${Math.max(2, transferPercent)}%` }}
-                />
-              </div>
+            <div className="flex flex-col items-center gap-2 py-2">
+              <ProgressRing
+                value={transferPercent}
+                size={64}
+                strokeWidth={5}
+                label={`${transferPercent}% uploaded`}
+              />
+              <span className="text-small font-medium text-ink">
+                {UI_COPY.knowledgeIndexStepUpload}
+              </span>
             </div>
           ) : status ? (
             <IndexingProgress
@@ -318,8 +309,8 @@ export function KnowledgeUploadDialog({
             />
           ) : null}
 
-          <ol className="space-y-1.5 text-small">
-            {INDEX_PIPELINE_STEPS.map((step) => {
+          <StatusTimeline
+            steps={INDEX_PIPELINE_STEPS.map((step) => {
               const state =
                 phase === 'transferring'
                   ? step.key === 'upload'
@@ -334,23 +325,13 @@ export function KnowledgeUploadDialog({
                           ? 'failed'
                           : status?.status,
                     );
-              return (
-                <li
-                  key={step.key}
-                  className={
-                    state === 'pending'
-                      ? 'text-ink-faint'
-                      : state === 'active'
-                        ? 'font-medium text-ink'
-                        : 'text-ink-muted'
-                  }
-                >
-                  {state === 'done' ? '●' : state === 'active' ? '◉' : '○'}{' '}
-                  {UI_COPY[step.labelKey]}
-                </li>
-              );
+              return {
+                id: step.key,
+                label: UI_COPY[step.labelKey],
+                state,
+              };
             })}
-          </ol>
+          />
 
           {phase === 'failed' && status?.errorMessage ? (
             <p className="text-small text-danger" role="alert">

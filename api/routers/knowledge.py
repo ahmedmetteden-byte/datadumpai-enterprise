@@ -5,6 +5,7 @@ Knowledge / document library routes.
 from __future__ import annotations
 
 import io
+import logging
 import uuid
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,8 @@ from services.document_service import DocumentService
 from services.indexing_service import run_index_job
 from services.project_service import ProjectService
 from services.qdrant_service import QdrantService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/workspaces/{workspace_id}", tags=["knowledge"])
 
@@ -465,8 +468,14 @@ def delete_knowledge(
     with user_request_scope(principal):
         try:
             _doc_svc(principal).delete_document(workspace_id, filename)
-        except Exception:
+        except FileNotFoundError:
             pass
+        except Exception:
+            logger.exception(
+                "Failed to delete document from storage workspace=%s filename=%s",
+                workspace_id,
+                filename,
+            )
         project["documents"] = [
             d for d in (project.get("documents") or []) if str(d.get("id")) != knowledge_id
         ]

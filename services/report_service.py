@@ -6,6 +6,9 @@ Report Service
 from __future__ import annotations
 
 import json
+import logging
+import re
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -15,13 +18,15 @@ from core.project_access import assert_project_access
 from models.report_data import ReportData
 from services.report_document import report_data_from_storage
 
+logger = logging.getLogger(__name__)
+
 
 class ReportService:
     """Handles report persistence and metadata."""
 
     @classmethod
-    def _file_store(cls) -> FileStore:
-        return FileStore.for_current_user()
+    def _file_store(cls, access_token: str | None = None) -> FileStore:
+        return FileStore.for_current_user(access_token=access_token)
 
     @classmethod
     def _reports_dir(cls, project_id: str) -> Path:
@@ -34,25 +39,42 @@ class ReportService:
 
     @classmethod
     def _slugify_report_name(cls, report_name: str) -> str:
-        return report_name.strip().replace(" ", "_").lower()
+        # Storage keys must be ASCII-safe and free of path separators —
+        # drop accents/em-dashes/slashes/etc. (NFKD + ascii-ignore) rather
+        # than only replacing spaces, which let characters like "—" and
+        # "/" through and made Supabase Storage reject the upload outright.
+        normalized = (
+            unicodedata.normalize("NFKD", report_name)
+            .encode("ascii", "ignore")
+            .decode("ascii")
+        )
+        slug = re.sub(r"[^A-Za-z0-9]+", "_", normalized).strip("_").lower()
+        return slug or "report"
 
     @classmethod
-    def _metadata_storage_path(cls, project_id: str, filename: str) -> str:
-        store = cls._file_store()
+    def _metadata_storage_path(
+        cls, project_id: str, filename: str, *, access_token: str | None = None
+    ) -> str:
+        store = cls._file_store(access_token)
         meta_name = cls._metadata_filename(filename)
         if store._backend == "local":
             return str(store._local_root(project_id) / "reports" / meta_name)
         return store._storage_key(project_id, "reports", meta_name)
 
     @classmethod
-    def _load_metadata(cls, project_id: str, filename: str) -> dict[str, Any]:
-        storage_path = cls._metadata_storage_path(project_id, filename)
+    def _load_metadata(
+        cls, project_id: str, filename: str, *, access_token: str | None = None
+    ) -> dict[str, Any]:
+        storage_path = cls._metadata_storage_path(
+            project_id, filename, access_token=access_token
+        )
+        store = cls._file_store(access_token)
 
-        if not cls._file_store().exists(storage_path):
+        if not store.exists(storage_path):
             return {}
 
         try:
-            data = json.loads(cls._file_store().read_text(storage_path))
+            data = json.loads(store.read_text(storage_path))
         except Exception:
             return {}
 
@@ -67,6 +89,7 @@ class ReportService:
         report_type: str,
         source_documents: list[str],
         report_data: dict[str, Any] | None = None,
+        access_token: str | None = None,
     ) -> None:
         meta_name = cls._metadata_filename(filename)
         payload = {
@@ -77,7 +100,7 @@ class ReportService:
 
         if report_data:
             payload["report_data"] = report_data
-        cls._file_store().write(
+        cls._file_store(access_token).write(
             project_id,
             "reports",
             meta_name,
@@ -85,16 +108,20 @@ class ReportService:
         )
 
     @classmethod
-    def get_report_metadata(cls, project_id: str, filename: str) -> dict[str, Any]:
+    def get_report_metadata(
+        cls, project_id: str, filename: str, *, access_token: str | None = None
+    ) -> dict[str, Any]:
         try:
-            cls._require_project_access(project_id)
+            cls._require_project_access(project_id, access_token=access_token)
         except PermissionError:
             return {}
-        return cls._load_metadata(project_id, filename)
+        return cls._load_metadata(project_id, filename, access_token=access_token)
 
     @classmethod
-    def _require_project_access(cls, project_id: str) -> str:
-        return assert_project_access(project_id)
+    def _require_project_access(
+        cls, project_id: str, *, access_token: str | None = None
+    ) -> str:
+        return assert_project_access(project_id, access_token=access_token)
 
     @classmethod
     def save_report(
@@ -106,8 +133,9 @@ class ReportService:
         *,
         report: ReportData | None = None,
         report_data: dict[str, Any] | None = None,
+        access_token: str | None = None,
     ) -> dict:
-        cls._require_project_access(project_id)
+        cls._require_project_access(project_id, access_token=access_token)
         if report is not None:
             report_text = report.to_markdown()
             report_data = report.to_dict()
@@ -117,7 +145,7 @@ class ReportService:
         filename = f"{cls._slugify_report_name(report_name)}.md"
         created_at = datetime.now(timezone.utc).isoformat()
         content = report_text.encode("utf-8")
-        storage_path = cls._file_store().write(
+        storage_path = cls._file_store(access_token).write(
             project_id,
             "reports",
             filename,
@@ -131,6 +159,7 @@ class ReportService:
                 report_type=report_name,
                 source_documents=source_documents,
                 report_data=report_data,
+                access_token=access_token,
             )
 
         from services.timeline_service import TimelineService
@@ -145,16 +174,22 @@ class ReportService:
             "source_documents": source_documents or [],
         }
 
-        TimelineService().record_report_generated(
-            project_id=project_id,
-            report_name=report_name,
-            timestamp=created_at,
-        )
+        try:
+            TimelineService(access_token=access_token).record_report_generated(
+                project_id=project_id,
+                report_name=report_name,
+                timestamp=created_at,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to record timeline event for report generation project=%s",
+                project_id,
+            )
 
         try:
             from services.activity_service import ActivityService
 
-            ActivityService().log(
+            ActivityService(access_token=access_token).log(
                 "report.generated",
                 f"Generated {report_name}",
                 metadata={"project_id": project_id, "report_name": report_name},
@@ -167,7 +202,9 @@ class ReportService:
             from services.notification_service import NotificationService
             from services.project_service import ProjectService
 
-            project = ProjectService().get_project(project_id)
+            project = ProjectService(access_token=access_token).get_project(
+                project_id
+            )
             NotificationService().notify_report_ready(
                 report_name=report_name,
                 project_name=project.get("name", "Project"),
@@ -191,8 +228,9 @@ class ReportService:
         *,
         report: ReportData | None = None,
         report_data: dict[str, Any] | None = None,
+        access_token: str | None = None,
     ) -> dict:
-        cls._require_project_access(project_id)
+        cls._require_project_access(project_id, access_token=access_token)
         if report is not None:
             report_text = report.to_markdown()
             report_data = report.to_dict()
@@ -200,7 +238,7 @@ class ReportService:
             raise ValueError("update_report requires report or report_text")
 
         safe_name = Path(filename).name
-        store = cls._file_store()
+        store = cls._file_store(access_token)
 
         if store._backend == "local":
             storage_path = str(store._local_root(project_id) / "reports" / safe_name)
@@ -211,7 +249,7 @@ class ReportService:
             raise FileNotFoundError(f"Report not found: {safe_name!r}")
 
         content = report_text.encode("utf-8")
-        storage_path = cls._file_store().write(
+        storage_path = cls._file_store(access_token).write(
             project_id,
             "reports",
             safe_name,
@@ -219,7 +257,9 @@ class ReportService:
         )
         updated_at = datetime.now(timezone.utc).isoformat()
 
-        existing_meta = cls.get_report_metadata(project_id, safe_name)
+        existing_meta = cls.get_report_metadata(
+            project_id, safe_name, access_token=access_token
+        )
         report_type = existing_meta.get("report_type", safe_name.replace("_", " ").title())
         documents = source_documents or existing_meta.get("source_documents", [])
 
@@ -229,6 +269,7 @@ class ReportService:
             report_type=report_type,
             source_documents=documents,
             report_data=report_data if report_data is not None else existing_meta.get("report_data"),
+            access_token=access_token,
         )
 
         return {
@@ -242,11 +283,13 @@ class ReportService:
         }
 
     @classmethod
-    def get_reports(cls, project_id: str) -> list[dict]:
+    def get_reports(
+        cls, project_id: str, *, access_token: str | None = None
+    ) -> list[dict]:
         try:
             from core.runtime_investigation import log_report_load
 
-            store = cls._file_store()
+            store = cls._file_store(access_token)
             try:
                 if store._backend == "local":
                     filesystem_path = str(store._local_root(project_id) / "reports")
@@ -271,12 +314,12 @@ class ReportService:
             pass
 
         try:
-            cls._require_project_access(project_id)
+            cls._require_project_access(project_id, access_token=access_token)
         except PermissionError:
             return []
 
         reports: list[dict] = []
-        store = cls._file_store()
+        store = cls._file_store(access_token)
 
         for filename in store.list_files(project_id, "reports"):
             if not filename.endswith(".md"):
@@ -287,7 +330,9 @@ class ReportService:
             else:
                 storage_path = store._storage_key(project_id, "reports", filename)
 
-            meta = cls.get_report_metadata(project_id, filename)
+            meta = cls.get_report_metadata(
+                project_id, filename, access_token=access_token
+            )
             report_type = meta.get("report_type") or Path(filename).stem.replace("_", " ").title()
 
             try:
@@ -304,21 +349,27 @@ class ReportService:
                     "created_at": datetime.now(timezone.utc).isoformat(),
                     "report_type": report_type,
                     "source_documents": meta.get("source_documents", []),
+                    "report_data": meta.get("report_data"),
                 }
             )
 
         return reports
 
     @classmethod
-    def load_report(cls, path: str) -> str:
-        return cls._file_store().read_text(path)
+    def load_report(cls, path: str, *, access_token: str | None = None) -> str:
+        return cls._file_store(access_token).read_text(path)
 
     @classmethod
-    def load_report_for_project(cls, project_id: str, filename: str) -> str:
+    def load_report_for_project(
+        cls, project_id: str, filename: str, *, access_token: str | None = None
+    ) -> str:
         """Load report markdown after validating project ownership via FileStore."""
 
-        cls._require_project_access(project_id)
-        return cls.load_report(cls._report_storage_path(project_id, filename))
+        cls._require_project_access(project_id, access_token=access_token)
+        return cls.load_report(
+            cls._report_storage_path(project_id, filename, access_token=access_token),
+            access_token=access_token,
+        )
 
     @classmethod
     def load_report_data(
@@ -327,40 +378,52 @@ class ReportService:
         filename: str,
         *,
         markdown_text: str | None = None,
+        access_token: str | None = None,
     ) -> ReportData:
         """Load the canonical ReportData object for a saved report."""
 
-        cls._require_project_access(project_id)
-        meta = cls.get_report_metadata(project_id, filename)
+        cls._require_project_access(project_id, access_token=access_token)
+        meta = cls.get_report_metadata(project_id, filename, access_token=access_token)
 
         if markdown_text is None:
-            markdown_text = cls.load_report_for_project(project_id, filename)
+            markdown_text = cls.load_report_for_project(
+                project_id, filename, access_token=access_token
+            )
 
         return report_data_from_storage(markdown_text, meta)
 
     @classmethod
-    def _report_storage_path(cls, project_id: str, filename: str) -> str:
-        store = cls._file_store()
+    def _report_storage_path(
+        cls, project_id: str, filename: str, *, access_token: str | None = None
+    ) -> str:
+        store = cls._file_store(access_token)
         safe_name = Path(filename).name
         if store._backend == "local":
             return str(store._local_root(project_id) / "reports" / safe_name)
         return store._storage_key(project_id, "reports", safe_name)
 
     @classmethod
-    def delete_report(cls, project_id: str, filename: str) -> None:
-        cls._require_project_access(project_id)
+    def delete_report(
+        cls, project_id: str, filename: str, *, access_token: str | None = None
+    ) -> None:
+        cls._require_project_access(project_id, access_token=access_token)
         safe_name = Path(filename).name
 
         if not safe_name or safe_name in {".", ".."}:
             raise ValueError(f"Invalid filename: {filename!r}")
 
-        storage_path = cls._report_storage_path(project_id, safe_name)
+        storage_path = cls._report_storage_path(
+            project_id, safe_name, access_token=access_token
+        )
+        store = cls._file_store(access_token)
 
-        if not cls._file_store().exists(storage_path):
+        if not store.exists(storage_path):
             raise FileNotFoundError(f"Report not found: {safe_name!r}")
 
-        cls._file_store().delete(storage_path)
+        store.delete(storage_path)
 
-        meta_path = cls._metadata_storage_path(project_id, safe_name)
-        if cls._file_store().exists(meta_path):
-            cls._file_store().delete(meta_path)
+        meta_path = cls._metadata_storage_path(
+            project_id, safe_name, access_token=access_token
+        )
+        if store.exists(meta_path):
+            store.delete(meta_path)

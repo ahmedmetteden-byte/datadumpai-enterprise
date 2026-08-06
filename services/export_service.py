@@ -7,6 +7,8 @@ Central entry point for all report export operations.
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
@@ -45,9 +47,11 @@ class ExportService:
     naming, and future format support stay in one place.
     """
 
-    @staticmethod
-    def _file_store() -> FileStore:
-        return FileStore.for_current_user()
+    def __init__(self, *, access_token: str | None = None) -> None:
+        self._access_token = access_token
+
+    def _file_store(self) -> FileStore:
+        return FileStore.for_current_user(access_token=self._access_token)
 
     MIME_TYPES = {
         "markdown": "text/markdown",
@@ -103,11 +107,16 @@ class ExportService:
         return exports
 
     def _slugify(self, report_name: str) -> str:
-        slug = report_name.strip().replace(" ", "_").lower()
-
-        for char in ('/', '\\', ':', '*', '?', '"', '<', '>', '|'):
-            slug = slug.replace(char, "")
-
+        # Storage keys must be ASCII-safe — drop accents/em-dashes/curly
+        # quotes/etc. (NFKD + ascii-ignore) rather than just denylisting a
+        # few filesystem-unsafe characters, which let stray unicode like
+        # "—" through and made Supabase Storage reject the upload outright.
+        normalized = (
+            unicodedata.normalize("NFKD", report_name)
+            .encode("ascii", "ignore")
+            .decode("ascii")
+        )
+        slug = re.sub(r"[^A-Za-z0-9]+", "_", normalized).strip("_").lower()
         return slug or "report"
 
     def _append_pdf_charts(self, story: list[Any], charts: list[tuple[str, bytes]], body_style: ParagraphStyle) -> None:
@@ -346,7 +355,7 @@ class ExportService:
 
             export_label = (report_name or filename).strip()
             export_format = Path(filename).suffix.lstrip(".").upper() or "FILE"
-            ActivityService().log(
+            ActivityService(access_token=self._access_token).log(
                 "export.downloaded",
                 f"Downloaded {export_label} ({export_format})",
                 metadata={"project_id": project_id, "filename": filename},

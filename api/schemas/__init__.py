@@ -272,12 +272,14 @@ class ReportDetailOut(CamelModel):
     status: Literal["draft", "ready", "awaiting_review", "archived"] = "draft"
     content: str | None = None
     source_documents: list[str] = Field(default_factory=list)
+    instructions: str | None = None
 
 
 class GenerateReportBody(CamelModel):
     template_id: str
     period_id: str
     title: str | None = None
+    instructions: str | None = None
 
 
 class SaveReportBody(CamelModel):

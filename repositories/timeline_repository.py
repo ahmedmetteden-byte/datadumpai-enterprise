@@ -25,6 +25,8 @@ class TimelineRepository:
         self,
         project_id: str,
         projects_root: Path | str | None = None,
+        *,
+        access_token: str | None = None,
     ) -> None:
         current_user = require_current_user()
         resolved_user_id = current_user.id
@@ -33,11 +35,13 @@ class TimelineRepository:
             if is_quick_report(project_id):
                 self._impl = SupabaseQuickReportTimelineRepository(
                     user_id=resolved_user_id,
+                    access_token=access_token,
                 )
             else:
                 self._impl = SupabaseTimelineRepository(
                     project_id,
                     user_id=resolved_user_id,
+                    access_token=access_token,
                 )
         else:
             root = (

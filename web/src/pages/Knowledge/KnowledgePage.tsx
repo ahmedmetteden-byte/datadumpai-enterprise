@@ -3,16 +3,22 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { Drawer } from '@/components/drawers/Drawer';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { EyebrowBadge } from '@/components/ui/EyebrowBadge';
 import { KnowledgeFilters } from '@/pages/Knowledge/KnowledgeFilters';
 import { KnowledgeLibrary } from '@/pages/Knowledge/KnowledgeLibrary';
 import { KnowledgePreview } from '@/pages/Knowledge/KnowledgePreview';
 import { KnowledgeUploadDialog } from '@/pages/Knowledge/KnowledgeUploadDialog';
+import { ReportDetailPanel } from '@/pages/Reports/ReportDetailPanel';
+import { ReportsListPanel } from '@/pages/Reports/ReportsListPanel';
 import { ROUTES, UI_COPY } from '@/constants/ui';
 import { useRequestFeedback } from '@/context/RequestFeedbackContext';
 import { useDisclosure } from '@/hooks/useDisclosure';
 import { useOrganisationalMemory } from '@/hooks/useOrganisationalMemory';
 import { useWorkspace } from '@/context/WorkspaceContext';
 import { useWorkspaceList } from '@/hooks/useWorkspaceList';
+import { cn } from '@/lib/cn';
+
+type LibraryTab = 'documents' | 'reports';
 
 export function KnowledgePage() {
   const { id: routeId } = useParams<{ id?: string }>();
@@ -27,6 +33,11 @@ export function KnowledgePage() {
   const uploadDialog = useDisclosure(false);
   const filtersDrawer = useDisclosure(false);
   const previewDrawer = useDisclosure(false);
+  const [tab, setTab] = useState<LibraryTab>('documents');
+  const [selectedReportId, setSelectedReportId] = useState<string | null>(
+    null,
+  );
+  const [reportsRefreshKey, setReportsRefreshKey] = useState(0);
 
   useEffect(() => {
     if (!activeWorkspaceId && workspaces[0]) {
@@ -46,11 +57,7 @@ export function KnowledgePage() {
 
   useEffect(() => {
     setSelectedId(routeId ?? null);
-    if (
-      routeId &&
-      typeof window !== 'undefined' &&
-      window.matchMedia('(max-width: 1023px)').matches
-    ) {
+    if (routeId) {
       previewDrawer.open();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -58,18 +65,13 @@ export function KnowledgePage() {
 
   function selectItem(id: string) {
     setSelectedId(id);
-    navigate(`${ROUTES.knowledge}/${id}`, { replace: !routeId });
-    if (
-      typeof window !== 'undefined' &&
-      window.matchMedia('(max-width: 1023px)').matches
-    ) {
-      previewDrawer.open();
-    }
+    navigate(`${ROUTES.library}/${id}`, { replace: !routeId });
+    previewDrawer.open();
   }
 
   function clearSelectionNav() {
     setSelectedId(null);
-    navigate(ROUTES.knowledge, { replace: true });
+    navigate(ROUTES.library, { replace: true });
   }
 
   function runAction(action: () => Promise<unknown>, successMessage?: string) {
@@ -107,60 +109,63 @@ export function KnowledgePage() {
     Boolean(memory.filters.dateFrom) ||
     Boolean(memory.filters.dateTo);
 
-  const previewPanel = (
-    <KnowledgePreview
-      detail={memory.detail}
-      preview={memory.preview}
-      processing={memory.processing}
-      loading={memory.detailLoading}
-      onOpenRelated={selectItem}
-      onReindex={() => {
-        if (!selectedId) return;
-        runAction(() => memory.reindex(selectedId));
-      }}
-      onDownload={() => {
-        if (!selectedId) return;
-        runAction(() =>
-          memory.download(
-            selectedId,
-            memory.detail?.filename || memory.detail?.title,
-          ),
-        );
-      }}
-      onDelete={() => {
-        if (!selectedId) return;
-        if (!window.confirm(UI_COPY.knowledgeBulkDeleteConfirm)) return;
-        runAction(async () => {
-          await memory.remove(selectedId);
-          clearSelectionNav();
-        });
-      }}
-    />
-  );
-
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap gap-2 lg:hidden">
-        <Button variant="secondary" size="sm" onClick={filtersDrawer.open}>
-          {UI_COPY.knowledgeFilters}
-        </Button>
-        {selectedId ? (
-          <Button variant="secondary" size="sm" onClick={previewDrawer.open}>
-            {UI_COPY.knowledgePreview}
+    <div className="space-y-4 pb-16">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <EyebrowBadge>{UI_COPY.libraryEyebrow}</EyebrowBadge>
+          <h1 className="mt-2 text-page-title text-ink">
+            {UI_COPY.knowledgeTitle}
+          </h1>
+        </div>
+        {tab === 'documents' ? (
+          <Button onClick={uploadDialog.open}>{UI_COPY.knowledgeUpload}</Button>
+        ) : null}
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setTab('documents')}
+            className={cn(
+              'rounded-full px-4 py-1.5 text-small font-medium transition-colors',
+              tab === 'documents'
+                ? 'bg-brand-500 text-white'
+                : 'bg-surface-alt text-ink-muted hover:text-ink',
+            )}
+          >
+            {UI_COPY.libraryTabDocuments}
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab('reports')}
+            className={cn(
+              'rounded-full px-4 py-1.5 text-small font-medium transition-colors',
+              tab === 'reports'
+                ? 'bg-brand-500 text-white'
+                : 'bg-surface-alt text-ink-muted hover:text-ink',
+            )}
+          >
+            {UI_COPY.libraryTabReports}
+          </button>
+        </div>
+        {tab === 'documents' ? (
+          <Button variant="secondary" size="sm" onClick={filtersDrawer.open}>
+            {UI_COPY.knowledgeFilters}
           </Button>
         ) : null}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)_320px] xl:grid-cols-[260px_minmax(0,1fr)_360px]">
-        <div className="hidden lg:block">
-          <KnowledgeFilters
-            filters={memory.filters}
-            options={memory.filterOptions}
-            onChange={memory.setFilters}
-            onReset={memory.resetFilters}
-          />
-        </div>
+      {tab === 'reports' ? (
+        <ReportsListPanel
+          workspaceId={memory.activeWorkspaceId}
+          refreshKey={reportsRefreshKey}
+          onSelect={setSelectedReportId}
+        />
+      ) : null}
 
+      {tab === 'documents' ? (
         <KnowledgeLibrary
           items={memory.items}
           total={memory.total}
@@ -219,9 +224,7 @@ export function KnowledgePage() {
             );
           }}
         />
-
-        <div className="hidden lg:block">{previewPanel}</div>
-      </div>
+      ) : null}
 
       <Drawer
         open={filtersDrawer.isOpen}
@@ -245,7 +248,34 @@ export function KnowledgePage() {
         title={UI_COPY.knowledgePreview}
         widthClassName="max-w-md"
       >
-        {previewPanel}
+        <KnowledgePreview
+          detail={memory.detail}
+          preview={memory.preview}
+          processing={memory.processing}
+          loading={memory.detailLoading}
+          onOpenRelated={selectItem}
+          onReindex={() => {
+            if (!selectedId) return;
+            runAction(() => memory.reindex(selectedId));
+          }}
+          onDownload={() => {
+            if (!selectedId) return;
+            runAction(() =>
+              memory.download(
+                selectedId,
+                memory.detail?.filename || memory.detail?.title,
+              ),
+            );
+          }}
+          onDelete={() => {
+            if (!selectedId) return;
+            if (!window.confirm(UI_COPY.knowledgeBulkDeleteConfirm)) return;
+            runAction(async () => {
+              await memory.remove(selectedId);
+              clearSelectionNav();
+            });
+          }}
+        />
       </Drawer>
 
       <KnowledgeUploadDialog
@@ -258,6 +288,25 @@ export function KnowledgePage() {
           selectItem(item.id);
         }}
       />
+
+      <Drawer
+        open={Boolean(selectedReportId)}
+        onClose={() => setSelectedReportId(null)}
+        title={UI_COPY.reportsTitle}
+        widthClassName="max-w-2xl"
+      >
+        {selectedReportId && memory.activeWorkspaceId ? (
+          <ReportDetailPanel
+            workspaceId={memory.activeWorkspaceId}
+            reportId={selectedReportId}
+            onSaved={() => setReportsRefreshKey((value) => value + 1)}
+            onRegenerated={(next) => {
+              setSelectedReportId(next.id);
+              setReportsRefreshKey((value) => value + 1);
+            }}
+          />
+        ) : null}
+      </Drawer>
     </div>
   );
 }

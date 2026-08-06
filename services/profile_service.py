@@ -32,9 +32,16 @@ class ProfileService:
         "notification_preferences": dict(DEFAULT_NOTIFICATION_PREFERENCES),
     }
 
-    def __init__(self, *, current_user: CurrentUser | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        current_user: CurrentUser | None = None,
+        access_token: str | None = None,
+    ) -> None:
         self._current_user = current_user or require_current_user()
-        self._repository = get_profile_repository(default=self._DEFAULT)
+        self._repository = get_profile_repository(
+            default=self._DEFAULT, access_token=access_token
+        )
 
     @property
     def current_user(self) -> CurrentUser:

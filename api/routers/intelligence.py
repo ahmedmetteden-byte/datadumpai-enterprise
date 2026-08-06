@@ -4,6 +4,7 @@ Intelligence Studio routes — conversations + RAG answers.
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -27,6 +28,7 @@ from api.schemas import (
 )
 from services.intelligence_rag_service import IntelligenceRagService
 from services.project_service import ProjectService
+from storage.file_store import FileStore
 
 logger = logging.getLogger(__name__)
 
@@ -52,28 +54,105 @@ def _get_project(principal: AuthenticatedPrincipal, workspace_id: str) -> dict[s
         return project
 
 
-def _save_project(principal: AuthenticatedPrincipal, project: dict[str, Any]) -> None:
+# Conversations are persisted as individual JSON files (category
+# "conversations") via the same FileStore used for documents/reports —
+# NOT via project["studio_conversations"], which was never actually
+# written back by the Supabase project repository (it only syncs
+# documents/reports/exports) and silently discarded every conversation
+# the moment the request that created it ended.
+
+
+def _conversation_store(principal: AuthenticatedPrincipal) -> FileStore:
+    return FileStore.for_current_user(access_token=principal.access_token)
+
+
+def _conversation_filename(conversation_id: str) -> str:
+    return f"{conversation_id}.json"
+
+
+def _conversation_key(store: FileStore, workspace_id: str, filename: str) -> str:
+    if store._backend == "local":
+        return str(store._local_root(workspace_id) / "conversations" / filename)
+    return store._storage_key(workspace_id, "conversations", filename)
+
+
+def _conversations(
+    workspace_id: str, principal: AuthenticatedPrincipal
+) -> list[dict[str, Any]]:
     with user_request_scope(principal):
-        project["updated_at"] = _utc_now()
-        project["last_activity"] = project["updated_at"]
-        _svc(principal).update_project(project)
-
-
-def _conversations(project: dict[str, Any]) -> list[dict[str, Any]]:
-    raw = project.get("studio_conversations")
-    if not isinstance(raw, list):
-        raw = []
-        project["studio_conversations"] = raw
-    return raw
+        store = _conversation_store(principal)
+        conversations: list[dict[str, Any]] = []
+        for filename in store.list_files(workspace_id, "conversations"):
+            if not filename.endswith(".json"):
+                continue
+            try:
+                raw = json.loads(
+                    store.read_text(_conversation_key(store, workspace_id, filename))
+                )
+                if isinstance(raw, dict):
+                    conversations.append(raw)
+            except Exception:
+                logger.exception(
+                    "Failed to load conversation file=%s workspace=%s",
+                    filename,
+                    workspace_id,
+                )
+        return conversations
 
 
 def _find_conversation(
-    project: dict[str, Any], conversation_id: str
+    workspace_id: str, principal: AuthenticatedPrincipal, conversation_id: str
 ) -> dict[str, Any]:
-    for conversation in _conversations(project):
-        if str(conversation.get("id")) == conversation_id:
-            return conversation
-    raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Conversation not found.")
+    with user_request_scope(principal):
+        store = _conversation_store(principal)
+        key = _conversation_key(
+            store, workspace_id, _conversation_filename(conversation_id)
+        )
+        if not store.exists(key):
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, detail="Conversation not found."
+            )
+        try:
+            raw = json.loads(store.read_text(key))
+        except Exception as exc:
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to load conversation.",
+            ) from exc
+        if not isinstance(raw, dict):
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, detail="Conversation not found."
+            )
+        return raw
+
+
+def _save_conversation(
+    workspace_id: str,
+    principal: AuthenticatedPrincipal,
+    conversation: dict[str, Any],
+) -> None:
+    with user_request_scope(principal):
+        store = _conversation_store(principal)
+        store.write(
+            workspace_id,
+            "conversations",
+            _conversation_filename(str(conversation["id"])),
+            json.dumps(conversation, indent=2).encode("utf-8"),
+        )
+
+
+def _delete_conversation_file(
+    workspace_id: str, principal: AuthenticatedPrincipal, conversation_id: str
+) -> bool:
+    with user_request_scope(principal):
+        store = _conversation_store(principal)
+        key = _conversation_key(
+            store, workspace_id, _conversation_filename(conversation_id)
+        )
+        if not store.exists(key):
+            return False
+        store.delete(key)
+        return True
 
 
 def _source_out(raw: dict[str, Any]) -> IntelligenceSourceOut:
@@ -210,9 +289,9 @@ def list_conversations(
     principal: AuthenticatedPrincipal = Depends(get_principal),
     _current_user: User = Depends(get_current_user),
 ) -> list[IntelligenceConversationSummaryOut]:
-    project = _get_project(principal, workspace_id)
+    _get_project(principal, workspace_id)
     conversations = sorted(
-        _conversations(project),
+        _conversations(workspace_id, principal),
         key=lambda item: str(item.get("updatedAt") or ""),
         reverse=True,
     )
@@ -230,7 +309,7 @@ def start_conversation(
     principal: AuthenticatedPrincipal = Depends(get_principal),
     _current_user: User = Depends(get_current_user),
 ) -> IntelligenceConversationOut:
-    project = _get_project(principal, workspace_id)
+    _get_project(principal, workspace_id)
     now = _utc_now()
     conversation = {
         "id": f"conv_{uuid.uuid4().hex[:12]}",
@@ -240,8 +319,7 @@ def start_conversation(
         "updatedAt": now,
         "messages": [],
     }
-    _conversations(project).insert(0, conversation)
-    _save_project(principal, project)
+    _save_conversation(workspace_id, principal, conversation)
 
     if body.initial_message and body.initial_message.strip():
         return send_message(
@@ -267,8 +345,58 @@ def get_conversation(
     principal: AuthenticatedPrincipal = Depends(get_principal),
     _current_user: User = Depends(get_current_user),
 ) -> IntelligenceConversationOut:
-    project = _get_project(principal, workspace_id)
-    return _conversation_out(_find_conversation(project, conversation_id))
+    _get_project(principal, workspace_id)
+    return _conversation_out(
+        _find_conversation(workspace_id, principal, conversation_id)
+    )
+
+
+def _build_assistant_message(
+    *, workspace_id: str, conversation_id: str, content: str, mode: str | None
+) -> dict[str, Any]:
+    try:
+        rag = IntelligenceRagService()
+        result = rag.answer(
+            workspace_id=workspace_id,
+            question=content,
+            mode=mode or "ask",
+        )
+        return {
+            "id": f"msg_{uuid.uuid4().hex[:10]}",
+            "conversationId": conversation_id,
+            "role": "assistant",
+            "content": "",
+            "answer": result.get("answer"),
+            "evidence": result.get("evidence"),
+            "confidence": result.get("confidence"),
+            "followUps": result.get("followUps") or [],
+            "sources": result.get("sources") or [],
+            "citations": result.get("citations") or [],
+            "linkedDocuments": result.get("linkedDocuments") or [],
+            "notice": result.get("notice"),
+            "status": "complete",
+            "createdAt": _utc_now(),
+            "mode": mode,
+        }
+    except Exception as exc:
+        logger.exception("Intelligence Studio RAG failed workspace=%s", workspace_id)
+        return {
+            "id": f"msg_{uuid.uuid4().hex[:10]}",
+            "conversationId": conversation_id,
+            "role": "assistant",
+            "content": "",
+            "answer": "Something went wrong while analysing this workspace.",
+            "evidence": None,
+            "confidence": 0.0,
+            "followUps": [],
+            "sources": [],
+            "citations": [],
+            "linkedDocuments": [],
+            "notice": str(exc)[:300],
+            "status": "error",
+            "createdAt": _utc_now(),
+            "mode": mode,
+        }
 
 
 @router.post(
@@ -286,8 +414,8 @@ def send_message(
     if not content:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Message content required.")
 
-    project = _get_project(principal, workspace_id)
-    conversation = _find_conversation(project, conversation_id)
+    _get_project(principal, workspace_id)
+    conversation = _find_conversation(workspace_id, principal, conversation_id)
     now = _utc_now()
 
     user_message = {
@@ -304,54 +432,42 @@ def send_message(
     if conversation.get("title") in {"", "New conversation"}:
         conversation["title"] = content[:48]
 
-    try:
-        rag = IntelligenceRagService()
-        result = rag.answer(
-            workspace_id=workspace_id,
-            question=content,
-            mode=body.mode or "ask",
-        )
-        assistant = {
-            "id": f"msg_{uuid.uuid4().hex[:10]}",
-            "conversationId": conversation_id,
-            "role": "assistant",
-            "content": "",
-            "answer": result.get("answer"),
-            "evidence": result.get("evidence"),
-            "confidence": result.get("confidence"),
-            "followUps": result.get("followUps") or [],
-            "sources": result.get("sources") or [],
-            "citations": result.get("citations") or [],
-            "linkedDocuments": result.get("linkedDocuments") or [],
-            "notice": result.get("notice"),
-            "status": "complete",
-            "createdAt": _utc_now(),
-            "mode": body.mode,
-        }
-    except Exception as exc:
-        logger.exception("Intelligence Studio RAG failed workspace=%s", workspace_id)
-        assistant = {
-            "id": f"msg_{uuid.uuid4().hex[:10]}",
-            "conversationId": conversation_id,
-            "role": "assistant",
-            "content": "",
-            "answer": "Something went wrong while analysing this workspace.",
-            "evidence": None,
-            "confidence": 0.0,
-            "followUps": [],
-            "sources": [],
-            "citations": [],
-            "linkedDocuments": [],
-            "notice": str(exc)[:300],
-            "status": "error",
-            "createdAt": _utc_now(),
-            "mode": body.mode,
-        }
+    assistant = _build_assistant_message(
+        workspace_id=workspace_id,
+        conversation_id=conversation_id,
+        content=content,
+        mode=body.mode,
+    )
 
     conversation["messages"].append(assistant)
     conversation["updatedAt"] = _utc_now()
-    _save_project(principal, project)
+    _save_conversation(workspace_id, principal, conversation)
     return _conversation_out(conversation)
+
+
+@router.post("/ask", response_model=IntelligenceMessageOut)
+def ask_temporary(
+    workspace_id: str,
+    body: SendMessageBody,
+    principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
+) -> IntelligenceMessageOut:
+    """Answer a question without creating or persisting any conversation —
+    backs "temporary chat" mode, which behaves like ChatGPT/Claude's
+    temporary chats: nothing from this exchange is saved anywhere."""
+
+    content = body.content.strip()
+    if not content:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Message content required.")
+
+    _get_project(principal, workspace_id)
+    assistant = _build_assistant_message(
+        workspace_id=workspace_id,
+        conversation_id="temporary",
+        content=content,
+        mode=body.mode,
+    )
+    return _message_out(assistant)
 
 
 @router.patch(
@@ -368,11 +484,11 @@ def rename_conversation(
     title = body.title.strip()
     if not title:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Title required.")
-    project = _get_project(principal, workspace_id)
-    conversation = _find_conversation(project, conversation_id)
+    _get_project(principal, workspace_id)
+    conversation = _find_conversation(workspace_id, principal, conversation_id)
     conversation["title"] = title
     conversation["updatedAt"] = _utc_now()
-    _save_project(principal, project)
+    _save_conversation(workspace_id, principal, conversation)
     return _summary_out(conversation)
 
 
@@ -386,13 +502,9 @@ def delete_conversation(
     principal: AuthenticatedPrincipal = Depends(get_principal),
     _current_user: User = Depends(get_current_user),
 ) -> Response:
-    project = _get_project(principal, workspace_id)
-    conversations = _conversations(project)
-    next_list = [item for item in conversations if str(item.get("id")) != conversation_id]
-    if len(next_list) == len(conversations):
+    _get_project(principal, workspace_id)
+    if not _delete_conversation_file(workspace_id, principal, conversation_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Conversation not found.")
-    project["studio_conversations"] = next_list
-    _save_project(principal, project)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -406,9 +518,9 @@ def toggle_pin(
     principal: AuthenticatedPrincipal = Depends(get_principal),
     _current_user: User = Depends(get_current_user),
 ) -> IntelligenceConversationSummaryOut:
-    project = _get_project(principal, workspace_id)
-    conversation = _find_conversation(project, conversation_id)
+    _get_project(principal, workspace_id)
+    conversation = _find_conversation(workspace_id, principal, conversation_id)
     conversation["pinned"] = not bool(conversation.get("pinned"))
     conversation["updatedAt"] = _utc_now()
-    _save_project(principal, project)
+    _save_conversation(workspace_id, principal, conversation)
     return _summary_out(conversation)

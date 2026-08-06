@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 class FileStore:
     """Read and write project files across storage backends."""
 
-    CATEGORIES = ("documents", "reports", "exports")
+    CATEGORIES = ("documents", "reports", "exports", "conversations")
 
     def __init__(
         self,
