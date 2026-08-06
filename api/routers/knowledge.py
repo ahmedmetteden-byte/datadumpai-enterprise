@@ -301,14 +301,12 @@ async def upload_knowledge(
             "chunk_count": 0,
             "updated_at": metadata.get("uploaded_at"),
         }
-        docs = list(project.get("documents") or [])
-        docs.append(document)
-        project["documents"] = docs
-        project["storage_used"] = int(project.get("storage_used") or 0) + int(
-            document.get("size") or 0
+        _svc(principal).upsert_document(
+            workspace_id,
+            document,
+            size_delta=int(document.get("size") or 0),
+            last_activity=document.get("uploaded_at"),
         )
-        project["last_activity"] = document.get("uploaded_at")
-        _svc(principal).update_project(project)
 
     background_tasks.add_task(
         run_index_job,

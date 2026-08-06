@@ -81,19 +81,15 @@ class IndexingService:
         project: dict[str, Any],
         document: dict[str, Any],
     ) -> None:
-        docs = project.get("documents") or []
-        for index, existing in enumerate(docs):
-            if str(existing.get("id")) == str(document.get("id")) or (
-                existing.get("filename") == document.get("filename")
-            ):
-                docs[index] = document
-                break
-        else:
-            docs.append(document)
-        project["documents"] = docs
-        project["updated_at"] = _utc_now()
-        project["last_activity"] = project["updated_at"]
-        project_service.update_project(project)
+        # Scoped to this one document row so a still-running indexing job
+        # for an earlier document can't clobber a document another upload
+        # added to the same project in the meantime (see
+        # ProjectService.upsert_document).
+        project_service.upsert_document(
+            project["id"],
+            document,
+            last_activity=_utc_now(),
+        )
 
     def update_status(
         self,

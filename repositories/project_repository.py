@@ -41,3 +41,18 @@ class ProjectRepository:
 
     def save(self, projects: list) -> None:
         self._impl.save(projects)
+
+    def upsert_document(
+        self,
+        project_id: str,
+        document: dict,
+        *,
+        size_delta: int = 0,
+        last_activity: str | None = None,
+    ) -> None:
+        self._impl.upsert_document(
+            project_id,
+            document,
+            size_delta=size_delta,
+            last_activity=last_activity,
+        )

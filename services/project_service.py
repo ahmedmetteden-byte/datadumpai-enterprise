@@ -258,6 +258,34 @@ class ProjectService:
 
         raise ValueError("Project not found.")
 
+    def upsert_document(
+        self,
+        project_id: str,
+        document: dict[str, Any],
+        *,
+        size_delta: int = 0,
+        last_activity: str | None = None,
+    ) -> None:
+        """
+        Add or update a single document without touching the rest of the
+        project's document list.
+
+        update_project() replaces a project's entire document list in one
+        write, which races with the indexing background job: each indexing
+        status update re-reads and re-writes the full list too, so a
+        document added by a later upload while an earlier document is still
+        indexing gets silently dropped when the indexing job's stale
+        snapshot is written back. Scoping the write to one document row
+        avoids that.
+        """
+
+        self.repository.upsert_document(
+            project_id,
+            document,
+            size_delta=size_delta,
+            last_activity=last_activity,
+        )
+
     def rename_project(self, project_id: str, new_name: str) -> dict[str, Any]:
         """
         Rename an existing project.

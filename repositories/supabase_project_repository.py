@@ -4,11 +4,17 @@ Supabase PostgreSQL project repository.
 
 from __future__ import annotations
 
+import uuid as uuid_mod
+from datetime import datetime, timezone
 from typing import Any
 
 from core.database import get_database_client, handle_response
 from core.project_access import require_real_project_uuid
 from core.workspace_context import is_quick_report
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 class SupabaseProjectRepository:
@@ -200,8 +206,6 @@ class SupabaseProjectRepository:
         project_id: str,
         documents: list[dict[str, Any]],
     ) -> None:
-        import uuid as uuid_mod
-
         safe_project_id = require_real_project_uuid(project_id)
         existing = handle_response(
             self._client.table("documents")
@@ -255,6 +259,90 @@ class SupabaseProjectRepository:
                 .execute(),
                 action="save document",
             )
+
+    def upsert_document(
+        self,
+        project_id: str,
+        document: dict[str, Any],
+        *,
+        size_delta: int = 0,
+        last_activity: str | None = None,
+    ) -> None:
+        """
+        Add or update one document row without diffing/deleting the rest of
+        the project's document list.
+
+        Unlike _sync_documents (called from _upsert_project), this never
+        deletes rows for filenames it wasn't told about — it only touches
+        the one document passed in, so it's safe to call concurrently with
+        another upload or indexing job's status update for a *different*
+        document in the same project.
+        """
+
+        safe_project_id = require_real_project_uuid(project_id)
+
+        doc_id = str(document.get("id") or "").strip()
+        if not doc_id:
+            existing = handle_response(
+                self._client.table("documents")
+                .select("id")
+                .eq("project_id", safe_project_id)
+                .eq("user_id", self._user_id)
+                .eq("filename", document["filename"])
+                .execute(),
+                action="lookup document",
+            )
+            rows = existing.data or []
+            doc_id = str(rows[0]["id"]) if rows else str(uuid_mod.uuid4())
+            document["id"] = doc_id
+
+        row = {
+            "id": doc_id,
+            "project_id": safe_project_id,
+            "user_id": self._user_id,
+            "filename": document["filename"],
+            "size": int(document.get("size", 0)),
+            "storage_path": document.get("path", ""),
+            "uploaded_at": document.get("uploaded_at"),
+            "mime_type": document.get("mime_type") or "",
+            "status": document.get("status") or "uploaded",
+            "index_stage": document.get("index_stage") or "queued",
+            "progress_percent": int(document.get("progress_percent") or 0),
+            "error_message": document.get("error_message"),
+            "indexed_at": document.get("indexed_at"),
+            "chunk_count": int(document.get("chunk_count") or 0),
+            "title": document.get("title") or "",
+        }
+        handle_response(
+            self._client.table("documents")
+            .upsert(row, on_conflict="project_id,filename")
+            .execute(),
+            action="save document",
+        )
+
+        update_fields: dict[str, Any] = {"updated_at": _utc_now()}
+        if last_activity is not None:
+            update_fields["last_activity"] = last_activity
+        if size_delta:
+            project_row = handle_response(
+                self._client.table("projects")
+                .select("storage_used")
+                .eq("id", safe_project_id)
+                .eq("user_id", self._user_id)
+                .execute(),
+                action="load project storage",
+            )
+            current = int((project_row.data or [{}])[0].get("storage_used") or 0)
+            update_fields["storage_used"] = current + size_delta
+
+        handle_response(
+            self._client.table("projects")
+            .update(update_fields)
+            .eq("id", safe_project_id)
+            .eq("user_id", self._user_id)
+            .execute(),
+            action="update project activity",
+        )
 
     def _sync_reports(
         self,
