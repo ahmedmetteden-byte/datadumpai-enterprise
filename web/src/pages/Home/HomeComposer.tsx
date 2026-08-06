@@ -12,9 +12,11 @@ import { Drawer } from '@/components/drawers/Drawer';
 import { Select } from '@/components/ui/Select';
 import { services } from '@/api/services';
 import { useAuth } from '@/context/AuthContext';
+import { useWorkspace } from '@/context/WorkspaceContext';
 import { useDisclosure } from '@/hooks/useDisclosure';
-import { useEnsureWorkspace } from '@/hooks/useEnsureWorkspace';
+import { useEnsureWorkspace, GENERAL_WORKSPACE_NAME } from '@/hooks/useEnsureWorkspace';
 import { useIntelligenceStudio } from '@/hooks/useIntelligenceStudio';
+import { useWorkspaceList } from '@/hooks/useWorkspaceList';
 import { UI_COPY } from '@/constants/ui';
 import { cn } from '@/lib/cn';
 import { EyebrowBadge } from '@/components/ui/EyebrowBadge';
@@ -22,6 +24,10 @@ import { ProgressRing } from '@/components/ui/ProgressRing';
 import { ConversationList } from '@/pages/IntelligenceStudio/ConversationList';
 import { ConversationMessage } from '@/pages/IntelligenceStudio/ConversationMessage';
 import { NameWorkspacePrompt } from '@/pages/Home/NameWorkspacePrompt';
+import {
+  WorkspaceDestinationDialog,
+  type WorkspaceDestination,
+} from '@/pages/Home/WorkspaceDestinationDialog';
 import { ReportDetailPanel } from '@/pages/Reports/ReportDetailPanel';
 import type { IntelligenceMessage } from '@/types/intelligence';
 import type { ReportPeriod, ReportTemplate } from '@/types/reports';
@@ -67,6 +73,8 @@ export function HomeComposer() {
   const { accessToken } = useAuth();
   const auth = useMemo(() => ({ accessToken }), [accessToken]);
   const { ready, workspaceId, error: workspaceError } = useEnsureWorkspace();
+  const { setActiveWorkspaceId, bumpRevision } = useWorkspace();
+  const { workspaces, reload: reloadWorkspaces } = useWorkspaceList();
   const studio = useIntelligenceStudio();
 
   const [mode, setMode] = useState<Mode>('report');
@@ -88,6 +96,13 @@ export function HomeComposer() {
   const [temporaryChat, setTemporaryChat] = useState(false);
   const [tempMessages, setTempMessages] = useState<IntelligenceMessage[]>([]);
   const historyDrawer = useDisclosure(false);
+
+  const destinationDialog = useDisclosure(false);
+  const [pendingFiles, setPendingFiles] = useState<File[] | null>(null);
+  const [resolvingDestination, setResolvingDestination] = useState(false);
+  const [destinationError, setDestinationError] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -121,8 +136,63 @@ export function HomeComposer() {
     );
   }
 
-  function attachFiles(fileList: FileList | File[]) {
-    if (!workspaceId) return;
+  function selectFiles(fileList: FileList | File[]) {
+    const files = Array.from(fileList);
+    if (files.length === 0) return;
+    setPendingFiles(files);
+    setDestinationError(null);
+    destinationDialog.open();
+  }
+
+  async function resolveDestinationWorkspaceId(
+    destination: WorkspaceDestination,
+  ): Promise<string> {
+    if (destination.type === 'existing') {
+      return destination.workspaceId;
+    }
+    if (destination.type === 'new') {
+      const created = await services.workspace.createWorkspace(
+        { name: destination.name },
+        auth,
+      );
+      return created.id;
+    }
+    const existingGeneral = workspaces.find(
+      (item) => item.name === GENERAL_WORKSPACE_NAME,
+    );
+    if (existingGeneral) return existingGeneral.id;
+    const created = await services.workspace.createWorkspace(
+      { name: GENERAL_WORKSPACE_NAME },
+      auth,
+    );
+    return created.id;
+  }
+
+  async function handleDestinationConfirm(destination: WorkspaceDestination) {
+    const files = pendingFiles;
+    if (!files) return;
+    setResolvingDestination(true);
+    setDestinationError(null);
+    try {
+      const targetWorkspaceId = await resolveDestinationWorkspaceId(destination);
+      if (targetWorkspaceId !== workspaceId) {
+        setActiveWorkspaceId(targetWorkspaceId);
+        bumpRevision();
+        reloadWorkspaces();
+      }
+      attachFiles(files, targetWorkspaceId);
+      setPendingFiles(null);
+      destinationDialog.close();
+    } catch (err) {
+      setDestinationError(
+        err instanceof Error ? err.message : UI_COPY.destinationError,
+      );
+    } finally {
+      setResolvingDestination(false);
+    }
+  }
+
+  function attachFiles(fileList: FileList | File[], targetWorkspaceId: string) {
     const files = Array.from(fileList);
     for (const file of files) {
       const ext = extensionOf(file.name);
@@ -159,7 +229,7 @@ export function HomeComposer() {
       uploadQueueRef.current = uploadQueueRef.current.then(() =>
         services.knowledge
           .upload(
-            workspaceId,
+            targetWorkspaceId,
             {
               file,
               onProgress: (percent) => updateAttachment(id, { progress: percent }),
@@ -188,7 +258,7 @@ export function HomeComposer() {
     event.preventDefault();
     setDragActive(false);
     if (event.dataTransfer.files.length) {
-      attachFiles(event.dataTransfer.files);
+      selectFiles(event.dataTransfer.files);
     }
   }
 
@@ -425,7 +495,7 @@ export function HomeComposer() {
               className="sr-only"
               onChange={(event) => {
                 if (event.target.files?.length) {
-                  attachFiles(event.target.files);
+                  selectFiles(event.target.files);
                 }
                 event.target.value = '';
               }}
@@ -647,6 +717,22 @@ export function HomeComposer() {
           />
         </div>
       </Drawer>
+
+      <WorkspaceDestinationDialog
+        open={destinationDialog.isOpen}
+        onClose={() => {
+          if (resolvingDestination) return;
+          setPendingFiles(null);
+          setDestinationError(null);
+          destinationDialog.close();
+        }}
+        workspaces={workspaces}
+        activeWorkspaceId={workspaceId}
+        fileCount={pendingFiles?.length ?? 0}
+        submitting={resolvingDestination}
+        error={destinationError}
+        onConfirm={(destination) => void handleDestinationConfirm(destination)}
+      />
     </section>
   );
 }

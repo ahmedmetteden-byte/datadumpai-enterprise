@@ -12,6 +12,9 @@ interface EnsureWorkspaceState {
 /** Auto-assigned name given to a silently-created workspace. */
 export const DEFAULT_WORKSPACE_NAME = 'My Workspace';
 
+/** Shared workspace one-off / temporary uploads are filed under. */
+export const GENERAL_WORKSPACE_NAME = 'General';
+
 /**
  * Guarantees the user has an active workspace before the Home composer
  * becomes interactive — silently creates one on first use so uploading
