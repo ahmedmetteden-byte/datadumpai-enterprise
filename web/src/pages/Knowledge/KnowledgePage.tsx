@@ -40,7 +40,11 @@ export function KnowledgePage() {
   const [reportsRefreshKey, setReportsRefreshKey] = useState(0);
 
   useEffect(() => {
-    if (!activeWorkspaceId && workspaces[0]) {
+    if (workspaces.length === 0) return;
+    const activeStillExists =
+      !!activeWorkspaceId &&
+      workspaces.some((workspace) => workspace.id === activeWorkspaceId);
+    if (!activeStillExists) {
       setActiveWorkspaceId(workspaces[0].id);
     }
   }, [activeWorkspaceId, workspaces, setActiveWorkspaceId]);

@@ -37,7 +37,10 @@ export function useEnsureWorkspace(): EnsureWorkspaceState {
         if (cancelled) return;
 
         if (workspaces.length > 0) {
-          if (!activeWorkspaceId) {
+          const activeStillExists =
+            !!activeWorkspaceId &&
+            workspaces.some((workspace) => workspace.id === activeWorkspaceId);
+          if (!activeStillExists) {
             setActiveWorkspaceId(workspaces[0].id);
           }
           setReady(true);
