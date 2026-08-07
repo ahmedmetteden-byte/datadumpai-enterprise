@@ -7,7 +7,6 @@ from __future__ import annotations
 from typing import Literal
 
 import config
-from core import auth
 from core.current_user import require_current_user
 from services.paystack_billing_service import (
     PaystackBillingError,
@@ -53,10 +52,9 @@ class BillingService:
         return providers
 
     def _user_email(self) -> str:
-        user = auth.get_current_user()
-        if user is None or not user.email:
+        if not self._current_user.email:
             raise ValueError("Signed-in user email is required for checkout")
-        return user.email
+        return self._current_user.email
 
     def start_checkout(self, plan_id: str, *, provider: PaymentProvider) -> str:
         plan = config.resolve_plan_id(plan_id)

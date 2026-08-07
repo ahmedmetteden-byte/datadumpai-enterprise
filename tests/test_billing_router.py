@@ -84,6 +84,34 @@ def test_start_checkout_happy_path(billing_env, principal, monkeypatch):
     assert result.checkout_url == "https://checkout.stripe.test/session"
 
 
+def test_start_checkout_succeeds_without_streamlit_session(
+    billing_env, principal, monkeypatch
+):
+    """Regression test: BillingService._user_email() used to read from the
+    legacy Streamlit-only core.auth.get_current_user() helper (backed by
+    st.session_state), which is always None in the real FastAPI/SPA request
+    flow — there is no Streamlit session there. That made every real
+    checkout attempt fail with "Signed-in user email is required for
+    checkout" while every test still passed, because conftest.py's autouse
+    auth_context fixture monkeypatches core.auth.get_current_user globally.
+    Forcing it back to None here proves checkout works from the
+    request-scoped principal alone, matching production reality."""
+
+    monkeypatch.setattr("core.auth.get_current_user", lambda: None)
+    monkeypatch.setattr(
+        "services.billing_service.create_checkout_session",
+        lambda **kwargs: "https://checkout.stripe.test/session",
+    )
+
+    result = start_checkout(
+        StartCheckoutBody(plan_id="starter", provider="stripe"),
+        principal,
+        TEST_USER,
+    )
+
+    assert result.checkout_url == "https://checkout.stripe.test/session"
+
+
 def test_complete_checkout_happy_path(billing_env, principal, monkeypatch):
     payload = {
         "user_id": TEST_USER.id,
