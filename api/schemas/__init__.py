@@ -275,6 +275,7 @@ class ReportDetailOut(CamelModel):
     content: str | None = None
     source_documents: list[str] = Field(default_factory=list)
     instructions: str | None = None
+    locked_export_formats: dict[str, str] = Field(default_factory=dict)
 
 
 class GenerateReportBody(CamelModel):

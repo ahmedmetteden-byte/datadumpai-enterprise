@@ -118,3 +118,24 @@ class PlanService:
     def locked_report_types(self) -> list[str]:
         available = set(self.get_available_report_types())
         return [report_type for report_type in REPORT_TYPES if report_type not in available]
+
+    def min_plan_label_for_feature(self, feature: str) -> str:
+        """Cheapest plan's display label that includes `feature`."""
+
+        for plan_id, plan_config in PLANS.items():
+            if plan_config.get("features", {}).get(feature):
+                return str(plan_config.get("label", plan_id.title()))
+        return PLANS[DEFAULT_PLAN]["label"]
+
+    def locked_export_formats(self) -> dict[str, str]:
+        """Export formats (docx/pptx) the current plan doesn't include,
+        mapped to the cheapest plan label that unlocks each one — lets the
+        UI show/disable those options proactively instead of only after a
+        failed export."""
+
+        locked: dict[str, str] = {}
+        if not self.has_feature("word_export"):
+            locked["docx"] = self.min_plan_label_for_feature("word_export")
+        if not self.can_use_pptx_export():
+            locked["pptx"] = self.min_plan_label_for_feature("pptx_export")
+        return locked

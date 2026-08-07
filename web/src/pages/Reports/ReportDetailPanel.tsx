@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { CopyButton } from '@/components/ui/CopyButton';
 import { ReportMarkdown } from '@/components/ui/ReportMarkdown';
 import { ExportFilenameDialog } from '@/pages/Reports/ExportFilenameDialog';
+import { ExportUpgradeDialog } from '@/pages/Reports/ExportUpgradeDialog';
 import { services } from '@/api/services';
 import { useAuth } from '@/context/AuthContext';
 import { useRequestFeedback } from '@/context/RequestFeedbackContext';
@@ -43,6 +44,7 @@ export function ReportDetailPanel({
   const [exporting, setExporting] = useState<ReportExportFormat | null>(null);
   const [regenerating, setRegenerating] = useState(false);
   const [exportFormatPrompt, setExportFormatPrompt] = useState<ReportExportFormat | null>(null);
+  const [exportUpgradePrompt, setExportUpgradePrompt] = useState<ReportExportFormat | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -94,6 +96,14 @@ export function ReportDetailPanel({
     } finally {
       setExporting(null);
     }
+  }
+
+  function handleExportClick(format: ReportExportFormat) {
+    if (report?.lockedExportFormats?.[format]) {
+      setExportUpgradePrompt(format);
+      return;
+    }
+    setExportFormatPrompt(format);
   }
 
   async function handleRegenerate() {
@@ -180,30 +190,44 @@ export function ReportDetailPanel({
             {UI_COPY.reportsSaveAction}
           </Button>
         ) : null}
+        <div className="flex items-center gap-1">
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={Boolean(exporting)}
+            onClick={() => handleExportClick('docx')}
+          >
+            {UI_COPY.reportsExportWord}
+          </Button>
+          {report.lockedExportFormats?.docx ? (
+            <Badge tone="warning" className="text-[10px]">
+              {report.lockedExportFormats.docx}+
+            </Badge>
+          ) : null}
+        </div>
         <Button
           size="sm"
           variant="secondary"
           disabled={Boolean(exporting)}
-          onClick={() => setExportFormatPrompt('docx')}
-        >
-          {UI_COPY.reportsExportWord}
-        </Button>
-        <Button
-          size="sm"
-          variant="secondary"
-          disabled={Boolean(exporting)}
-          onClick={() => setExportFormatPrompt('pdf')}
+          onClick={() => handleExportClick('pdf')}
         >
           {UI_COPY.reportsExportPdf}
         </Button>
-        <Button
-          size="sm"
-          variant="secondary"
-          disabled={Boolean(exporting)}
-          onClick={() => setExportFormatPrompt('pptx')}
-        >
-          {UI_COPY.reportsExportPptx}
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={Boolean(exporting)}
+            onClick={() => handleExportClick('pptx')}
+          >
+            {UI_COPY.reportsExportPptx}
+          </Button>
+          {report.lockedExportFormats?.pptx ? (
+            <Badge tone="warning" className="text-[10px]">
+              {report.lockedExportFormats.pptx}+
+            </Badge>
+          ) : null}
+        </div>
         <Button
           size="sm"
           variant="ghost"
@@ -252,6 +276,15 @@ export function ReportDetailPanel({
           setExportFormatPrompt(null);
           if (format) void handleExport(format, filename);
         }}
+      />
+      <ExportUpgradeDialog
+        format={exportUpgradePrompt}
+        requiredPlan={
+          exportUpgradePrompt
+            ? (report.lockedExportFormats?.[exportUpgradePrompt] ?? null)
+            : null
+        }
+        onClose={() => setExportUpgradePrompt(null)}
       />
     </div>
   );

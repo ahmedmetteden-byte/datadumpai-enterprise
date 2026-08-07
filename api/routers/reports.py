@@ -81,7 +81,16 @@ def _find_report(
     raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Report not found.")
 
 
-def _report_out(raw: dict[str, Any]) -> ReportDetailOut:
+def _locked_export_formats(principal: AuthenticatedPrincipal) -> dict[str, str]:
+    with user_request_scope(principal):
+        return PlanService(access_token=principal.access_token).locked_export_formats()
+
+
+def _report_out(
+    raw: dict[str, Any],
+    *,
+    locked_export_formats: dict[str, str] | None = None,
+) -> ReportDetailOut:
     return ReportDetailOut(
         id=str(raw["id"]),
         filename=str(raw.get("filename") or ""),
@@ -98,6 +107,7 @@ def _report_out(raw: dict[str, Any]) -> ReportDetailOut:
         content=raw.get("content"),
         source_documents=list(raw.get("sourceDocuments") or []),
         instructions=raw.get("instructions"),
+        locked_export_formats=locked_export_formats or {},
     )
 
 
@@ -144,7 +154,11 @@ def list_reports(
     _current_user: User = Depends(get_current_user),
 ) -> list[ReportDetailOut]:
     _get_project(principal, workspace_id)
-    items = [_report_out(item) for item in _reports(workspace_id, principal)]
+    locked = _locked_export_formats(principal)
+    items = [
+        _report_out(item, locked_export_formats=locked)
+        for item in _reports(workspace_id, principal)
+    ]
     if status_filter == "awaiting_review":
         items = [item for item in items if item.status == "awaiting_review"]
     return items
@@ -197,7 +211,7 @@ def generate_report(
                 detail=f"Report generation failed: {exc}",
             ) from exc
         UsageService(access_token=principal.access_token).record_report_generated()
-    return _report_out(record)
+    return _report_out(record, locked_export_formats=_locked_export_formats(principal))
 
 
 @router.get("/reports/{report_id}", response_model=ReportDetailOut)
@@ -208,7 +222,8 @@ def get_report(
     _current_user: User = Depends(get_current_user),
 ) -> ReportDetailOut:
     _get_project(principal, workspace_id)
-    return _report_out(_find_report(workspace_id, principal, report_id))
+    report = _find_report(workspace_id, principal, report_id)
+    return _report_out(report, locked_export_formats=_locked_export_formats(principal))
 
 
 @router.post("/reports/{report_id}/save", response_model=ReportDetailOut)
@@ -234,7 +249,7 @@ def save_report(
             report_data=report,
             access_token=principal.access_token,
         )
-    return _report_out(report)
+    return _report_out(report, locked_export_formats=_locked_export_formats(principal))
 
 
 @router.get("/reports/{report_id}/export")

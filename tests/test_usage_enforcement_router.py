@@ -16,7 +16,7 @@ from fastapi import BackgroundTasks, HTTPException, UploadFile
 from api.auth_jwt import AuthenticatedPrincipal
 from api.routers.intelligence import check_readiness
 from api.routers.knowledge import upload_knowledge
-from api.routers.reports import export_report, generate_report, list_templates
+from api.routers.reports import export_report, generate_report, get_report, list_templates
 from api.routers.workspaces import create_workspace
 from api.schemas import CreateWorkspaceBody, GenerateReportBody
 from services.project_service import ProjectService
@@ -156,6 +156,24 @@ def test_export_docx_blocked_on_free_export_pptx_blocked_on_starter_pdf_always_o
     with pytest.raises(HTTPException) as exc_info:
         export_report(project["id"], report.id, "pptx", principal, TEST_USER)
     assert exc_info.value.status_code == 403
+
+
+def test_report_responses_expose_locked_export_formats_for_plan(
+    isolated_env, project_service: ProjectService, principal, monkeypatch
+):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    project = project_service.create_project("Locked Export Formats Project")
+    body = GenerateReportBody(template_id="executive_summary", period_id="custom")
+
+    generated = generate_report(project["id"], body, principal, TEST_USER)
+    assert generated.locked_export_formats == {"docx": "Starter", "pptx": "Professional"}
+
+    fetched = get_report(project["id"], generated.id, principal, TEST_USER)
+    assert fetched.locked_export_formats == {"docx": "Starter", "pptx": "Professional"}
+
+    UsageService().set_plan("professional")
+    fetched_pro = get_report(project["id"], generated.id, principal, TEST_USER)
+    assert fetched_pro.locked_export_formats == {}
 
 
 def test_create_workspace_blocked_at_free_project_max(

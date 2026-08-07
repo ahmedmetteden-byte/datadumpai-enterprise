@@ -46,6 +46,30 @@ def test_free_project_limit(plan_service: PlanService):
     plan_service.check_can_create_project(2)
 
 
+def test_free_plan_locks_word_and_pptx_export(plan_service: PlanService):
+    locked = plan_service.locked_export_formats()
+
+    assert locked == {"docx": "Starter", "pptx": "Professional"}
+
+
+def test_starter_plan_unlocks_word_but_not_pptx(isolated_env):
+    usage = UsageService()
+    usage.set_plan("starter")
+    plans = PlanService(usage)
+
+    locked = plans.locked_export_formats()
+
+    assert locked == {"pptx": "Professional"}
+
+
+def test_professional_plan_unlocks_word_and_pptx_export(isolated_env):
+    usage = UsageService()
+    usage.set_plan("professional")
+    plans = PlanService(usage)
+
+    assert plans.locked_export_formats() == {}
+
+
 def test_plan_service_threads_access_token_to_usage_service(monkeypatch):
     import services.plan_service as plan_service_module
 

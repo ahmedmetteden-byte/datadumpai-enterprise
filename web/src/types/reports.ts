@@ -33,6 +33,9 @@ export interface ReportDetail {
   content?: string | null;
   sourceDocuments?: string[];
   instructions?: string | null;
+  /** Export formats the account's current plan doesn't include, mapped to
+   * the cheapest plan label that unlocks each one (e.g. {docx: "Starter"}). */
+  lockedExportFormats?: Record<string, string>;
 }
 
 export interface GenerateReportInput {
