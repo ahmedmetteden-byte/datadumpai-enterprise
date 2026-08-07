@@ -13,6 +13,7 @@ from api.auth_jwt import AuthenticatedPrincipal
 from models.user import User
 from api.deps import get_current_user, get_principal, user_request_scope
 from api.mappers import project_to_workspace
+from api.routers.intelligence import _conversations
 from api.schemas import (
     ContinueWorkingOut,
     DashboardMetricOut,
@@ -24,12 +25,38 @@ from api.schemas import (
     WorkspaceInsightsOverviewOut,
 )
 from services.project_service import ProjectService
+from services.report_service import ReportService
 
 router = APIRouter(prefix="/home", tags=["home"])
 
 
 def _svc(principal: AuthenticatedPrincipal) -> ProjectService:
     return ProjectService(access_token=principal.access_token)
+
+
+def _workspace_reports(
+    workspace_id: str, principal: AuthenticatedPrincipal
+) -> list[dict[str, Any]]:
+    """Reports generated via the SPA, sourced from their persisted metadata
+    sidecar — matches api/routers/reports.py's _reports() helper. Not
+    project["spa_reports"], which nothing has written to since reports moved
+    to per-item file storage."""
+
+    with user_request_scope(principal):
+        entries = ReportService.get_reports(
+            workspace_id, access_token=principal.access_token
+        )
+    return [
+        entry["report_data"]
+        for entry in entries
+        if isinstance(entry.get("report_data"), dict)
+    ]
+
+
+def _workspace_conversations(
+    workspace_id: str, principal: AuthenticatedPrincipal
+) -> list[dict[str, Any]]:
+    return _conversations(workspace_id, principal)
 
 
 def _utc_now() -> str:
@@ -64,18 +91,21 @@ def _sort_key(value: str | None) -> str:
     return str(value or "")
 
 
-def build_dashboard(projects: list[dict[str, Any]]) -> dict[str, Any]:
+def build_dashboard(
+    projects: list[dict[str, Any]], principal: AuthenticatedPrincipal
+) -> dict[str, Any]:
     active = [p for p in projects if not _is_archived(p)]
     docs: list[tuple[dict[str, Any], dict[str, Any]]] = []
     reports: list[tuple[dict[str, Any], dict[str, Any]]] = []
     conversations: list[tuple[dict[str, Any], dict[str, Any]]] = []
 
     for project in active:
+        project_id = str(project.get("id") or "")
         for document in project.get("documents") or []:
             docs.append((project, document))
-        for report in project.get("spa_reports") or []:
+        for report in _workspace_reports(project_id, principal):
             reports.append((project, report))
-        for conversation in project.get("studio_conversations") or []:
+        for conversation in _workspace_conversations(project_id, principal):
             conversations.append((project, conversation))
 
     indexed = sum(1 for _, document in docs if _is_indexed(document))
@@ -192,7 +222,7 @@ def get_home(
     active_projects = [p for p in projects if not _is_archived(p)]
     if not active_projects:
         # Empty shell — frontend can redirect to create workspace
-        dash = build_dashboard([])
+        dash = build_dashboard([], principal)
         user = UserOut(
             id=principal.user.id,
             email=principal.user.email,
@@ -282,7 +312,7 @@ def get_home(
             reverse=True,
         )[0]
 
-    dash = build_dashboard(active_projects)
+    dash = build_dashboard(active_projects, principal)
     workspace_out = project_to_workspace(selected)
     workspaces_out = [project_to_workspace(p) for p in active_projects]
 
@@ -290,9 +320,10 @@ def get_home(
     indexed = sum(1 for d in docs if _is_indexed(d))
     total = len(docs)
     health_percent = int(round((indexed / total) * 100)) if total else 100
+    selected_reports = _workspace_reports(str(selected.get("id") or ""), principal)
     awaiting = sum(
         1
-        for r in (selected.get("spa_reports") or [])
+        for r in selected_reports
         if str(r.get("status")) == "awaiting_review"
     )
 
@@ -315,7 +346,7 @@ def get_home(
                 href="/knowledge",
             )
         )
-    for report in (selected.get("spa_reports") or [])[:2]:
+    for report in selected_reports[:2]:
         continue_working.append(
             ContinueWorkingOut(
                 id=str(report.get("id")),
