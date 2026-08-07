@@ -376,7 +376,14 @@ export function HomeComposer() {
   return (
     <section className="animate-slide-up mx-auto w-full max-w-2xl space-y-6 pt-6 text-center sm:pt-10">
       <div>
-        <EyebrowBadge>{UI_COPY.homeComposerEyebrow}</EyebrowBadge>
+        <img
+          src="/datadumpai-wordmark.png"
+          alt="DataDumpAI"
+          className="mx-auto h-10 w-auto sm:h-12"
+        />
+        <div className="mt-4">
+          <EyebrowBadge>{UI_COPY.homeComposerEyebrow}</EyebrowBadge>
+        </div>
         <h1 className="mt-3 text-hero text-ink">{UI_COPY.homeComposerTitle}</h1>
         <p className="mx-auto mt-2 max-w-lg text-body text-ink-muted">
           {UI_COPY.homeComposerSubtitle}

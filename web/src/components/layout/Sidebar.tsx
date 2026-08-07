@@ -49,10 +49,12 @@ export function Sidebar({
           onClick={onNavigate}
           className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 rounded-md"
         >
-          <div className="flex items-center gap-2">
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-500 text-sm font-bold text-white">
-              D
-            </span>
+          <div className="flex items-center gap-2.5">
+            <img
+              src="/datadumpai-brain-icon.png"
+              alt=""
+              className="h-9 w-9 shrink-0 object-contain"
+            />
             <div>
               <div className="text-lg font-semibold tracking-tight">
                 {APP_NAME}
