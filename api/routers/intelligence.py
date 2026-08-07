@@ -27,6 +27,7 @@ from api.schemas import (
     StudioReadinessOut,
 )
 from services.intelligence_rag_service import IntelligenceRagService
+from services.plan_service import PlanService
 from services.project_service import ProjectService
 from storage.file_store import FileStore
 
@@ -257,13 +258,17 @@ def check_readiness(
         status_text = "Documents are indexing — answers improve once status is Done."
     else:
         status_text = f"Ready · {len(indexed)} indexed document(s)"
+    with user_request_scope(principal):
+        web_research_available = PlanService(
+            access_token=principal.access_token
+        ).can_use_web_research()
     return StudioReadinessOut(
         ready=bool(indexed),
         status=status_text,
         document_count=len(docs),
         report_count=0,
         can_ask=can_ask,
-        web_research_available=False,
+        web_research_available=web_research_available,
     )
 
 
@@ -352,14 +357,24 @@ def get_conversation(
 
 
 def _build_assistant_message(
-    *, workspace_id: str, conversation_id: str, content: str, mode: str | None
+    *,
+    workspace_id: str,
+    conversation_id: str,
+    content: str,
+    mode: str | None,
+    principal: AuthenticatedPrincipal,
 ) -> dict[str, Any]:
     try:
+        with user_request_scope(principal):
+            web_research_enabled = PlanService(
+                access_token=principal.access_token
+            ).can_use_web_research()
         rag = IntelligenceRagService()
         result = rag.answer(
             workspace_id=workspace_id,
             question=content,
             mode=mode or "ask",
+            web_research_enabled=web_research_enabled,
         )
         return {
             "id": f"msg_{uuid.uuid4().hex[:10]}",
@@ -437,6 +452,7 @@ def send_message(
         conversation_id=conversation_id,
         content=content,
         mode=body.mode,
+        principal=principal,
     )
 
     conversation["messages"].append(assistant)
@@ -466,6 +482,7 @@ def ask_temporary(
         conversation_id="temporary",
         content=content,
         mode=body.mode,
+        principal=principal,
     )
     return _message_out(assistant)
 

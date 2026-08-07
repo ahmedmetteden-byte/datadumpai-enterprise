@@ -101,9 +101,12 @@ class IntelligenceRagService:
         workspace_id: str,
         question: str,
         mode: str = "ask",
+        web_research_enabled: bool = True,
     ) -> dict[str, Any]:
         hits = self.retrieve(workspace_id, question)
-        web_sources, web_notice = self._search_web(question)
+        web_sources, web_notice = (
+            self._search_web(question) if web_research_enabled else ([], None)
+        )
 
         if not hits and not web_sources:
             notice = (

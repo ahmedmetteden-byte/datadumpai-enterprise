@@ -129,6 +129,7 @@ export const UI_COPY = {
   homeComposerAsk: 'Ask',
   homeComposerAdvanced: 'Advanced options',
   homeComposerTemplateLabel: 'Report type',
+  homeComposerTemplateLocked: '(Upgrade required)',
   homeComposerPeriodLabel: 'Period',
   homeComposerRemoveFile: 'Remove',
   homeComposerFileTypeError:

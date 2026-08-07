@@ -24,6 +24,7 @@ from api.schemas import (
     WorkspaceOut,
 )
 from models.user import User
+from services.plan_service import PlanLimitError, PlanService
 from services.project_service import ProjectService
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
@@ -70,6 +71,14 @@ def create_workspace(
 ) -> WorkspaceOut:
     with user_request_scope(principal):
         svc = _svc(principal)
+        current_count = sum(1 for p in svc.get_projects() if not _is_archived(p))
+        try:
+            PlanService(access_token=principal.access_token).check_can_create_project(
+                current_count
+            )
+        except PlanLimitError as exc:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
         try:
             project = svc.create_project(body.name)
         except ValueError as exc:

@@ -595,8 +595,13 @@ export function HomeComposer() {
                 className="w-full"
               >
                 {templates.map((template) => (
-                  <option key={template.id} value={template.id}>
+                  <option
+                    key={template.id}
+                    value={template.id}
+                    disabled={template.locked}
+                  >
                     {template.name}
+                    {template.locked ? ` ${UI_COPY.homeComposerTemplateLocked}` : ''}
                   </option>
                 ))}
               </Select>

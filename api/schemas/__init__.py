@@ -250,6 +250,8 @@ class ReportTemplateOut(CamelModel):
     id: str
     name: str
     description: str = ""
+    locked: bool = False
+    required_plan: str | None = None
 
 
 class ReportPeriodOut(CamelModel):

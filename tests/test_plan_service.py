@@ -44,3 +44,19 @@ def test_free_project_limit(plan_service: PlanService):
     assert exc.value.limit_type == "projects"
 
     plan_service.check_can_create_project(2)
+
+
+def test_plan_service_threads_access_token_to_usage_service(monkeypatch):
+    import services.plan_service as plan_service_module
+
+    captured = {}
+
+    class FakeUsageService:
+        def __init__(self, *, access_token=None):
+            captured["access_token"] = access_token
+
+    monkeypatch.setattr(plan_service_module, "UsageService", FakeUsageService)
+
+    PlanService(access_token="tok-plan")
+
+    assert captured["access_token"] == "tok-plan"

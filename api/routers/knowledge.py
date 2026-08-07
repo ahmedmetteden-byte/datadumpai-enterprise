@@ -45,6 +45,7 @@ from services.document_service import DocumentService
 from services.indexing_service import run_index_job
 from services.project_service import ProjectService
 from services.qdrant_service import QdrantService
+from services.usage_service import UsageLimitError, UsageService
 
 logger = logging.getLogger(__name__)
 
@@ -275,6 +276,11 @@ async def upload_knowledge(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Empty file.")
 
     with user_request_scope(principal):
+        try:
+            UsageService(access_token=principal.access_token).check_can_upload()
+        except UsageLimitError as exc:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
         project = _get_project(principal, workspace_id)
         doc_service = _doc_svc(principal)
         try:
@@ -307,6 +313,7 @@ async def upload_knowledge(
             size_delta=int(document.get("size") or 0),
             last_activity=document.get("uploaded_at"),
         )
+        UsageService(access_token=principal.access_token).record_uploads()
 
     background_tasks.add_task(
         run_index_job,

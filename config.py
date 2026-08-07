@@ -491,6 +491,13 @@ PRO_REPORT_TYPES = [
 
 REPORT_TYPES = FREE_REPORT_TYPES + STARTER_REPORT_TYPES + PRO_REPORT_TYPES
 
+# Cheapest plan that unlocks each report type, for UI "upgrade required" hints.
+REPORT_TYPE_MIN_PLAN: dict[str, str] = {
+    **{name: "free" for name in FREE_REPORT_TYPES},
+    **{name: "starter" for name in STARTER_REPORT_TYPES},
+    **{name: "professional" for name in PRO_REPORT_TYPES},
+}
+
 # ==========================================================
 # COPILOT (v1.0 launch prompts)
 # ==========================================================

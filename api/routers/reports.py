@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal
 
+import config
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 
@@ -21,6 +22,7 @@ from api.schemas import (
     SaveReportBody,
 )
 from services.export_service import ExportService
+from services.plan_service import PlanService
 from services.premium_export_service import PremiumExportService, ReportExportContext
 from services.project_service import ProjectService
 from services.report_document import report_data_from_markdown
@@ -29,7 +31,9 @@ from services.spa_report_generation_service import (
     PERIODS,
     TEMPLATES,
     SpaReportGenerationService,
+    template_by_id,
 )
+from services.usage_service import UsageLimitError, UsageService
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +108,22 @@ def list_templates(
     _current_user: User = Depends(get_current_user),
 ) -> list[ReportTemplateOut]:
     _get_project(principal, workspace_id)
-    return [ReportTemplateOut(**item) for item in TEMPLATES]
+    with user_request_scope(principal):
+        available = set(
+            PlanService(access_token=principal.access_token).get_available_report_types()
+        )
+    return [
+        ReportTemplateOut(
+            **item,
+            locked=item["name"] not in available,
+            required_plan=(
+                config.REPORT_TYPE_MIN_PLAN.get(item["name"])
+                if item["name"] not in available
+                else None
+            ),
+        )
+        for item in TEMPLATES
+    ]
 
 
 @router.get("/report-periods", response_model=list[ReportPeriodOut])
@@ -145,6 +164,22 @@ def generate_report(
     project = _get_project(principal, workspace_id)
     with user_request_scope(principal):
         try:
+            UsageService(access_token=principal.access_token).check_can_generate_report()
+        except UsageLimitError as exc:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
+        template = template_by_id(body.template_id)
+        plans = PlanService(access_token=principal.access_token)
+        if template["name"] not in plans.get_available_report_types():
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f'"{template["name"]}" requires a higher plan. '
+                    f"Your current plan is {plans.get_plan_config()['label']}."
+                ),
+            )
+
+        try:
             record = SpaReportGenerationService(
                 access_token=principal.access_token
             ).generate(
@@ -161,6 +196,7 @@ def generate_report(
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Report generation failed: {exc}",
             ) from exc
+        UsageService(access_token=principal.access_token).record_report_generated()
     return _report_out(record)
 
 
@@ -229,6 +265,18 @@ def export_report(
     )
 
     with user_request_scope(principal):
+        plans = PlanService(access_token=principal.access_token)
+        if format == "docx" and not plans.has_feature("word_export"):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                detail="Word export requires the Starter plan or higher.",
+            )
+        if format == "pptx" and not plans.can_use_pptx_export():
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                detail="PowerPoint export requires the Professional plan or higher.",
+            )
+
         premium = PremiumExportService(
             ExportService(access_token=principal.access_token)
         )

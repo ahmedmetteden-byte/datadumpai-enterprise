@@ -27,8 +27,13 @@ class PlanLimitError(Exception):
 class PlanService:
     """Resolve plan capabilities for the active account."""
 
-    def __init__(self, usage_service: UsageService | None = None) -> None:
-        self._usage = usage_service or UsageService()
+    def __init__(
+        self,
+        usage_service: UsageService | None = None,
+        *,
+        access_token: str | None = None,
+    ) -> None:
+        self._usage = usage_service or UsageService(access_token=access_token)
 
     def get_plan_id(self) -> str:
         return self._usage.get_plan()

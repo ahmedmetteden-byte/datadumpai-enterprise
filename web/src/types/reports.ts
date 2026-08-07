@@ -8,6 +8,8 @@ export interface ReportTemplate {
   id: string;
   name: string;
   description: string;
+  locked?: boolean;
+  requiredPlan?: string | null;
 }
 
 export interface ReportPeriod {
