@@ -109,7 +109,9 @@ def test_rate_limit_blocks_after_max_requests(monkeypatch):
     assert exc_info.value.status_code == 429
 
 
-def test_email_delivery_error_returns_502(monkeypatch):
+def test_email_delivery_error_degrades_to_skipped(monkeypatch):
+    # A misconfigured mail provider is an ops problem, not something a site
+    # visitor caused — the submit must still look like success to them.
     from services.email_service import EmailDeliveryError
 
     monkeypatch.setattr("config.EMAIL_ENABLED", True)
@@ -119,6 +121,5 @@ def test_email_delivery_error_returns_502(monkeypatch):
 
     monkeypatch.setattr(public_router, "send_email", raise_error)
 
-    with pytest.raises(HTTPException) as exc_info:
-        public_router.submit_contact(contact_body(), make_request())
-    assert exc_info.value.status_code == 502
+    result = public_router.submit_contact(contact_body(), make_request())
+    assert result.status == "skipped"

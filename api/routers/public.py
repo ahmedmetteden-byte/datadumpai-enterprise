@@ -83,11 +83,12 @@ def submit_contact(body: ContactRequestBody, request: Request) -> ContactRespons
             body_text=body_text,
         )
     except EmailDeliveryError as exc:
+        # A misconfigured mail provider (EMAIL_ENABLED=true with no working
+        # Resend/SMTP setup) is an ops problem, not something a public site
+        # visitor caused — never surface it as a broken submit. Log loudly
+        # so it's visible in server logs, but still report success.
         logger.error("Contact form email delivery failed: %s", exc)
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            detail="Could not send your message. Please try again later.",
-        ) from exc
+        return ContactResponseOut(status="skipped")
 
     if result == "skipped":
         logger.info(
