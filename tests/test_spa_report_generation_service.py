@@ -51,6 +51,27 @@ def test_generate_includes_instructions_in_fallback_markdown(
     assert "User Instructions" in record["content"]
 
 
+def test_generate_fallback_markdown_omits_leading_title_heading(
+    isolated_env, project_service: ProjectService, monkeypatch
+):
+    """The export layer renders the document title separately now — the
+    generated body must start directly at '## Executive Summary', not a
+    top-level '# {title}' heading that would show up twice in exports."""
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    project = project_service.create_project("No Duplicate Title Test Project")
+
+    record = SpaReportGenerationService().generate(
+        workspace_id=project["id"],
+        project=project,
+        template_id="executive_summary",
+        period_id="custom",
+    )
+
+    assert not record["content"].lstrip().startswith("# ")
+    assert record["content"].lstrip().startswith("**Template:**")
+
+
 def test_generate_without_instructions_omits_instructions_section(
     isolated_env, project_service: ProjectService, monkeypatch
 ):

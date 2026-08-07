@@ -12,6 +12,7 @@ from typing import Any, Iterator
 
 HEADING_PATTERN = re.compile(r"^(#{1,5})\s+(.+)$")
 BULLET_PATTERN = re.compile(r"^[-*]\s+(.+)$")
+ORDERED_LIST_PATTERN = re.compile(r"^\d{1,2}[.)]\s+(.+)$")
 LABEL_VALUE_PATTERN = re.compile(r"^\*\*([^*]+):\*\*\s*(.*)$")
 HORIZONTAL_RULE = re.compile(r"^-{3,}$")
 TABLE_ROW_PATTERN = re.compile(r"^\|(.+)\|$")
@@ -183,17 +184,19 @@ def inline_to_reportlab_html(text: str) -> str:
     return safe
 
 
-def highlight_value_html(label: str, value: str) -> str:
-    """Build ReportLab markup for label/value pairs with semantic coloring."""
+def classify_label_value(label: str, value: str) -> tuple[str, str, str]:
+    """Return (clean_label, clean_value, hex_color) for a label/value pair,
+    applying the same semantic-coloring rules (confidence/priority/severity)
+    used by every renderer — the single source of truth for this."""
 
     label_clean = strip_inline_markdown(label)
     value_clean = strip_inline_markdown(value)
     label_lower = label_clean.lower()
 
-    if not value_clean:
-        return f"<b>{escape_xml(label_clean)}</b>"
-
     color = "#0F172A"
+
+    if not value_clean:
+        return label_clean, value_clean, color
 
     if "confidence" in label_lower and "%" in value_clean:
         color = "#1D4ED8"
@@ -210,6 +213,17 @@ def highlight_value_html(label: str, value: str) -> str:
     elif label_lower in LABELS_WITH_HIGHLIGHT:
         color = "#1D4ED8"
 
+    return label_clean, value_clean, color
+
+
+def highlight_value_html(label: str, value: str) -> str:
+    """Build ReportLab markup for label/value pairs with semantic coloring."""
+
+    label_clean, value_clean, color = classify_label_value(label, value)
+
+    if not value_clean:
+        return f"<b>{escape_xml(label_clean)}</b>"
+
     return (
         f"<b>{escape_xml(label_clean)}:</b><br/>"
         f"<font color='{color}' size='11'><b>{escape_xml(value_clean)}</b></font>"
@@ -217,14 +231,35 @@ def highlight_value_html(label: str, value: str) -> str:
 
 
 def format_bullet_item(text: str) -> str:
-    """Normalize list items to checkmark bullets."""
+    """Clean a list item's text. The bullet/number glyph itself is drawn by
+    the renderer (a real list flowable / Word list style / pptx bullet
+    XML) — this must not bake any marker character into the text, or
+    renderers that already draw their own glyph end up double-marking."""
 
     cleaned = strip_inline_markdown(text.strip())
+    return cleaned.lstrip("✓•").strip() or cleaned
 
-    if cleaned.startswith("✓") or cleaned.startswith("•"):
-        return cleaned
 
-    return f"✓ {cleaned}"
+def is_duplicate_title(heading_text: str, title: str) -> bool:
+    """True when a body heading just restates the document title already
+    rendered separately (e.g. a report's first heading echoing its own
+    template name) — used to skip rendering it a second time."""
+
+    def normalize(value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", value.lower())
+
+    heading_norm = normalize(heading_text)
+    title_norm = normalize(title)
+
+    if not heading_norm or not title_norm:
+        return False
+
+    if heading_norm == title_norm:
+        return True
+
+    # e.g. heading "Executive Summary" vs title "Executive Summary — Custom
+    # / Ad hoc" — the heading is a substantial prefix/substring of the title.
+    return len(heading_norm) >= 6 and heading_norm in title_norm
 
 
 def _collect_bullets(lines: list[str], start: int) -> tuple[list[str], int]:
@@ -239,6 +274,29 @@ def _collect_bullets(lines: list[str], start: int) -> tuple[list[str], int]:
             break
 
         match = BULLET_PATTERN.match(line)
+
+        if match:
+            items.append(format_bullet_item(match.group(1)))
+            index += 1
+            continue
+
+        break
+
+    return items, index
+
+
+def _collect_ordered_items(lines: list[str], start: int) -> tuple[list[str], int]:
+    items: list[str] = []
+    index = start
+
+    while index < len(lines):
+        line = lines[index].strip()
+
+        if not line:
+            index += 1
+            break
+
+        match = ORDERED_LIST_PATTERN.match(line)
 
         if match:
             items.append(format_bullet_item(match.group(1)))
@@ -359,6 +417,11 @@ def parse_markdown_blocks(text: str) -> list[MarkdownBlock]:
             blocks.append(MarkdownBlock(block_type="bullets", items=items))
             continue
 
+        if ORDERED_LIST_PATTERN.match(line):
+            items, index = _collect_ordered_items(lines, index)
+            blocks.append(MarkdownBlock(block_type="numbered", items=items))
+            continue
+
         paragraph_lines: list[str] = [line]
         index += 1
 
@@ -372,6 +435,7 @@ def parse_markdown_blocks(text: str) -> list[MarkdownBlock]:
                 or TABLE_ROW_PATTERN.match(peek)
                 or LABEL_VALUE_PATTERN.match(peek)
                 or BULLET_PATTERN.match(peek)
+                or ORDERED_LIST_PATTERN.match(peek)
                 or HORIZONTAL_RULE.match(peek)
             ):
                 break
@@ -412,3 +476,18 @@ def group_blocks_for_keep_together(blocks: list[MarkdownBlock]) -> list[list[Mar
         groups.append(current)
 
     return groups if groups else [blocks]
+
+
+def drop_duplicate_leading_heading(
+    blocks: list[MarkdownBlock], title: str
+) -> list[MarkdownBlock]:
+    """Drop a body's first heading when it just restates the document
+    title already rendered separately by the exporter — shared by every
+    format so PDF/DOCX/PPTX all agree on there being exactly one title."""
+
+    if blocks and blocks[0].block_type == "heading" and is_duplicate_title(
+        blocks[0].content, title
+    ):
+        return blocks[1:]
+
+    return blocks

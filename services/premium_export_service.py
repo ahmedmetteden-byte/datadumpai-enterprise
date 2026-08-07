@@ -80,8 +80,10 @@ class PremiumExportService:
 
         return self._base.export_pdf(
             project_id=context.project_id,
-            report_name=f"{context.report_name} Executive",
+            report_name=context.report_name,
             report=context.report,
+            workspace_name=context.project_name,
+            period_name=context.reporting_period,
         )
 
     def export_board_pack_pdf(self, context: ReportExportContext) -> dict[str, Any]:
@@ -107,8 +109,10 @@ class PremiumExportService:
 
         return self._base.export_pdf(
             project_id=context.project_id,
-            report_name=f"{context.report_name} Board Pack",
+            report_name=context.report_name,
             report=context.report,
+            workspace_name=context.project_name,
+            period_name=context.reporting_period,
         )
 
     def export_presentation(self, context: ReportExportContext) -> dict[str, Any]:
@@ -118,28 +122,37 @@ class PremiumExportService:
                 "Run: pip install python-pptx"
             )
 
-        from services.premium_pptx_export import (
-            PresentationExportMetadata,
-            build_premium_presentation,
-        )
+        if report_is_intelligence(context.report):
+            from services.premium_pptx_export import (
+                PresentationExportMetadata,
+                build_premium_presentation,
+            )
 
-        data = build_premium_presentation(
-            report_text=context.report_text,
-            metadata=PresentationExportMetadata(
-                project_name=context.project_name,
-                report_name=context.report_name,
-                source_documents=context.source_documents,
-            ),
-        )
-        filename = f"{self._slugify(context.report_name, 'presentation')}.pptx"
-        return self._base._build_result(
+            data = build_premium_presentation(
+                report_text=context.report_text,
+                metadata=PresentationExportMetadata(
+                    project_name=context.project_name,
+                    report_name=context.report_name,
+                    source_documents=context.source_documents,
+                ),
+            )
+            filename = f"{self._slugify(context.report_name, 'presentation')}.pptx"
+            return self._base._build_result(
+                project_id=context.project_id,
+                filename=filename,
+                data=data,
+                mime_type=(
+                    "application/vnd.openxmlformats-officedocument"
+                    ".presentationml.presentation"
+                ),
+            )
+
+        return self._base.export_pptx(
             project_id=context.project_id,
-            filename=filename,
-            data=data,
-            mime_type=(
-                "application/vnd.openxmlformats-officedocument"
-                ".presentationml.presentation"
-            ),
+            report_name=context.report_name,
+            report=context.report,
+            workspace_name=context.project_name,
+            period_name=context.reporting_period,
         )
 
     def export_markdown(self, context: ReportExportContext) -> dict[str, Any]:
@@ -174,4 +187,6 @@ class PremiumExportService:
             project_id=context.project_id,
             report_name=context.report_name,
             report=context.report,
+            workspace_name=context.project_name,
+            period_name=context.reporting_period,
         )

@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { CopyButton } from '@/components/ui/CopyButton';
 import { ReportMarkdown } from '@/components/ui/ReportMarkdown';
+import { ExportFilenameDialog } from '@/pages/Reports/ExportFilenameDialog';
 import { services } from '@/api/services';
 import { useAuth } from '@/context/AuthContext';
 import { useRequestFeedback } from '@/context/RequestFeedbackContext';
@@ -41,6 +42,7 @@ export function ReportDetailPanel({
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState<ReportExportFormat | null>(null);
   const [regenerating, setRegenerating] = useState(false);
+  const [exportFormatPrompt, setExportFormatPrompt] = useState<ReportExportFormat | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -64,7 +66,7 @@ export function ReportDetailPanel({
     void reload();
   }, [reload]);
 
-  async function handleExport(format: ReportExportFormat) {
+  async function handleExport(format: ReportExportFormat, filename: string) {
     if (!report) return;
     setExporting(format);
     try {
@@ -76,10 +78,7 @@ export function ReportDetailPanel({
             format,
             auth,
           );
-          downloadBlob(
-            blob,
-            `${report.name}.${format === 'pptx' ? 'pptx' : format}`,
-          );
+          downloadBlob(blob, filename);
         },
         {
           loading: UI_COPY.requestLoading,
@@ -182,7 +181,7 @@ export function ReportDetailPanel({
           size="sm"
           variant="secondary"
           disabled={Boolean(exporting)}
-          onClick={() => void handleExport('docx')}
+          onClick={() => setExportFormatPrompt('docx')}
         >
           {UI_COPY.reportsExportWord}
         </Button>
@@ -190,7 +189,7 @@ export function ReportDetailPanel({
           size="sm"
           variant="secondary"
           disabled={Boolean(exporting)}
-          onClick={() => void handleExport('pdf')}
+          onClick={() => setExportFormatPrompt('pdf')}
         >
           {UI_COPY.reportsExportPdf}
         </Button>
@@ -198,7 +197,7 @@ export function ReportDetailPanel({
           size="sm"
           variant="secondary"
           disabled={Boolean(exporting)}
-          onClick={() => void handleExport('pptx')}
+          onClick={() => setExportFormatPrompt('pptx')}
         >
           {UI_COPY.reportsExportPptx}
         </Button>
@@ -240,6 +239,17 @@ export function ReportDetailPanel({
           </ul>
         </section>
       ) : null}
+
+      <ExportFilenameDialog
+        format={exportFormatPrompt}
+        defaultName={report.name}
+        onClose={() => setExportFormatPrompt(null)}
+        onConfirm={(filename) => {
+          const format = exportFormatPrompt;
+          setExportFormatPrompt(null);
+          if (format) void handleExport(format, filename);
+        }}
+      />
     </div>
   );
 }

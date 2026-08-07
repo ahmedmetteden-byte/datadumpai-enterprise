@@ -5,6 +5,9 @@ from __future__ import annotations
 from services.premium_docx_export import DocxExportMetadata, build_premium_docx
 from services.premium_pdf_export import PremiumExportMetadata, build_premium_pdf
 from services.report_markdown_renderer import (
+    drop_duplicate_leading_heading,
+    format_bullet_item,
+    is_duplicate_title,
     parse_markdown_blocks,
     remove_empty_sections,
     strip_inline_markdown,
@@ -155,6 +158,72 @@ def test_premium_pdf_has_no_raw_markdown_headings():
     assert "### Critical" not in pdf_text
     assert "#### Sustained" not in pdf_text
     assert "**Confidence:**" not in pdf_text
+
+
+def test_parse_markdown_blocks_renders_ordered_list_as_numbered_block():
+    report = """
+## Strategic Recommendations
+
+1. Commission an independent reserve adequacy review this quarter.
+2. Renegotiate reinsurance treaty terms ahead of renewal.
+3. Launch a cross-sell pilot into the commercial lines segment.
+"""
+
+    blocks = parse_markdown_blocks(report)
+    numbered = [block for block in blocks if block.block_type == "numbered"]
+
+    assert len(numbered) == 1
+    assert numbered[0].items == [
+        "Commission an independent reserve adequacy review this quarter.",
+        "Renegotiate reinsurance treaty terms ahead of renewal.",
+        "Launch a cross-sell pilot into the commercial lines segment.",
+    ]
+    # No leaked digits/periods and no run-on paragraph block for this section.
+    assert not any(block.block_type == "paragraph" and "1." in block.content for block in blocks)
+
+
+def test_ordered_list_line_breaks_an_in_progress_paragraph():
+    report = "Some intro text.\n1. First item.\n2. Second item."
+
+    blocks = parse_markdown_blocks(report)
+
+    assert blocks[0].block_type == "paragraph"
+    assert blocks[0].content == "Some intro text."
+    assert blocks[1].block_type == "numbered"
+    assert blocks[1].items == ["First item.", "Second item."]
+
+
+def test_format_bullet_item_no_longer_prepends_checkmark():
+    assert format_bullet_item("Reinsurance costs are trending upward") == (
+        "Reinsurance costs are trending upward"
+    )
+    assert not format_bullet_item("Some risk item").startswith("✓")
+
+
+def test_is_duplicate_title_matches_prefix_variants():
+    title = "Executive Summary — Custom / Ad hoc"
+
+    assert is_duplicate_title("Executive Summary", title) is True
+    assert is_duplicate_title("EXECUTIVE SUMMARY", title) is True
+    assert is_duplicate_title(title, title) is True
+    assert is_duplicate_title("Key Findings", title) is False
+    assert is_duplicate_title("", title) is False
+
+
+def test_drop_duplicate_leading_heading_removes_only_matching_first_block():
+    title = "Executive Summary — Custom / Ad hoc"
+    blocks = parse_markdown_blocks(
+        "## Executive Summary\n\nSome intro text.\n\n## Key Findings\n\nMore text."
+    )
+
+    trimmed = drop_duplicate_leading_heading(blocks, title)
+
+    assert trimmed[0].block_type == "paragraph"
+    assert trimmed[0].content == "Some intro text."
+
+    unrelated_blocks = parse_markdown_blocks("## Key Findings\n\nMore text.")
+    unchanged = drop_duplicate_leading_heading(unrelated_blocks, title)
+    assert unchanged == unrelated_blocks
 
 
 def test_build_premium_docx_returns_docx_bytes():

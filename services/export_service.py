@@ -20,11 +20,21 @@ from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 from docx.shared import Inches, Pt, RGBColor
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_JUSTIFY, TA_LEFT
+from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
-from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import (
+    HRFlowable,
+    Image,
+    ListFlowable,
+    ListItem,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
 
 from services.export_chart_blocks import get_export_chart_images
 from models.report_data import ReportData
@@ -32,9 +42,19 @@ from services.report_chart_data import prepare_report_for_output
 from services.report_document import prepare_report_view, report_data_from_markdown
 from services.visualization_engine import dashboard_section_heading
 from services.report_markdown_renderer import (
+    classify_label_value,
+    drop_duplicate_leading_heading,
+    highlight_value_html,
     parse_markdown_blocks,
     strip_inline_markdown,
 )
+
+# Shared brand palette — matches report_markdown_renderer.highlight_value_html
+# and the existing table styling below, so PDF/DOCX/PPTX stay consistent.
+BRAND_NAVY = "#0F172A"
+BRAND_BLUE = "#1D4ED8"
+BRAND_MUTED = "#64748B"
+BRAND_RULE = "#93C5FD"
 from storage.file_store import FileStore
 from core.project_access import assert_project_access
 
@@ -59,6 +79,10 @@ class ExportService:
         "docx": (
             "application/vnd.openxmlformats-officedocument"
             ".wordprocessingml.document"
+        ),
+        "pptx": (
+            "application/vnd.openxmlformats-officedocument"
+            ".presentationml.presentation"
         ),
     }
 
@@ -297,19 +321,49 @@ class ExportService:
         *,
         story: list[Any],
         body_style: ParagraphStyle,
-        heading_style: ParagraphStyle,
+        heading_styles: dict[int, ParagraphStyle],
+        list_item_style: ParagraphStyle,
     ) -> None:
         if block.block_type == "heading":
-            story.append(Paragraph(strip_inline_markdown(block.content), heading_style))
+            style = heading_styles.get(block.level) or heading_styles[max(heading_styles)]
+            story.append(Paragraph(strip_inline_markdown(block.content), style))
         elif block.block_type == "paragraph":
             story.append(Paragraph(self._escape_pdf_text(block.content), body_style))
         elif block.block_type == "bullets":
-            for item in block.items:
-                story.append(Paragraph(self._escape_pdf_text(item), body_style))
+            story.append(
+                ListFlowable(
+                    [
+                        ListItem(Paragraph(self._escape_pdf_text(item), list_item_style))
+                        for item in block.items
+                    ],
+                    bulletType="bullet",
+                    bulletColor=colors.HexColor(BRAND_BLUE),
+                    bulletFontSize=8,
+                    leftIndent=18,
+                    spaceBefore=2,
+                    spaceAfter=8,
+                )
+            )
+        elif block.block_type == "numbered":
+            story.append(
+                ListFlowable(
+                    [
+                        ListItem(Paragraph(self._escape_pdf_text(item), list_item_style))
+                        for item in block.items
+                    ],
+                    bulletType="1",
+                    bulletFormat="%s.",
+                    bulletColor=colors.HexColor(BRAND_NAVY),
+                    bulletFontSize=10,
+                    leftIndent=20,
+                    spaceBefore=2,
+                    spaceAfter=8,
+                )
+            )
         elif block.block_type == "label_value":
-            label = strip_inline_markdown(block.label)
-            value = strip_inline_markdown(block.value)
-            story.append(Paragraph(f"<b>{label}:</b> {value}", body_style))
+            story.append(
+                Paragraph(highlight_value_html(block.label, block.value), body_style)
+            )
         elif block.block_type == "table":
             self._render_pdf_table(block.rows, story=story, body_style=body_style)
         elif block.block_type == "spacer":
@@ -332,10 +386,22 @@ class ExportService:
             for item in block.items:
                 paragraph = document.add_paragraph(strip_inline_markdown(item), style="List Bullet")
                 paragraph.paragraph_format.left_indent = Inches(0.35)
+        elif block.block_type == "numbered":
+            for item in block.items:
+                paragraph = document.add_paragraph(strip_inline_markdown(item), style="List Number")
+                paragraph.paragraph_format.left_indent = Inches(0.35)
         elif block.block_type == "label_value":
+            label, value, color = classify_label_value(block.label, block.value)
             paragraph = document.add_paragraph()
-            paragraph.add_run(f"{strip_inline_markdown(block.label)}: ").bold = True
-            paragraph.add_run(strip_inline_markdown(block.value))
+            paragraph.paragraph_format.space_before = Pt(2)
+            paragraph.paragraph_format.space_after = Pt(8)
+            label_run = paragraph.add_run(f"{label}: " if value else label)
+            label_run.bold = True
+            label_run.font.color.rgb = RGBColor(0x0F, 0x17, 0x2A)
+            if value:
+                value_run = paragraph.add_run(value)
+                value_run.bold = True
+                value_run.font.color.rgb = RGBColor.from_string(color.lstrip("#"))
         elif block.block_type == "table":
             self._render_docx_table(document, block.rows)
 
@@ -414,6 +480,18 @@ class ExportService:
             report_name=report_name,
         )
 
+    def _draw_pdf_footer(self, canvas: Any, doc: Any, *, report_name: str) -> None:
+        canvas.saveState()
+        y = 0.55 * inch
+        canvas.setStrokeColor(colors.HexColor(BRAND_RULE))
+        canvas.setLineWidth(0.6)
+        canvas.line(0.9 * inch, y, letter[0] - 0.9 * inch, y)
+        canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(colors.HexColor(BRAND_MUTED))
+        canvas.drawString(0.9 * inch, y - 14, strip_inline_markdown(report_name)[:90])
+        canvas.drawRightString(letter[0] - 0.9 * inch, y - 14, f"Page {doc.page}")
+        canvas.restoreState()
+
     def export_pdf(
         self,
         *,
@@ -421,6 +499,8 @@ class ExportService:
         report_name: str,
         report: ReportData | str | None = None,
         report_text: str | None = None,
+        workspace_name: str | None = None,
+        period_name: str | None = None,
     ) -> dict[str, Any]:
         """Export a report as PDF."""
 
@@ -436,8 +516,8 @@ class ExportService:
             pagesize=letter,
             leftMargin=0.9 * inch,
             rightMargin=0.9 * inch,
-            topMargin=0.75 * inch,
-            bottomMargin=0.75 * inch,
+            topMargin=0.9 * inch,
+            bottomMargin=0.9 * inch,
         )
         styles = getSampleStyleSheet()
         body_style = ParagraphStyle(
@@ -448,35 +528,108 @@ class ExportService:
             alignment=TA_JUSTIFY,
             spaceBefore=6,
             spaceAfter=10,
+            textColor=colors.HexColor(BRAND_NAVY),
         )
-        heading_style = ParagraphStyle(
-            "ExportHeading",
-            parent=styles["Heading1"],
-            fontSize=18,
-            spaceBefore=6,
-            spaceAfter=10,
+        list_item_style = ParagraphStyle(
+            "ExportListItem",
+            parent=body_style,
+            alignment=TA_LEFT,
+            spaceBefore=0,
+            spaceAfter=4,
         )
-        story = []
+        heading_styles = {
+            2: ParagraphStyle(
+                "ExportH2",
+                parent=styles["Heading1"],
+                fontSize=16,
+                leading=20,
+                spaceBefore=18,
+                spaceAfter=10,
+                textColor=colors.HexColor(BRAND_NAVY),
+            ),
+            3: ParagraphStyle(
+                "ExportH3",
+                parent=styles["Heading2"],
+                fontSize=13,
+                leading=17,
+                spaceBefore=12,
+                spaceAfter=6,
+                textColor=colors.HexColor(BRAND_BLUE),
+            ),
+            4: ParagraphStyle(
+                "ExportH4",
+                parent=styles["Heading3"],
+                fontSize=11.5,
+                leading=15,
+                spaceBefore=10,
+                spaceAfter=4,
+                textColor=colors.HexColor(BRAND_MUTED),
+            ),
+        }
+        title_style = ParagraphStyle(
+            "ExportTitle",
+            parent=styles["Title"],
+            fontSize=22,
+            leading=27,
+            alignment=TA_LEFT,
+            textColor=colors.HexColor(BRAND_NAVY),
+            spaceAfter=6,
+        )
+        meta_style = ParagraphStyle(
+            "ExportMeta",
+            parent=styles["Normal"],
+            fontSize=9.5,
+            textColor=colors.HexColor(BRAND_MUTED),
+            spaceBefore=0,
+            spaceAfter=20,
+        )
+
+        story: list[Any] = [
+            Paragraph(self._escape_pdf_text(report_name), title_style),
+            HRFlowable(
+                width="100%",
+                thickness=1.4,
+                color=colors.HexColor(BRAND_RULE),
+                spaceAfter=6,
+            ),
+        ]
+        meta_parts = [part for part in (workspace_name, period_name) if part]
+        meta_parts.append(f"Generated {datetime.now(timezone.utc).strftime('%d %B %Y')}")
+        story.append(
+            Paragraph(
+                " &nbsp;&middot;&nbsp; ".join(self._escape_pdf_text(part) for part in meta_parts),
+                meta_style,
+            )
+        )
 
         self._prepend_pdf_charts(
             story,
             prepared.chart_data,
             body_style=body_style,
-            heading_style=heading_style,
+            heading_style=heading_styles[2],
         )
 
-        for block in parse_markdown_blocks(report_text):
+        blocks = drop_duplicate_leading_heading(
+            parse_markdown_blocks(report_text), report_name
+        )
+        for block in blocks:
             self._render_pdf_block(
                 block,
                 story=story,
                 body_style=body_style,
-                heading_style=heading_style,
+                heading_styles=heading_styles,
+                list_item_style=list_item_style,
             )
 
-        if not story:
-            story.append(Paragraph(" ", body_style))
-
-        document.build(story)
+        document.build(
+            story,
+            onFirstPage=lambda canvas, doc: self._draw_pdf_footer(
+                canvas, doc, report_name=report_name
+            ),
+            onLaterPages=lambda canvas, doc: self._draw_pdf_footer(
+                canvas, doc, report_name=report_name
+            ),
+        )
         data = buffer.getvalue()
 
         return self._build_result(
@@ -487,6 +640,46 @@ class ExportService:
             report_name=report_name,
         )
 
+    @staticmethod
+    def _add_docx_bottom_rule(paragraph: Any, *, color_hex: str = "93C5FD", size: int = 10) -> None:
+        p_pr = paragraph._p.get_or_add_pPr()
+        borders = OxmlElement("w:pBdr")
+        bottom = OxmlElement("w:bottom")
+        bottom.set(qn("w:val"), "single")
+        bottom.set(qn("w:sz"), str(size))
+        bottom.set(qn("w:space"), "4")
+        bottom.set(qn("w:color"), color_hex)
+        borders.append(bottom)
+        p_pr.append(borders)
+
+    @staticmethod
+    def _add_docx_page_number_field(
+        paragraph: Any, *, color_hex: str = "64748B", size: int = 8
+    ) -> None:
+        run = paragraph.add_run()
+        run.font.size = Pt(size)
+        run.font.color.rgb = RGBColor.from_string(color_hex)
+        begin = OxmlElement("w:fldChar")
+        begin.set(qn("w:fldCharType"), "begin")
+        instr = OxmlElement("w:instrText")
+        instr.set(qn("xml:space"), "preserve")
+        instr.text = "PAGE"
+        end = OxmlElement("w:fldChar")
+        end.set(qn("w:fldCharType"), "end")
+        run._r.append(begin)
+        run._r.append(instr)
+        run._r.append(end)
+
+    def _style_docx_headings(self, document: Document) -> None:
+        palette = {1: BRAND_NAVY, 2: BRAND_NAVY, 3: BRAND_BLUE, 4: BRAND_MUTED}
+        for level, hex_color in palette.items():
+            try:
+                style = document.styles[f"Heading {level}"]
+            except KeyError:
+                continue
+            style.font.color.rgb = RGBColor.from_string(hex_color.lstrip("#"))
+            style.font.bold = True
+
     def export_docx(
         self,
         *,
@@ -494,6 +687,8 @@ class ExportService:
         report_name: str,
         report: ReportData | str | None = None,
         report_text: str | None = None,
+        workspace_name: str | None = None,
+        period_name: str | None = None,
     ) -> dict[str, Any]:
         """Export a report as Word (.docx)."""
 
@@ -506,17 +701,42 @@ class ExportService:
 
         document = Document()
         for section in document.sections:
-            section.top_margin = Inches(0.75)
-            section.bottom_margin = Inches(0.75)
+            section.top_margin = Inches(0.9)
+            section.bottom_margin = Inches(0.9)
             section.left_margin = Inches(0.9)
             section.right_margin = Inches(0.9)
 
-        document.add_heading(strip_inline_markdown(report_name), level=1)
+        self._style_docx_headings(document)
+
+        title_paragraph = document.add_heading(strip_inline_markdown(report_name), level=1)
+        self._add_docx_bottom_rule(title_paragraph)
+
+        meta_parts = [part for part in (workspace_name, period_name) if part]
+        meta_parts.append(f"Generated {datetime.now(timezone.utc).strftime('%d %B %Y')}")
+        meta_paragraph = document.add_paragraph(" · ".join(meta_parts))
+        meta_paragraph.paragraph_format.space_before = Pt(4)
+        meta_paragraph.paragraph_format.space_after = Pt(18)
+        for run in meta_paragraph.runs:
+            run.font.size = Pt(9.5)
+            run.font.color.rgb = RGBColor.from_string(BRAND_MUTED.lstrip("#"))
 
         self._prepend_docx_charts(document, prepared.chart_data)
 
-        for block in parse_markdown_blocks(report_text):
+        blocks = drop_duplicate_leading_heading(
+            parse_markdown_blocks(report_text), report_name
+        )
+        for block in blocks:
             self._render_docx_block(document, block)
+
+        footer_paragraph = document.sections[0].footer.paragraphs[0]
+        footer_paragraph.text = strip_inline_markdown(report_name)[:90] + "   "
+        for run in footer_paragraph.runs:
+            run.font.size = Pt(8)
+            run.font.color.rgb = RGBColor.from_string(BRAND_MUTED.lstrip("#"))
+        page_label_run = footer_paragraph.add_run("Page ")
+        page_label_run.font.size = Pt(8)
+        page_label_run.font.color.rgb = RGBColor.from_string(BRAND_MUTED.lstrip("#"))
+        self._add_docx_page_number_field(footer_paragraph)
 
         document.save(buffer)
         data = buffer.getvalue()
@@ -526,5 +746,236 @@ class ExportService:
             filename=filename,
             data=data,
             mime_type=self.MIME_TYPES["docx"],
+            report_name=report_name,
+        )
+
+    @staticmethod
+    def _group_pptx_sections(blocks: list[Any]) -> list[tuple[str, list[Any]]]:
+        """Split a flat block list into (H2 title, child blocks) sections —
+        one slide group per top-level section, mirroring how the document
+        body reads visually in the PDF/DOCX exports."""
+
+        sections: list[tuple[str, list[Any]]] = []
+        current_title = "Overview"
+        current_blocks: list[Any] = []
+        for block in blocks:
+            if block.block_type == "heading" and block.level == 2:
+                if current_blocks:
+                    sections.append((current_title, current_blocks))
+                current_title = strip_inline_markdown(block.content)
+                current_blocks = []
+                continue
+            current_blocks.append(block)
+        if current_blocks:
+            sections.append((current_title, current_blocks))
+        return sections
+
+    @staticmethod
+    def _set_pptx_bullet(paragraph: Any, *, color_hex: str) -> None:
+        from pptx.oxml.xmlchemy import OxmlElement as PptxOxmlElement
+
+        p_pr = paragraph._p.get_or_add_pPr()
+        p_pr.set("marL", "228600")
+        p_pr.set("indent", "-228600")
+        bu_clr = PptxOxmlElement("a:buClr")
+        srgb = PptxOxmlElement("a:srgbClr")
+        srgb.set("val", color_hex.lstrip("#").upper())
+        bu_clr.append(srgb)
+        bu_font = PptxOxmlElement("a:buFont")
+        bu_font.set("typeface", "Arial")
+        bu_char = PptxOxmlElement("a:buChar")
+        bu_char.set("char", "•")
+        p_pr.append(bu_clr)
+        p_pr.append(bu_font)
+        p_pr.append(bu_char)
+
+    @staticmethod
+    def _set_pptx_number(paragraph: Any, *, start_at: int, color_hex: str) -> None:
+        from pptx.oxml.xmlchemy import OxmlElement as PptxOxmlElement
+
+        p_pr = paragraph._p.get_or_add_pPr()
+        p_pr.set("marL", "274638")
+        p_pr.set("indent", "-274638")
+        bu_clr = PptxOxmlElement("a:buClr")
+        srgb = PptxOxmlElement("a:srgbClr")
+        srgb.set("val", color_hex.lstrip("#").upper())
+        bu_clr.append(srgb)
+        bu_font = PptxOxmlElement("a:buFont")
+        bu_font.set("typeface", "Arial")
+        bu_auto_num = PptxOxmlElement("a:buAutoNum")
+        bu_auto_num.set("type", "arabicPeriod")
+        bu_auto_num.set("startAt", str(max(1, start_at)))
+        p_pr.append(bu_clr)
+        p_pr.append(bu_font)
+        p_pr.append(bu_auto_num)
+
+    def _add_pptx_section_slides(
+        self,
+        presentation: Any,
+        layout: Any,
+        title: str,
+        blocks: list[Any],
+    ) -> None:
+        from pptx.dml.color import RGBColor as PptxRGBColor
+        from pptx.util import Inches as PptxInches, Pt as PptxPt
+
+        navy = PptxRGBColor.from_string(BRAND_NAVY.lstrip("#"))
+        blue = PptxRGBColor.from_string(BRAND_BLUE.lstrip("#"))
+
+        # Flatten blocks into renderable (text, kind, meta) lines — tables
+        # are rare in these narrative reports, so they render as plain
+        # pipe-separated rows rather than a real pptx table (out of scope).
+        lines: list[tuple[str, str, Any]] = []
+        for block in blocks:
+            if block.block_type == "heading":
+                lines.append((block.content, "subheading", None))
+            elif block.block_type == "paragraph":
+                lines.append((block.content, "paragraph", None))
+            elif block.block_type == "bullets":
+                for item in block.items:
+                    lines.append((item, "bullet", None))
+            elif block.block_type == "numbered":
+                for index, item in enumerate(block.items, start=1):
+                    lines.append((item, "numbered", index))
+            elif block.block_type == "label_value":
+                label, value, color = classify_label_value(block.label, block.value)
+                text = f"{label}: {value}" if value else label
+                lines.append((text, "label_value", color))
+            elif block.block_type == "table":
+                for row in block.rows:
+                    lines.append((" · ".join(row), "paragraph", None))
+
+        if not lines:
+            return
+
+        chunk_size = 7
+        chunks = [lines[i : i + chunk_size] for i in range(0, len(lines), chunk_size)]
+
+        for chunk_index, chunk in enumerate(chunks):
+            slide = presentation.slides.add_slide(layout)
+
+            heading_box = slide.shapes.add_textbox(
+                PptxInches(0.7), PptxInches(0.5), PptxInches(12.0), PptxInches(0.9)
+            )
+            heading_text = title if chunk_index == 0 else f"{title} (cont'd)"
+            heading_frame = heading_box.text_frame
+            heading_frame.word_wrap = True
+            heading_frame.text = strip_inline_markdown(heading_text)
+            heading_frame.paragraphs[0].font.size = PptxPt(28)
+            heading_frame.paragraphs[0].font.bold = True
+            heading_frame.paragraphs[0].font.color.rgb = navy
+
+            body_box = slide.shapes.add_textbox(
+                PptxInches(0.9), PptxInches(1.55), PptxInches(11.5), PptxInches(5.5)
+            )
+            text_frame = body_box.text_frame
+            text_frame.word_wrap = True
+
+            for item_index, (text, kind, meta) in enumerate(chunk):
+                paragraph = text_frame.paragraphs[0] if item_index == 0 else text_frame.add_paragraph()
+                clean_text = strip_inline_markdown(text)
+                paragraph.text = clean_text
+                paragraph.space_after = PptxPt(10)
+
+                if kind == "subheading":
+                    paragraph.font.size = PptxPt(18)
+                    paragraph.font.bold = True
+                    paragraph.font.color.rgb = blue
+                elif kind == "bullet":
+                    paragraph.font.size = PptxPt(16)
+                    paragraph.font.color.rgb = navy
+                    self._set_pptx_bullet(paragraph, color_hex=BRAND_BLUE)
+                elif kind == "numbered":
+                    paragraph.font.size = PptxPt(16)
+                    paragraph.font.color.rgb = navy
+                    self._set_pptx_number(paragraph, start_at=meta, color_hex=BRAND_NAVY)
+                elif kind == "label_value":
+                    paragraph.font.size = PptxPt(14)
+                    paragraph.font.italic = True
+                    paragraph.font.color.rgb = PptxRGBColor.from_string(
+                        str(meta).lstrip("#")
+                    )
+                else:
+                    paragraph.font.size = PptxPt(15)
+                    paragraph.font.color.rgb = navy
+
+    def export_pptx(
+        self,
+        *,
+        project_id: str,
+        report_name: str,
+        report: ReportData | str | None = None,
+        report_text: str | None = None,
+        workspace_name: str | None = None,
+        period_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Export a report as PowerPoint (.pptx).
+
+        Generic, markdown-block-driven builder for report types that aren't
+        the specialized "Executive Intelligence Dashboard" shape handled by
+        premium_pptx_export.py — reuses that module's visual palette/sizing
+        but drives slide content from parse_markdown_blocks() output.
+        """
+
+        from pptx import Presentation
+        from pptx.dml.color import RGBColor as PptxRGBColor
+        from pptx.enum.text import PP_ALIGN
+        from pptx.util import Inches as PptxInches, Pt as PptxPt
+
+        prepared = self._prepare_export(
+            self._resolve_export_input(report=report, report_text=report_text)
+        )
+        report_text = prepared.text
+        filename = f"{self._slugify(report_name)}.pptx"
+
+        presentation = Presentation()
+        presentation.slide_width = PptxInches(13.33)
+        presentation.slide_height = PptxInches(7.5)
+        blank_layout = presentation.slide_layouts[6]
+
+        navy = PptxRGBColor.from_string(BRAND_NAVY.lstrip("#"))
+        blue = PptxRGBColor.from_string(BRAND_BLUE.lstrip("#"))
+
+        title_slide = presentation.slides.add_slide(blank_layout)
+        title_box = title_slide.shapes.add_textbox(
+            PptxInches(0.8), PptxInches(2.4), PptxInches(11.7), PptxInches(1.5)
+        )
+        title_frame = title_box.text_frame
+        title_frame.word_wrap = True
+        title_frame.text = strip_inline_markdown(report_name)
+        title_frame.paragraphs[0].font.size = PptxPt(34)
+        title_frame.paragraphs[0].font.bold = True
+        title_frame.paragraphs[0].font.color.rgb = navy
+        title_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
+
+        meta_parts = [part for part in (workspace_name, period_name) if part]
+        meta_parts.append(f"Generated {datetime.now(timezone.utc).strftime('%d %B %Y')}")
+        meta_box = title_slide.shapes.add_textbox(
+            PptxInches(0.8), PptxInches(3.95), PptxInches(11.7), PptxInches(0.8)
+        )
+        meta_frame = meta_box.text_frame
+        meta_frame.text = "  ·  ".join(meta_parts)
+        meta_frame.paragraphs[0].font.size = PptxPt(16)
+        meta_frame.paragraphs[0].font.color.rgb = blue
+        meta_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
+
+        # Unlike PDF/DOCX (where the body sits directly under a rendered
+        # title and an immediately-repeated heading looks broken), each
+        # PPTX section gets its own slide — the leading "Executive Summary"
+        # heading is a legitimate, wanted slide title here, so it is not
+        # dropped even though it overlaps the report title.
+        blocks = parse_markdown_blocks(report_text)
+        for section_title, section_blocks in self._group_pptx_sections(blocks):
+            self._add_pptx_section_slides(presentation, blank_layout, section_title, section_blocks)
+
+        buffer = BytesIO()
+        presentation.save(buffer)
+        data = buffer.getvalue()
+
+        return self._build_result(
+            project_id=project_id,
+            filename=filename,
+            data=data,
+            mime_type=self.MIME_TYPES["pptx"],
             report_name=report_name,
         )

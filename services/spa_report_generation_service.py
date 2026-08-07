@@ -141,7 +141,6 @@ class SpaReportGenerationService:
             f"## User Instructions\n\n{instructions.strip()}\n\n" if instructions and instructions.strip() else ""
         )
         return (
-            f"# {title}\n\n"
             f"**Template:** {template_name}  \n"
             f"**Period:** {period_name}\n\n"
             f"{instructions_section}"
@@ -212,8 +211,9 @@ class SpaReportGenerationService:
             "happened but why it matters, what pattern or trend it fits into, what changed since "
             "prior context (if evidence shows it), and what the implication is for decision-makers. "
             "Every non-obvious claim should be traceable to a specific source document by name.\n\n"
-            "Structure the report in GitHub-flavoured markdown with exactly these sections, in order:\n\n"
-            f"# {title}\n"
+            "Structure the report in GitHub-flavoured markdown with exactly these sections, in order. "
+            "Do not include a top-level title heading — start directly at the first section below; "
+            "the document title is rendered separately by the export layer.\n\n"
             "## Executive Summary\n"
             "3-5 sentences a board member could read alone and understand the whole picture: "
             "the overall situation, the most important finding, and the headline recommendation.\n\n"
@@ -235,12 +235,14 @@ class SpaReportGenerationService:
             "Positive openings, efficiencies, or strategic options the evidence points to. If the "
             "evidence contains none, state that plainly rather than inventing any.\n\n"
             "## Strategic Recommendations\n"
-            "A numbered list of specific, actionable next steps, ordered by priority — not generic "
-            "advice, but recommendations that follow directly from the findings above.\n\n"
+            "A markdown numbered list of specific, actionable next steps, ordered by priority — not "
+            "generic advice, but recommendations that follow directly from the findings above. Each "
+            "recommendation MUST start a new line with '1. ', '2. ', etc. — never run multiple "
+            "recommendations together in one paragraph.\n\n"
             "## Conclusion\n"
             "2-3 sentences closing the report and restating what should happen next.\n\n"
             "Do not wrap your answer in a code fence. Output raw markdown starting directly with the "
-            "H1 title.\n\n"
+            "## Executive Summary heading.\n\n"
             f"Evidence:\n{evidence}"
         )
         try:
