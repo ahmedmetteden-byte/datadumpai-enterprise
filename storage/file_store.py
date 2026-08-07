@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import tempfile
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -17,6 +18,15 @@ from core.user_paths import get_user_projects_root
 from core.workspace_context import resolve_storage_scope
 
 logger = logging.getLogger(__name__)
+
+# Supabase Storage downloads occasionally fail transiently (gateway
+# timeouts, network blips). The storage3 client also has a bug where an
+# error response with an empty body makes its own error handling raise a
+# raw json.JSONDecodeError instead of a clear StorageApiError — retrying
+# here papers over the transient case and _download_from_supabase turns
+# any remaining failure into a message that doesn't leak that internal.
+_STORAGE_DOWNLOAD_MAX_ATTEMPTS = 3
+_STORAGE_DOWNLOAD_RETRY_DELAY_SECONDS = 1.0
 
 
 class FileStore:
@@ -162,16 +172,7 @@ class FileStore:
                 key,
                 self._backend,
             )
-            try:
-                client = self._supabase_client()
-                data = client.storage.from_(config.SUPABASE_STORAGE_BUCKET).download(key)
-            except Exception:
-                logger.exception(
-                    "FileStore.read_bytes supabase download failed key=%s bucket=%s",
-                    key,
-                    config.SUPABASE_STORAGE_BUCKET,
-                )
-                raise
+            data = self._download_from_supabase(key)
             logger.info(
                 "FileStore.read_bytes supabase_download ok key=%s size=%s",
                 key,
@@ -322,6 +323,43 @@ class FileStore:
         if self._looks_like_storage_key(storage_key):
             return storage_key.replace("\\", "/")
         return storage_key.replace("\\", "/")
+
+    def _download_from_supabase(self, key: str) -> bytes:
+        """Download one object from Supabase Storage, retrying transient
+        failures with backoff. Raises RuntimeError with a clean message —
+        never the raw client exception — if every attempt fails."""
+
+        last_error: Exception | None = None
+
+        for attempt in range(1, _STORAGE_DOWNLOAD_MAX_ATTEMPTS + 1):
+            try:
+                client = self._supabase_client()
+                return client.storage.from_(config.SUPABASE_STORAGE_BUCKET).download(key)
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "FileStore.read_bytes supabase download attempt %s/%s failed "
+                    "key=%s bucket=%s error=%s",
+                    attempt,
+                    _STORAGE_DOWNLOAD_MAX_ATTEMPTS,
+                    key,
+                    config.SUPABASE_STORAGE_BUCKET,
+                    exc,
+                )
+                if attempt < _STORAGE_DOWNLOAD_MAX_ATTEMPTS:
+                    time.sleep(_STORAGE_DOWNLOAD_RETRY_DELAY_SECONDS * attempt)
+
+        logger.error(
+            "FileStore.read_bytes supabase download failed after %s attempts "
+            "key=%s bucket=%s",
+            _STORAGE_DOWNLOAD_MAX_ATTEMPTS,
+            key,
+            config.SUPABASE_STORAGE_BUCKET,
+        )
+        raise RuntimeError(
+            f"Could not download {Path(key).name!r} from storage after "
+            f"{_STORAGE_DOWNLOAD_MAX_ATTEMPTS} attempts. Please try again."
+        ) from last_error
 
     def _supabase_client(self):
         """
