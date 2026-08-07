@@ -201,7 +201,16 @@ export class HttpReportService implements ReportService {
       },
     );
     if (!response.ok) {
-      const detail = await response.text();
+      const raw = await response.text();
+      let detail = raw;
+      try {
+        const parsed = JSON.parse(raw) as { detail?: unknown };
+        if (typeof parsed.detail === 'string' && parsed.detail.trim()) {
+          detail = parsed.detail;
+        }
+      } catch {
+        /* not JSON — fall back to raw text below */
+      }
       throw new Error(detail || `Export failed (${response.status})`);
     }
     return response.blob();

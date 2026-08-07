@@ -83,7 +83,10 @@ export function ReportDetailPanel({
         {
           loading: UI_COPY.requestLoading,
           success: UI_COPY.requestSuccess,
-          error: UI_COPY.reportsExportError,
+          // No static `error` override here — feedback.run() falls back to
+          // err.message, which is now the backend's actual detail (e.g. a
+          // plan-upgrade reason for a 403) instead of a generic message
+          // that hides why the export failed.
         },
       );
     } catch {
