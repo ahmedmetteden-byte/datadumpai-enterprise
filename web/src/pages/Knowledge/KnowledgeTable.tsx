@@ -52,7 +52,7 @@ export function KnowledgeTable({
 
   return (
     <div className="overflow-x-auto rounded-xl border border-surface-border bg-white shadow-sm">
-      <table className="min-w-full text-left text-small">
+      <table className="w-full table-fixed text-left text-small">
         <thead className="border-b border-surface-border bg-surface-alt/60 text-caption uppercase tracking-wide text-ink-muted">
           <tr>
             <th className="w-10 px-3 py-3">
@@ -67,23 +67,23 @@ export function KnowledgeTable({
             <th className="px-3 py-3 font-medium">
               {UI_COPY.knowledgeColFilename}
             </th>
-            <th className="px-3 py-3 font-medium">
+            <th className="w-24 px-3 py-3 font-medium">
               {UI_COPY.knowledgeColSize}
             </th>
-            <th className="px-3 py-3 font-medium">{UI_COPY.knowledgeColStatus}</th>
-            <th className="px-3 py-3 font-medium">
+            <th className="w-40 px-3 py-3 font-medium">{UI_COPY.knowledgeColStatus}</th>
+            <th className="w-32 px-3 py-3 font-medium">
               {UI_COPY.knowledgeColIndexed}
             </th>
-            <th className="px-3 py-3 font-medium">
+            <th className="w-32 px-3 py-3 font-medium">
               {UI_COPY.knowledgeColCreated}
             </th>
-            <th className="px-3 py-3 font-medium">
+            <th className="w-36 px-3 py-3 font-medium">
               {UI_COPY.knowledgeColTags}
             </th>
-            <th className="px-3 py-3 font-medium">
+            <th className="w-28 px-3 py-3 font-medium">
               {UI_COPY.knowledgeColCollection}
             </th>
-            <th className="px-3 py-3 font-medium">
+            <th className="w-72 px-3 py-3 font-medium">
               {UI_COPY.knowledgeColActions}
             </th>
           </tr>
@@ -109,11 +109,11 @@ export function KnowledgeTable({
                     className="h-4 w-4 rounded border-surface-border text-brand-500 focus:ring-brand-500"
                   />
                 </td>
-                <td className="max-w-[14rem] px-3 py-3">
+                <td className="px-3 py-3">
                   <button
                     type="button"
                     onClick={() => onView(item.id)}
-                    className="truncate text-left font-medium text-ink hover:text-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+                    className="block w-full truncate text-left font-medium text-ink hover:text-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
                     title={filename}
                   >
                     {filename}
@@ -124,7 +124,7 @@ export function KnowledgeTable({
                     ? formatStorageBytes(item.sizeBytes)
                     : '—'}
                 </td>
-                <td className="min-w-[9rem] px-3 py-3">
+                <td className="px-3 py-3">
                   <IndexingProgress
                     status={item.status}
                     progressPercent={item.progressPercent}
@@ -143,7 +143,7 @@ export function KnowledgeTable({
                 <td className="px-3 py-3">
                   <TagsCell tags={item.tags} />
                 </td>
-                <td className="px-3 py-3 text-ink-muted">
+                <td className="truncate px-3 py-3 text-ink-muted">
                   {item.collectionName || 'Library'}
                 </td>
                 <td className="px-3 py-3">
