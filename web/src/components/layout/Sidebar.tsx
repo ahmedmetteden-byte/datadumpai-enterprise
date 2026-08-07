@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { APP_NAME, PRIMARY_NAV, ROUTES, UI_COPY } from '@/constants/ui';
 import { useAuth } from '@/context/AuthContext';
 import { useDisclosure } from '@/hooks/useDisclosure';
@@ -13,6 +13,7 @@ export function Sidebar({
   onNavigate?: () => void;
 }) {
   const { user, profile, signOut } = useAuth();
+  const navigate = useNavigate();
   const menu = useDisclosure(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -98,9 +99,20 @@ export function Sidebar({
               onClick={() => {
                 menu.close();
                 onNavigate?.();
-                void signOut();
+                navigate(ROUTES.billing);
               }}
               className="mt-3 w-full rounded-md bg-white/10 px-3 py-2 text-left text-small text-white transition-colors hover:bg-white/20"
+            >
+              {UI_COPY.billingNavLabel}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                menu.close();
+                onNavigate?.();
+                void signOut();
+              }}
+              className="mt-2 w-full rounded-md bg-white/10 px-3 py-2 text-left text-small text-white transition-colors hover:bg-white/20"
             >
               {UI_COPY.authSignOut}
             </button>

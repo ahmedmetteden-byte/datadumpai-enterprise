@@ -57,9 +57,13 @@ def initialize_transaction(
     if plan not in config.BILLABLE_PLANS:
         raise PaystackBillingError(f"Plan {plan_id!r} is not billable via Paystack")
 
+    # Paystack appends its own `reference`/`trxref` query params to whatever
+    # callback_url is given when it redirects the customer back — don't add
+    # a literal, unsubstituted "{reference}" placeholder here (that isn't an
+    # f-string interpolation since Paystack fills it in, not Python).
     callback_url = (
         f"{config.BILLING_SUCCESS_URL.rstrip('/')}"
-        "?billing=success&provider=paystack&reference={reference}"
+        "?billing=success&provider=paystack"
     )
 
     payload: dict[str, Any] = {

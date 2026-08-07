@@ -9,10 +9,47 @@ const inputClassName =
 
 export function ContactForm() {
   const [submitted, setSubmitted] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setSubmitted(true);
+    setError(null);
+    setLoading(true);
+
+    const form = new FormData(event.currentTarget);
+    const payload = {
+      firstName: form.get("firstName"),
+      lastName: form.get("lastName"),
+      email: form.get("email"),
+      company: form.get("company"),
+      subject: form.get("subject"),
+      message: form.get("message"),
+      honeypot: form.get("companyWebsite"),
+    };
+
+    try {
+      const response = await fetch("/api/contact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.error ?? "Could not send your message. Please try again.");
+      }
+
+      setSubmitted(true);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not send your message. Please try again."
+      );
+    } finally {
+      setLoading(false);
+    }
   }
 
   if (submitted) {
@@ -32,6 +69,15 @@ export function ContactForm() {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      <input
+        type="text"
+        name="companyWebsite"
+        tabIndex={-1}
+        autoComplete="off"
+        aria-hidden="true"
+        className="hidden"
+      />
+
       <div className="grid gap-6 sm:grid-cols-2">
         <div>
           <label htmlFor="firstName" className="block text-sm font-medium text-ink">
@@ -114,8 +160,14 @@ export function ContactForm() {
         />
       </div>
 
-      <Button type="submit" size="lg" className="w-full sm:w-auto">
-        Send message
+      {error ? (
+        <p role="alert" className="text-sm text-red-700">
+          {error}
+        </p>
+      ) : null}
+
+      <Button type="submit" size="lg" className="w-full sm:w-auto" disabled={loading}>
+        {loading ? "Sending…" : "Send message"}
       </Button>
     </form>
   );

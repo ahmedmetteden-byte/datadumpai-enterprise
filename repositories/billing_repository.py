@@ -10,7 +10,7 @@ from typing import Any
 
 import config
 from core import user_paths
-from core.database import get_database_client, handle_response
+from core.database import get_database_client, get_service_role_client, handle_response
 
 
 def _billing_fields_from_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -36,12 +36,14 @@ def merge_billing_fields(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def find_user_id_by_customer_id(customer_id: str) -> str | None:
+def find_user_id_by_customer_id(
+    customer_id: str, *, use_service_role: bool = False
+) -> str | None:
     if not customer_id:
         return None
 
     if config.use_database():
-        client = get_database_client()
+        client = get_service_role_client() if use_service_role else get_database_client()
         response = handle_response(
             client.table("user_usage")
             .select("user_id")
@@ -76,12 +78,14 @@ def find_user_id_by_customer_id(customer_id: str) -> str | None:
     return None
 
 
-def find_user_id_by_subscription_id(subscription_id: str) -> str | None:
+def find_user_id_by_subscription_id(
+    subscription_id: str, *, use_service_role: bool = False
+) -> str | None:
     if not subscription_id:
         return None
 
     if config.use_database():
-        client = get_database_client()
+        client = get_service_role_client() if use_service_role else get_database_client()
         response = handle_response(
             client.table("user_usage")
             .select("user_id")

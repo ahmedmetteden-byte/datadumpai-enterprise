@@ -13,6 +13,7 @@ import {
 } from '@/pages/Auth';
 import { HomePage } from '@/pages/Home';
 import { KnowledgePage } from '@/pages/Knowledge';
+import { BillingPage, BillingReturnPage } from '@/pages/Billing';
 
 function ProtectedApp() {
   return (
@@ -27,6 +28,8 @@ function ProtectedApp() {
               path={`${ROUTES.library}/:id`}
               element={<KnowledgePage />}
             />
+            <Route path={ROUTES.billing} element={<BillingPage />} />
+            <Route path={ROUTES.billingReturn} element={<BillingReturnPage />} />
             <Route
               path="/memory"
               element={<Navigate to={ROUTES.library} replace />}

@@ -368,3 +368,78 @@ class UserProfileOut(CamelModel):
     organisation_name: str = ""
     memberships: list[OrganisationMembershipOut] = Field(default_factory=list)
     updated_at: str | None = None
+
+
+# --- Billing -----------------------------------------------------------
+
+PaymentProviderId = Literal["stripe", "paystack"]
+
+
+class PlanOut(CamelModel):
+    id: str
+    label: str
+    price_label: str
+    tagline: str = ""
+    ideal_for: str = ""
+    reports_per_month: int | None = None
+    uploads_per_month: int | None = None
+    projects_max: int | None = None
+    includes: list[str] = Field(default_factory=list)
+    billable: bool = False
+
+
+class UsageSnapshotOut(CamelModel):
+    reports_used: int
+    reports_limit: int | None
+    uploads_used: int
+    uploads_limit: int | None
+    projects_max: int | None
+
+
+class BillingSummaryOut(CamelModel):
+    enabled: bool
+    available_providers: list[PaymentProviderId] = Field(default_factory=list)
+    billing_plan: str
+    effective_plan: str
+    subscription_status: str
+    payment_provider: str | None = None
+    cancel_at_period_end: bool = False
+    current_period_end: str | None = None
+    trial_days_remaining: int | None = None
+    usage: UsageSnapshotOut
+
+
+class StartCheckoutBody(CamelModel):
+    plan_id: str
+    provider: PaymentProviderId
+
+
+class CheckoutUrlOut(CamelModel):
+    checkout_url: str
+
+
+class CompleteCheckoutBody(CamelModel):
+    provider: PaymentProviderId
+    session_id: str | None = None
+    reference: str | None = None
+
+
+class PortalUrlOut(CamelModel):
+    portal_url: str
+
+
+# --- Public (unauthenticated) -------------------------------------------
+
+
+class ContactRequestBody(CamelModel):
+    first_name: str
+    last_name: str
+    email: str
+    company: str | None = None
+    subject: Literal["general", "sales", "support", "partnership", "press"] = "general"
+    message: str
+    honeypot: str | None = None
+
+
+class ContactResponseOut(CamelModel):
+    status: Literal["sent", "skipped"]

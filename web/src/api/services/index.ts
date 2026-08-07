@@ -1,5 +1,6 @@
 export type {
   AIService,
+  BillingService,
   HomeService,
   IntelligenceService,
   KnowledgeService,
@@ -39,3 +40,4 @@ export {
   SupabaseProfileService,
   createProfileService,
 } from './ProfileService';
+export { MockBillingService, HttpBillingService } from './BillingService';

@@ -10,7 +10,16 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routers import home, intelligence, knowledge, me, reports, workspaces
+from api.routers import (
+    billing,
+    home,
+    intelligence,
+    knowledge,
+    me,
+    public,
+    reports,
+    workspaces,
+)
 
 app = FastAPI(title="DataDumpAI Product API", version="1.0.0")
 
@@ -35,6 +44,8 @@ app.include_router(workspaces.router, prefix="/api/v1")
 app.include_router(knowledge.router, prefix="/api/v1")
 app.include_router(intelligence.router, prefix="/api/v1")
 app.include_router(reports.router, prefix="/api/v1")
+app.include_router(billing.router, prefix="/api/v1")
+app.include_router(public.router, prefix="/api/v1")
 
 
 @app.get("/health")

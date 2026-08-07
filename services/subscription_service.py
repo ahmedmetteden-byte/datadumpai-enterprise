@@ -23,21 +23,33 @@ class SubscriptionService:
     STATUS_CANCELED = "canceled"
     STATUS_EXPIRED = "expired"
 
-    def __init__(self, *, current_user: CurrentUser | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        current_user: CurrentUser | None = None,
+        access_token: str | None = None,
+    ) -> None:
         self._current_user = current_user or require_current_user()
         self._user_id = self._current_user.id
-        self._repository = get_usage_repository(default=self._default_state())
+        self._access_token = access_token
+        self._repository = get_usage_repository(
+            default=self._default_state(), access_token=access_token
+        )
 
     @classmethod
-    def for_user_id(cls, user_id: str) -> SubscriptionService:
-        """Internal: admin operations only."""
+    def for_user_id(
+        cls, user_id: str, *, use_service_role: bool = False
+    ) -> SubscriptionService:
+        """Internal: admin/webhook operations only."""
 
         instance = cls.__new__(cls)
         instance._user_id = user_id
         instance._current_user = CurrentUser(id=user_id, email="")
+        instance._access_token = None
         instance._repository = get_usage_repository_for_user(
             user_id,
             default=cls._default_state(),
+            use_service_role=use_service_role,
         )
         return instance
 

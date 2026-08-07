@@ -66,10 +66,14 @@ async def stripe_webhook(request: Request) -> dict[str, str]:
         subscription_id = data_object.get("id")
         user_id = (data_object.get("metadata") or {}).get("user_id")
         if not user_id:
-            user_id = find_user_id_by_subscription_id(subscription_id)
+            user_id = find_user_id_by_subscription_id(
+                subscription_id, use_service_role=True
+            )
 
         if user_id:
-            subscription = SubscriptionService.for_user_id(user_id)
+            subscription = SubscriptionService.for_user_id(
+                user_id, use_service_role=True
+            )
             status = data_object.get("status")
             if status == "active":
                 plan_id = (data_object.get("metadata") or {}).get("plan_id")
@@ -94,9 +98,11 @@ async def stripe_webhook(request: Request) -> dict[str, str]:
 
     elif event_type == "invoice.payment_failed":
         customer_id = data_object.get("customer")
-        user_id = find_user_id_by_customer_id(customer_id)
+        user_id = find_user_id_by_customer_id(customer_id, use_service_role=True)
         if user_id:
-            SubscriptionService.for_user_id(user_id).mark_payment_failed()
+            SubscriptionService.for_user_id(
+                user_id, use_service_role=True
+            ).mark_payment_failed()
             try:
                 from services.notification_service import NotificationService
 
@@ -145,8 +151,10 @@ async def paystack_webhook(request: Request) -> dict[str, str]:
 
     elif event_type in {"subscription.disable", "subscription.not_renew"}:
         customer_id = str((data.get("customer") or {}).get("id") or "")
-        user_id = find_user_id_by_customer_id(customer_id)
+        user_id = find_user_id_by_customer_id(customer_id, use_service_role=True)
         if user_id:
-            SubscriptionService.for_user_id(user_id).mark_canceled(at_period_end=False)
+            SubscriptionService.for_user_id(
+                user_id, use_service_role=True
+            ).mark_canceled(at_period_end=False)
 
     return {"received": "true"}

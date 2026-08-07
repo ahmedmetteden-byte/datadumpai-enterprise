@@ -71,11 +71,16 @@ class UsageService:
         *,
         storage_path: str | None = None,
         current_user: CurrentUser | None = None,
+        access_token: str | None = None,
     ) -> None:
         self._current_user = current_user or require_current_user()
         self._user_id = self._current_user.id
-        self._repository = get_usage_repository(default=self._default_state())
-        self._subscription = SubscriptionService(current_user=self._current_user)
+        self._repository = get_usage_repository(
+            default=self._default_state(), access_token=access_token
+        )
+        self._subscription = SubscriptionService(
+            current_user=self._current_user, access_token=access_token
+        )
 
     @staticmethod
     def _default_state() -> dict:

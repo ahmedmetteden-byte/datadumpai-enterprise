@@ -1,6 +1,10 @@
 import { isMockApiEnabled } from '@/api/config';
 import type { ServiceContainer } from '@/api/services/contracts';
 import { HttpAIService, MockAIService } from '@/api/services/AIService';
+import {
+  HttpBillingService,
+  MockBillingService,
+} from '@/api/services/BillingService';
 import { HttpHomeService, MockHomeService } from '@/api/services/HomeService';
 import {
   HttpIntelligenceService,
@@ -48,6 +52,7 @@ export function createServices(): ServiceContainer {
       intelligence,
       home: new MockHomeService(workspace, knowledge, report, ai),
       profile,
+      billing: new MockBillingService(),
     };
   }
 
@@ -60,6 +65,7 @@ export function createServices(): ServiceContainer {
     ai: new HttpAIService(),
     intelligence: new HttpIntelligenceService(),
     profile,
+    billing: new HttpBillingService(),
   };
 }
 

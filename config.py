@@ -256,6 +256,9 @@ AUTH_REDIRECT_URL = os.getenv(
     "http://localhost:8501/?active_page=auth",
 ).strip()
 
+# Base URL of the React SPA — used to build the billing return page URL below.
+APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:5173").strip()
+
 # deployment environment: development | staging | production
 ENVIRONMENT = os.getenv("ENVIRONMENT", "production").strip().lower()
 
@@ -749,8 +752,12 @@ PAYSTACK_SECRET_KEY = os.getenv("PAYSTACK_SECRET_KEY", "").strip()
 PAYSTACK_STARTER_PLAN_CODE = os.getenv("PAYSTACK_STARTER_PLAN_CODE", "").strip()
 PAYSTACK_PROFESSIONAL_PLAN_CODE = os.getenv("PAYSTACK_PROFESSIONAL_PLAN_CODE", "").strip()
 
-BILLING_SUCCESS_URL = os.getenv("BILLING_SUCCESS_URL", AUTH_REDIRECT_URL).strip()
-BILLING_CANCEL_URL = os.getenv("BILLING_CANCEL_URL", AUTH_REDIRECT_URL).strip()
+BILLING_SUCCESS_URL = os.getenv(
+    "BILLING_SUCCESS_URL", f"{APP_BASE_URL}/billing/return"
+).strip()
+BILLING_CANCEL_URL = os.getenv(
+    "BILLING_CANCEL_URL", f"{APP_BASE_URL}/billing/return"
+).strip()
 BILLING_WEBHOOK_BASE_URL = os.getenv("BILLING_WEBHOOK_BASE_URL", "http://localhost:8000").strip()
 
 # Fallback amounts when price IDs / plan codes are not configured (USD cents / NGN kobo)

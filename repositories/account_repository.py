@@ -9,7 +9,7 @@ from typing import Any
 import config
 from config import DEFAULT_PLAN
 from core.current_user import require_current_user
-from core.database import get_database_client, handle_response
+from core.database import get_database_client, get_service_role_client, handle_response
 from core.user_paths import get_user_profile_json, get_user_usage_json
 from repositories.billing_repository import merge_billing_fields
 from storage.dict_storage import DictStorage
@@ -27,10 +27,21 @@ class JsonUsageRepository:
 
 
 class SupabaseUsageRepository:
-    def __init__(self, user_id: str, *, default: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        user_id: str,
+        *,
+        default: dict[str, Any],
+        access_token: str | None = None,
+        use_service_role: bool = False,
+    ) -> None:
         self._user_id = user_id
         self._default = default
-        self._client = get_database_client()
+        self._client = (
+            get_service_role_client()
+            if use_service_role
+            else get_database_client(access_token=access_token)
+        )
 
     def load(self) -> dict[str, Any]:
         response = handle_response(
@@ -167,11 +178,22 @@ class SupabaseProfileRepository:
         )
 
 
-def get_usage_repository_for_user(user_id: str, *, default: dict[str, Any]):
+def get_usage_repository_for_user(
+    user_id: str,
+    *,
+    default: dict[str, Any],
+    access_token: str | None = None,
+    use_service_role: bool = False,
+):
     """Internal: load usage for an explicit user (admin tooling only)."""
 
     if config.use_database():
-        return SupabaseUsageRepository(user_id, default=default)
+        return SupabaseUsageRepository(
+            user_id,
+            default=default,
+            access_token=access_token,
+            use_service_role=use_service_role,
+        )
     return JsonUsageRepository(user_id, default=default)
 
 
@@ -187,9 +209,11 @@ def get_profile_repository_for_user(
     return JsonProfileRepository(user_id, default=default)
 
 
-def get_usage_repository(*, default: dict[str, Any]):
+def get_usage_repository(*, default: dict[str, Any], access_token: str | None = None):
     user_id = require_current_user().id
-    return get_usage_repository_for_user(user_id, default=default)
+    return get_usage_repository_for_user(
+        user_id, default=default, access_token=access_token
+    )
 
 
 def get_profile_repository(

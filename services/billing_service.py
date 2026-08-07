@@ -29,10 +29,13 @@ PaymentProvider = Literal["stripe", "paystack"]
 class BillingService:
     """Checkout, portal, and subscription activation for the active user."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, access_token: str | None = None) -> None:
         self._current_user = require_current_user()
         self._user_id = self._current_user.id
-        self._subscription = SubscriptionService()
+        self._access_token = access_token
+        self._subscription = SubscriptionService(
+            current_user=self._current_user, access_token=access_token
+        )
 
     @staticmethod
     def is_enabled() -> bool:
@@ -126,10 +129,14 @@ class BillingService:
         return self._subscription.get_billing_summary()
 
 
-def activate_subscription_for_user(user_id: str, payload: dict) -> dict:
+def activate_subscription_for_user(
+    user_id: str, payload: dict, *, use_service_role: bool = True
+) -> dict:
     """Webhook helper — activate plan for a specific user."""
 
-    subscription = SubscriptionService.for_user_id(user_id)
+    subscription = SubscriptionService.for_user_id(
+        user_id, use_service_role=use_service_role
+    )
     return subscription.activate_paid_plan(
         payload["plan_id"],
         provider=payload["provider"],

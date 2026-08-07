@@ -37,6 +37,12 @@ import type {
   KnowledgeUploadInput,
 } from '@/types/knowledge';
 import type { ServiceAuth } from '@/api/config';
+import type {
+  BillingSummary,
+  CompleteCheckoutInput,
+  Plan,
+  StartCheckoutInput,
+} from '@/types/billing';
 
 export interface HomeService {
   /** Aggregate Home DTO — maps to GET /api/v1/home */
@@ -295,6 +301,21 @@ export interface ProfileService {
   ): Promise<import('@/types/auth').OrganisationMembership[]>;
 }
 
+export interface BillingService {
+  listPlans(auth?: ServiceAuth): Promise<Plan[]>;
+  getSummary(auth?: ServiceAuth): Promise<BillingSummary>;
+  startCheckout(
+    input: StartCheckoutInput,
+    auth?: ServiceAuth,
+  ): Promise<{ checkoutUrl: string }>;
+  completeCheckout(
+    input: CompleteCheckoutInput,
+    auth?: ServiceAuth,
+  ): Promise<BillingSummary>;
+  openPortal(auth?: ServiceAuth): Promise<{ portalUrl: string }>;
+  cancelAtPeriodEnd(auth?: ServiceAuth): Promise<BillingSummary>;
+}
+
 export interface ServiceContainer {
   home: HomeService;
   workspace: WorkspaceService;
@@ -304,4 +325,5 @@ export interface ServiceContainer {
   ai: AIService;
   intelligence: IntelligenceService;
   profile: ProfileService;
+  billing: BillingService;
 }
