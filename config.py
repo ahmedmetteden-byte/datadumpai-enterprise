@@ -767,15 +767,21 @@ BILLING_CANCEL_URL = os.getenv(
 ).strip()
 BILLING_WEBHOOK_BASE_URL = os.getenv("BILLING_WEBHOOK_BASE_URL", "http://localhost:8000").strip()
 
-# Fallback amounts when price IDs / plan codes are not configured (USD cents / NGN kobo)
+# Fallback amounts when price IDs / plan codes are not configured (USD cents /
+# NGN kobo). NOTE: once a PAYSTACK_*_PLAN_CODE is configured, Paystack charges
+# (both the first transaction and every renewal) use the amount stored on the
+# Plan itself, not this value — this must stay in sync with whatever the Plan
+# was last updated to via Paystack's Update Plan API, or the two will drift.
+# NGN figures are a rounded snapshot (~₦1,362/$1 as of Aug 2026), not a live
+# FX conversion — revisit periodically.
 PLAN_PRICES = {
     "starter": {
         "stripe_amount_cents": int(os.getenv("STRIPE_STARTER_AMOUNT_CENTS", "1500")),
-        "paystack_amount_kobo": int(os.getenv("PAYSTACK_STARTER_AMOUNT_KOBO", "1500000")),
+        "paystack_amount_kobo": int(os.getenv("PAYSTACK_STARTER_AMOUNT_KOBO", "2100000")),
     },
     "professional": {
         "stripe_amount_cents": int(os.getenv("STRIPE_PROFESSIONAL_AMOUNT_CENTS", "3900")),
-        "paystack_amount_kobo": int(os.getenv("PAYSTACK_PROFESSIONAL_AMOUNT_KOBO", "3900000")),
+        "paystack_amount_kobo": int(os.getenv("PAYSTACK_PROFESSIONAL_AMOUNT_KOBO", "5400000")),
     },
 }
 
