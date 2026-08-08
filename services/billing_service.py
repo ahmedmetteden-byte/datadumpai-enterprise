@@ -16,9 +16,7 @@ from services.paystack_billing_service import (
 from services.stripe_billing_service import (
     StripeBillingError,
     cancel_subscription_at_period_end,
-    create_checkout_session,
     create_customer_portal_session,
-    verify_checkout_session,
 )
 from services.subscription_service import SubscriptionService
 
@@ -38,18 +36,18 @@ class BillingService:
 
     @staticmethod
     def is_enabled() -> bool:
-        return config.PAYMENTS_ENABLED and (
-            config.is_stripe_configured() or config.is_paystack_configured()
-        )
+        return config.PAYMENTS_ENABLED and config.is_paystack_configured()
 
     @staticmethod
     def available_providers() -> list[PaymentProvider]:
-        providers: list[PaymentProvider] = []
-        if config.is_stripe_configured():
-            providers.append("stripe")
+        # Stripe is never offered, regardless of whether STRIPE_SECRET_KEY
+        # happens to hold a value in the environment (e.g. a leftover
+        # placeholder) — Stripe cannot be used by this account (business is
+        # registered in Nigeria, which Stripe does not support), so it must
+        # never be selectable, not just hidden when properly configured.
         if config.is_paystack_configured():
-            providers.append("paystack")
-        return providers
+            return ["paystack"]
+        return []
 
     def _user_email(self) -> str:
         if not self._current_user.email:
@@ -61,15 +59,14 @@ class BillingService:
         if plan not in config.BILLABLE_PLANS:
             raise ValueError(f"Plan {plan_id!r} cannot be purchased online")
 
-        email = self._user_email()
-
+        # Reject "stripe" outright rather than attempting the Stripe call —
+        # it must never be reachable here even if a stale/placeholder
+        # STRIPE_SECRET_KEY makes is_stripe_configured() look true. See
+        # available_providers() for why.
         if provider == "stripe":
-            return create_checkout_session(
-                user_id=self._user_id,
-                email=email,
-                plan_id=plan,
-            )
+            raise ValueError("Stripe checkout is not available for this account.")
 
+        email = self._user_email()
         return paystack_initialize(
             user_id=self._user_id,
             email=email,
@@ -84,13 +81,10 @@ class BillingService:
         reference: str | None = None,
     ) -> dict:
         if provider == "stripe":
-            if not session_id:
-                raise ValueError("session_id is required for Stripe checkout")
-            payload = verify_checkout_session(session_id)
-        else:
-            if not reference:
-                raise ValueError("reference is required for Paystack checkout")
-            payload = paystack_verify(reference)
+            raise ValueError("Stripe checkout is not available for this account.")
+        if not reference:
+            raise ValueError("reference is required for Paystack checkout")
+        payload = paystack_verify(reference)
 
         if payload.get("user_id") and payload["user_id"] != self._user_id:
             raise ValueError("Checkout session does not belong to the current user")

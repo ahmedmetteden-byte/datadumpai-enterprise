@@ -31,9 +31,9 @@ def principal() -> AuthenticatedPrincipal:
 @pytest.fixture
 def billing_env(isolated_env, monkeypatch):
     monkeypatch.setenv("PAYMENTS_ENABLED", "true")
-    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_example")
+    monkeypatch.setenv("PAYSTACK_SECRET_KEY", "sk_test_paystack")
     monkeypatch.setattr("config.PAYMENTS_ENABLED", True)
-    monkeypatch.setattr("config.STRIPE_SECRET_KEY", "sk_test_example")
+    monkeypatch.setattr("config.PAYSTACK_SECRET_KEY", "sk_test_paystack")
     return isolated_env
 
 
@@ -69,19 +69,39 @@ def test_start_checkout_unconfigured_provider_errors(isolated_env, principal):
     assert exc_info.value.status_code == 400
 
 
+def test_start_checkout_rejects_stripe_even_when_configured(
+    billing_env, principal, monkeypatch
+):
+    """Stripe must never be reachable, regardless of what's in
+    STRIPE_SECRET_KEY — see billing_service.available_providers()."""
+
+    monkeypatch.setattr("config.is_stripe_configured", lambda: True)
+
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc_info:
+        start_checkout(
+            StartCheckoutBody(plan_id="starter", provider="stripe"),
+            principal,
+            TEST_USER,
+        )
+    assert exc_info.value.status_code == 400
+    assert "Stripe checkout is not available" in exc_info.value.detail
+
+
 def test_start_checkout_happy_path(billing_env, principal, monkeypatch):
     monkeypatch.setattr(
-        "services.billing_service.create_checkout_session",
-        lambda **kwargs: "https://checkout.stripe.test/session",
+        "services.billing_service.paystack_initialize",
+        lambda **kwargs: "https://checkout.paystack.test/session",
     )
 
     result = start_checkout(
-        StartCheckoutBody(plan_id="starter", provider="stripe"),
+        StartCheckoutBody(plan_id="starter", provider="paystack"),
         principal,
         TEST_USER,
     )
 
-    assert result.checkout_url == "https://checkout.stripe.test/session"
+    assert result.checkout_url == "https://checkout.paystack.test/session"
 
 
 def test_start_checkout_succeeds_without_streamlit_session(
@@ -99,42 +119,42 @@ def test_start_checkout_succeeds_without_streamlit_session(
 
     monkeypatch.setattr("core.auth.get_current_user", lambda: None)
     monkeypatch.setattr(
-        "services.billing_service.create_checkout_session",
-        lambda **kwargs: "https://checkout.stripe.test/session",
+        "services.billing_service.paystack_initialize",
+        lambda **kwargs: "https://checkout.paystack.test/session",
     )
 
     result = start_checkout(
-        StartCheckoutBody(plan_id="starter", provider="stripe"),
+        StartCheckoutBody(plan_id="starter", provider="paystack"),
         principal,
         TEST_USER,
     )
 
-    assert result.checkout_url == "https://checkout.stripe.test/session"
+    assert result.checkout_url == "https://checkout.paystack.test/session"
 
 
 def test_complete_checkout_happy_path(billing_env, principal, monkeypatch):
     payload = {
         "user_id": TEST_USER.id,
         "plan_id": "starter",
-        "provider": "stripe",
+        "provider": "paystack",
         "customer_id": "cus_abc",
         "subscription_id": "sub_def",
-        "reference": "cs_test",
+        "reference": "ref_test",
         "current_period_end": "2026-08-09T00:00:00+00:00",
     }
     monkeypatch.setattr(
-        "services.billing_service.verify_checkout_session",
-        lambda session_id: payload,
+        "services.billing_service.paystack_verify",
+        lambda reference: payload,
     )
 
     summary = complete_checkout(
-        CompleteCheckoutBody(provider="stripe", session_id="cs_test"),
+        CompleteCheckoutBody(provider="paystack", reference="ref_test"),
         principal,
         TEST_USER,
     )
 
     assert summary.billing_plan == "starter"
-    assert summary.payment_provider == "stripe"
+    assert summary.payment_provider == "paystack"
     assert summary.enabled is True
 
 

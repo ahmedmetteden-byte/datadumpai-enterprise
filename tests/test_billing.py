@@ -43,34 +43,46 @@ def test_activate_paid_plan_persists_billing_fields(isolated_env):
     assert reloaded["current_period_end"] == "2026-08-09T00:00:00+00:00"
 
 
-def test_billing_service_stripe_checkout_url(billing_env, monkeypatch):
+def test_billing_service_rejects_stripe_checkout(billing_env):
+    """Stripe must never be reachable via BillingService, even if requested
+    explicitly — see available_providers()'s docstring for why: it's not
+    just hidden, it's rejected regardless of STRIPE_SECRET_KEY."""
+
+    with pytest.raises(ValueError, match="Stripe checkout is not available"):
+        BillingService().start_checkout("professional", provider="stripe")
+
+    with pytest.raises(ValueError, match="Stripe checkout is not available"):
+        BillingService().complete_checkout(provider="stripe", session_id="cs_test")
+
+
+def test_billing_service_paystack_checkout_url(billing_env, monkeypatch):
     monkeypatch.setattr(
-        "services.billing_service.create_checkout_session",
-        lambda **kwargs: "https://checkout.stripe.test/session",
+        "services.billing_service.paystack_initialize",
+        lambda **kwargs: "https://checkout.paystack.test/session",
     )
 
-    url = BillingService().start_checkout("professional", provider="stripe")
-    assert url == "https://checkout.stripe.test/session"
+    url = BillingService().start_checkout("professional", provider="paystack")
+    assert url == "https://checkout.paystack.test/session"
 
 
-def test_billing_service_complete_stripe_checkout(billing_env, monkeypatch):
+def test_billing_service_complete_paystack_checkout(billing_env, monkeypatch):
     payload = {
         "user_id": TEST_USER_ID,
         "plan_id": "starter",
-        "provider": "stripe",
+        "provider": "paystack",
         "customer_id": "cus_abc",
         "subscription_id": "sub_def",
-        "reference": "cs_test",
+        "reference": "ref_test",
         "current_period_end": "2026-08-09T00:00:00+00:00",
     }
     monkeypatch.setattr(
-        "services.billing_service.verify_checkout_session",
-        lambda session_id: payload,
+        "services.billing_service.paystack_verify",
+        lambda reference: payload,
     )
 
     state = BillingService().complete_checkout(
-        provider="stripe",
-        session_id="cs_test",
+        provider="paystack",
+        reference="ref_test",
     )
     assert state["billing_plan"] == "starter"
     assert state["payment_customer_id"] == "cus_abc"
@@ -78,18 +90,18 @@ def test_billing_service_complete_stripe_checkout(billing_env, monkeypatch):
 
 def test_billing_service_rejects_foreign_checkout(billing_env, monkeypatch):
     monkeypatch.setattr(
-        "services.billing_service.verify_checkout_session",
-        lambda session_id: {
+        "services.billing_service.paystack_verify",
+        lambda reference: {
             "user_id": "other-user",
             "plan_id": "starter",
-            "provider": "stripe",
+            "provider": "paystack",
         },
     )
 
     with pytest.raises(ValueError, match="does not belong"):
         BillingService().complete_checkout(
-            provider="stripe",
-            session_id="cs_test",
+            provider="paystack",
+            reference="ref_test",
         )
 
 
