@@ -45,6 +45,48 @@ def _plan_code(plan_id: str) -> str:
     return ""
 
 
+def _call_paystack(
+    method: str, path: str, *, json_body: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Call a Paystack endpoint and return its `data` payload.
+
+    Wraps every failure mode — network errors, timeouts, non-2xx statuses,
+    and malformed/empty response bodies — in PaystackBillingError, so a
+    Paystack-side hiccup surfaces as a clean checkout error instead of an
+    unhandled exception leaking through the API as a raw 500.
+    """
+
+    try:
+        response = requests.request(
+            method,
+            f"{PAYSTACK_BASE_URL}{path}",
+            json=json_body,
+            headers=_headers(),
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        raise PaystackBillingError(
+            "Could not reach Paystack. Please try again."
+        ) from exc
+
+    try:
+        body = response.json()
+    except ValueError as exc:
+        raise PaystackBillingError(
+            "Paystack returned an unexpected response. Please try again."
+        ) from exc
+
+    if not response.ok or not body.get("status"):
+        message = body.get("message", "Paystack request failed")
+        raise PaystackBillingError(message)
+
+    data = body.get("data")
+    if not isinstance(data, dict):
+        raise PaystackBillingError("Paystack response was missing expected data.")
+
+    return data
+
+
 def initialize_transaction(
     *,
     user_id: str,
@@ -81,18 +123,7 @@ def initialize_transaction(
     if plan_code:
         payload["plan"] = plan_code
 
-    response = requests.post(
-        f"{PAYSTACK_BASE_URL}/transaction/initialize",
-        json=payload,
-        headers=_headers(),
-        timeout=30,
-    )
-    body = response.json()
-    if not response.ok or not body.get("status"):
-        message = body.get("message", "Paystack initialization failed")
-        raise PaystackBillingError(message)
-
-    data = body["data"]
+    data = _call_paystack("POST", "/transaction/initialize", json_body=payload)
     authorization_url = data.get("authorization_url")
     if not authorization_url:
         raise PaystackBillingError("Paystack did not return an authorization URL")
@@ -102,17 +133,7 @@ def initialize_transaction(
 def verify_transaction(reference: str) -> dict[str, Any]:
     """Verify a Paystack transaction and return activation payload."""
 
-    response = requests.get(
-        f"{PAYSTACK_BASE_URL}/transaction/verify/{reference}",
-        headers=_headers(),
-        timeout=30,
-    )
-    body = response.json()
-    if not response.ok or not body.get("status"):
-        message = body.get("message", "Paystack verification failed")
-        raise PaystackBillingError(message)
-
-    data = body["data"]
+    data = _call_paystack("GET", f"/transaction/verify/{reference}")
     if data.get("status") != "success":
         raise PaystackBillingError("Paystack payment was not successful")
 

@@ -63,6 +63,13 @@ export function UpgradeModal({
     >
       <p className="mb-4 text-small text-ink-muted">{plan.tagline}</p>
 
+      {provider ? (
+        <p className="mb-4 text-small text-ink-muted">
+          <span className="font-medium text-ink">{UI_COPY.billingProviderLabel}:</span>{' '}
+          Paystack
+        </p>
+      ) : null}
+
       {error ? (
         <InlineRequestStatus className="mt-3" kind="error" message={error} />
       ) : null}
