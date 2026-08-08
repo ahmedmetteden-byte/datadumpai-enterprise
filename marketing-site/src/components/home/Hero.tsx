@@ -68,7 +68,7 @@ export function Hero() {
               </LaunchAppButton>
             </div>
             <p className="mt-4 text-sm text-ink-muted">
-              14-day Professional trial &middot; No credit card required
+              Free plan: 5 reports &amp; 10 uploads a month &middot; No credit card required
             </p>
           </div>
 

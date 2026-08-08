@@ -71,18 +71,6 @@ export function BillingPage() {
       });
   }
 
-  async function handlePortal() {
-    try {
-      const { portalUrl } = await feedback.run(
-        () => services.billing.openPortal({ accessToken }),
-        { loading: UI_COPY.requestLoading, error: UI_COPY.billingPortalError },
-      );
-      window.location.href = portalUrl;
-    } catch {
-      /* Error toast includes Retry */
-    }
-  }
-
   return (
     <div className="mx-auto max-w-3xl space-y-6 animate-fade-in">
       <div>
@@ -183,11 +171,6 @@ export function BillingPage() {
         <section className="rounded-xl border border-surface-border bg-white p-6 shadow-sm">
           <h2 className="text-section text-ink">{UI_COPY.billingManageTitle}</h2>
           <div className="mt-4 flex flex-wrap gap-3">
-            {data.paymentProvider === 'stripe' ? (
-              <Button variant="secondary" onClick={() => void handlePortal()}>
-                {UI_COPY.billingOpenPortal}
-              </Button>
-            ) : null}
             {!data.cancelAtPeriodEnd ? (
               <Button variant="ghost" onClick={() => void handleCancel()}>
                 {UI_COPY.billingCancelButton}

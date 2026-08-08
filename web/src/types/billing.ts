@@ -1,6 +1,6 @@
 export type PlanId = 'free' | 'starter' | 'professional' | 'enterprise';
 
-export type PaymentProvider = 'stripe' | 'paystack';
+export type PaymentProvider = 'paystack';
 
 export interface Plan {
   id: PlanId;

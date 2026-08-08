@@ -86,7 +86,7 @@ export function softwareApplicationJsonLd() {
       "@type": "Offer",
       price: "0",
       priceCurrency: "USD",
-      description: "Free trial with Professional features",
+      description: "Free plan with 5 reports and 10 uploads a month",
     },
     publisher: {
       "@type": "Organization",

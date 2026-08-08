@@ -8,7 +8,7 @@ import { PageHero, Section } from "@/components/ui/Section";
 export const metadata: Metadata = createMetadata({
   title: "Pricing",
   description:
-    "DataDumpAI pricing plans: Starter, Professional, and Enterprise. Start with a 14-day free trial.",
+    "DataDumpAI pricing plans: Starter, Professional, and Enterprise. Start free with 5 reports and 10 uploads a month.",
   path: "/pricing",
 });
 
@@ -50,7 +50,7 @@ export default function PricingPage() {
     <>
       <PageHero
         title="Simple, transparent pricing"
-        description="Choose the plan that fits your team. All plans include a 14-day Professional trial."
+        description="Choose the plan that fits your team. Start free with 5 reports and 10 uploads a month — upgrade anytime."
       />
       <Section>
         <div className="grid gap-8 lg:grid-cols-3">

@@ -305,7 +305,7 @@ export const DOC_CONTENT: Record<
     sections: [
       {
         heading: "1. Create your account",
-        body: "Sign up for a free trial at the application. No credit card required for the 14-day Professional trial.",
+        body: "Sign up for free at the application. No credit card required — the Free plan includes 5 reports and 10 uploads a month.",
       },
       {
         heading: "2. Create a project",
