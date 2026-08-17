@@ -9,6 +9,8 @@ from services.report_service import ReportService
 from services.spa_report_generation_service import (
     SpaReportGenerationService,
     _strip_wrapping_code_fence,
+    period_by_id,
+    template_by_id,
 )
 
 
@@ -86,6 +88,115 @@ def test_generate_without_instructions_omits_instructions_section(
     )
 
     assert "User Instructions" not in record["content"]
+
+
+def test_gather_sources_uses_retrieval_when_available(monkeypatch):
+    """When retrieve_grouped_sources returns real results, _gather_sources
+    must use them directly and never fall through to the whole-document
+    legacy path."""
+
+    monkeypatch.setattr(
+        "services.spa_report_generation_service.retrieve_grouped_sources",
+        lambda workspace_id, queries: [
+            {"filename": "retrieved.pdf", "excerpt": "Retrieved content"}
+        ],
+    )
+    svc = SpaReportGenerationService()
+    monkeypatch.setattr(
+        svc,
+        "_gather_sources_legacy",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("legacy should not run")),
+    )
+
+    sources = svc._gather_sources(
+        "ws1",
+        {"documents": [{"filename": "a.pdf"}]},
+        template=template_by_id("executive_summary"),
+        period=period_by_id("custom"),
+    )
+
+    assert sources == [{"filename": "retrieved.pdf", "excerpt": "Retrieved content"}]
+
+
+def test_gather_sources_falls_back_when_retrieval_raises(monkeypatch):
+    monkeypatch.setattr(
+        "services.spa_report_generation_service.retrieve_grouped_sources",
+        lambda workspace_id, queries: (_ for _ in ()).throw(RuntimeError("Qdrant unreachable")),
+    )
+    svc = SpaReportGenerationService()
+    sentinel = [{"filename": "legacy.pdf", "excerpt": "Legacy content"}]
+    monkeypatch.setattr(svc, "_gather_sources_legacy", lambda workspace_id, docs: sentinel)
+
+    sources = svc._gather_sources(
+        "ws1",
+        {"documents": [{"filename": "a.pdf"}]},
+        template=template_by_id("executive_summary"),
+        period=period_by_id("custom"),
+    )
+
+    assert sources == sentinel
+
+
+def test_gather_sources_falls_back_when_retrieval_returns_nothing(monkeypatch):
+    monkeypatch.setattr(
+        "services.spa_report_generation_service.retrieve_grouped_sources",
+        lambda workspace_id, queries: [],
+    )
+    svc = SpaReportGenerationService()
+    sentinel = [{"filename": "legacy.pdf", "excerpt": "Legacy content"}]
+    monkeypatch.setattr(svc, "_gather_sources_legacy", lambda workspace_id, docs: sentinel)
+
+    sources = svc._gather_sources(
+        "ws1",
+        {"documents": [{"filename": "a.pdf"}]},
+        template=template_by_id("executive_summary"),
+        period=period_by_id("custom"),
+    )
+
+    assert sources == sentinel
+
+
+def test_gather_sources_skips_retrieval_when_disabled(monkeypatch):
+    monkeypatch.setattr(
+        "services.spa_report_generation_service.REPORT_RETRIEVAL_ENABLED", False
+    )
+    monkeypatch.setattr(
+        "services.spa_report_generation_service.retrieve_grouped_sources",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("retrieval should not run when disabled")
+        ),
+    )
+    svc = SpaReportGenerationService()
+    sentinel = [{"filename": "legacy.pdf", "excerpt": "Legacy content"}]
+    monkeypatch.setattr(svc, "_gather_sources_legacy", lambda workspace_id, docs: sentinel)
+
+    sources = svc._gather_sources(
+        "ws1",
+        {"documents": [{"filename": "a.pdf"}]},
+        template=template_by_id("executive_summary"),
+        period=period_by_id("custom"),
+    )
+
+    assert sources == sentinel
+
+
+def test_gather_sources_returns_empty_immediately_for_zero_documents(monkeypatch):
+    monkeypatch.setattr(
+        "services.spa_report_generation_service.retrieve_grouped_sources",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("retrieval should not run with no documents")
+        ),
+    )
+    svc = SpaReportGenerationService()
+
+    sources = svc._gather_sources(
+        "ws1",
+        {"documents": []},
+        template=template_by_id("executive_summary"),
+        period=period_by_id("custom"),
+    )
+
+    assert sources == []
 
 
 def test_generated_report_is_retrievable_after_the_request_ends(

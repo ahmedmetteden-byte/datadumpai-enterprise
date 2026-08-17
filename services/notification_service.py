@@ -47,6 +47,10 @@ class NotificationService:
     def _recipient_email(self, email: str | None = None) -> str | None:
         if email:
             return email.strip()
+        if self._current_user.email:
+            return self._current_user.email
+        # Legacy Streamlit-only fallback (st.session_state-backed) — a no-op
+        # in the FastAPI/SPA request flow, kept only for the Streamlit app.
         user = get_current_user()
         if user and user.email:
             return user.email

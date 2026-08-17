@@ -15,11 +15,20 @@ from openai import OpenAI
 
 from models.report_data import ReportData
 from services.document_service import DocumentService
+from services.report_retrieval_service import build_facet_queries, retrieve_grouped_sources
 from services.report_service import ReportService
 
 logger = logging.getLogger(__name__)
 
 CHAT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
+
+# Kill switch: instant rollback to the whole-document fallback via config,
+# no deploy needed, if retrieval-based source selection is ever in question.
+REPORT_RETRIEVAL_ENABLED = os.getenv("REPORT_RETRIEVAL_ENABLED", "true").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+}
 
 TEMPLATES: list[dict[str, str]] = [
     {
@@ -106,10 +115,16 @@ class SpaReportGenerationService:
         api_key = os.getenv("OPENAI_API_KEY", "").strip()
         self._client = OpenAI(api_key=api_key) if api_key else None
 
-    def _gather_sources(
-        self, workspace_id: str, project: dict[str, Any]
+    def _gather_sources_legacy(
+        self, workspace_id: str, docs: list[dict[str, Any]]
     ) -> list[dict[str, str]]:
-        docs = list(project.get("documents") or [])
+        """Read each document's full text directly, in storage order, up to
+        a hard cap. This is the pre-retrieval behavior, kept verbatim as
+        the safety-net fallback for _gather_sources — used whenever
+        retrieval can't help (nothing indexed yet for this project, an
+        embedding/Qdrant failure, or REPORT_RETRIEVAL_ENABLED=false). It
+        can never make a report worse than before retrieval existed."""
+
         service = DocumentService(access_token=self._access_token)
         sources: list[dict[str, str]] = []
         for document in docs[:12]:
@@ -124,6 +139,39 @@ class SpaReportGenerationService:
                 continue
             sources.append({"filename": filename, "excerpt": _clip(text, 6000)})
         return sources
+
+    def _gather_sources(
+        self,
+        workspace_id: str,
+        project: dict[str, Any],
+        *,
+        template: dict[str, str],
+        period: dict[str, str],
+        instructions: str | None = None,
+    ) -> list[dict[str, str]]:
+        docs = list(project.get("documents") or [])
+        if not docs:
+            return []
+
+        if REPORT_RETRIEVAL_ENABLED:
+            try:
+                queries = build_facet_queries(
+                    template_name=template["name"],
+                    template_description=template.get("description", ""),
+                    period_name=period["name"],
+                    instructions=instructions,
+                )
+                sources = retrieve_grouped_sources(workspace_id, queries)
+                if sources:
+                    return sources
+            except Exception:
+                logger.exception(
+                    "Retrieval-based source gathering failed workspace=%s; "
+                    "falling back to whole-document read",
+                    workspace_id,
+                )
+
+        return self._gather_sources_legacy(workspace_id, docs)
 
     def _fallback_markdown(
         self,
@@ -300,7 +348,13 @@ class SpaReportGenerationService:
         period = period_by_id(period_id)
         workspace_name = str(project.get("name") or "Workspace")
         report_title = (title or "").strip() or f"{template['name']} — {period['name']}"
-        sources = self._gather_sources(workspace_id, project)
+        sources = self._gather_sources(
+            workspace_id,
+            project,
+            template=template,
+            period=period,
+            instructions=instructions,
+        )
         markdown = self._generate_markdown(
             title=report_title,
             period_name=period["name"],
