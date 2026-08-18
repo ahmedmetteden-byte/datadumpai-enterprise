@@ -13,12 +13,6 @@ from pathlib import Path
 import pytest
 
 from core.current_user import CurrentUser, bind_current_user
-from core.tenant_session import (
-    TENANT_DATA_KEYS,
-    TENANT_USER_KEY,
-    clear_tenant_session,
-    ensure_tenant_context,
-)
 from models.user import User
 from repositories.project_repository import ProjectRepository
 from services.document_service import DocumentService
@@ -45,16 +39,6 @@ USER_B = User(
     full_name="User B",
     email_verified=True,
 )
-
-
-class _SessionState(dict):
-    """Minimal Streamlit session_state stand-in for unit tests."""
-
-    def get(self, key, default=None):
-        return super().get(key, default)
-
-    def pop(self, key, default=None):
-        return super().pop(key, default)
 
 
 @pytest.fixture
@@ -120,7 +104,6 @@ def user_a_data(two_user_env, monkeypatch):
 
 def _as_user(monkeypatch, user: User) -> None:
     bind_current_user(user)
-    monkeypatch.setattr("core.auth.get_current_user", lambda: user)
 
 
 @pytest.fixture
@@ -289,51 +272,3 @@ def test_user_a_can_access_own_data(two_user_env, user_a_data, as_user_a):
     assert "User A Secret Report" in text
 
 
-def test_tenant_session_clears_on_user_switch(monkeypatch):
-    state = _SessionState(
-        {
-            TENANT_USER_KEY: USER_A_ID,
-            "projects": [{"id": "leaked-project", "name": "Leaked"}],
-            "selected_report": {"path": "/tmp/leaked.md", "name": "Leaked"},
-            "draft_report": {"content": "secret"},
-            "project_report_documents_abc": ["doc.pdf"],
-        }
-    )
-    monkeypatch.setattr("streamlit.session_state", state)
-
-    ensure_tenant_context(USER_B_ID)
-
-    assert state[TENANT_USER_KEY] == USER_B_ID
-    assert "projects" not in state
-    assert "selected_report" not in state
-    assert "draft_report" not in state
-    assert "project_report_documents_abc" not in state
-
-
-def test_clear_tenant_session_removes_workspace_keys(monkeypatch):
-    state = _SessionState({key: f"value-{key}" for key in TENANT_DATA_KEYS})
-    state[TENANT_USER_KEY] = USER_A_ID
-    state["project_report_documents_xyz"] = ["a.pdf"]
-    monkeypatch.setattr("streamlit.session_state", state)
-
-    clear_tenant_session()
-
-    for key in TENANT_DATA_KEYS:
-        assert key not in state
-    assert TENANT_USER_KEY not in state
-    assert "project_report_documents_xyz" not in state
-
-
-def test_set_active_workspace_rejects_foreign_project(
-    two_user_env,
-    user_a_data,
-    as_user_b,
-    monkeypatch,
-):
-    state = _SessionState()
-    monkeypatch.setattr("streamlit.session_state", state)
-
-    from ui.projects import set_active_workspace
-
-    with pytest.raises(ValueError, match="Workspace not found"):
-        set_active_workspace(user_a_data["project_id"])

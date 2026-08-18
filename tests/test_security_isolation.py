@@ -11,13 +11,6 @@ from pathlib import Path
 
 import pytest
 
-from core.tenant_session import (
-    TENANT_DATA_KEYS,
-    TENANT_KEY_PREFIXES,
-    TENANT_USER_KEY,
-    clear_tenant_session,
-    ensure_tenant_context,
-)
 from core.workspace_context import QUICK_REPORT_PROJECT_ID
 from models.user import User
 from core.current_user import CurrentUser, bind_current_user, current_user_scope
@@ -45,14 +38,6 @@ USER_B = User(
     full_name="User B",
     email_verified=True,
 )
-
-
-class _SessionState(dict):
-    def get(self, key, default=None):
-        return super().get(key, default)
-
-    def pop(self, key, default=None):
-        return super().pop(key, default)
 
 
 @pytest.fixture
@@ -89,7 +74,6 @@ def two_user_env(tmp_path, monkeypatch):
 
 def _as_user(monkeypatch, user: User) -> None:
     bind_current_user(user)
-    monkeypatch.setattr("core.auth.get_current_user", lambda: user)
 
 
 @pytest.fixture
@@ -153,93 +137,12 @@ def test_normalize_email_lowercases_and_trims():
 # --- Session lifecycle ---
 
 
-def test_session_reset_clears_ai_workspace_and_copilot_state(monkeypatch):
-    state = _SessionState(
-        {
-            TENANT_USER_KEY: USER_A_ID,
-            "ai_workspace_messages": [{"role": "user", "content": "secret"}],
-            "ai_workspace_prompt_input": "secret prompt",
-            "ai_workspace_setting_report_type": "Board Report",
-            "ai_workspace_excluded_workspace": ["doc.pdf"],
-            "ai_workspace_selected_workspace": ["doc.pdf"],
-            "copilot_web_sources": ["https://example.com"],
-            "copilot_notice": "secret",
-            "draft_report": {"report": {"narrative": "secret"}},
-            "selected_report": {"name": "secret"},
-            "notifications": [{"title": "secret"}],
-            "quick_report_documents": ["doc.pdf"],
-            "project_report_documents_abc": ["doc.pdf"],
-            "viewer_visual_insights_message": "done",
-        }
-    )
-    monkeypatch.setattr("streamlit.session_state", state)
-
-    ensure_tenant_context(USER_B_ID)
-
-    assert state[TENANT_USER_KEY] == USER_B_ID
-    assert "ai_workspace_messages" not in state
-    assert "draft_report" not in state
-    assert "selected_report" not in state
-    assert "copilot_web_sources" not in state
-    assert "notifications" not in state
-    assert "project_report_documents_abc" not in state
-    assert not any(key.startswith(prefix) for key in state for prefix in TENANT_KEY_PREFIXES)
-
-
-def test_clear_tenant_session_removes_all_tenant_keys(monkeypatch):
-    state = _SessionState({key: f"value-{key}" for key in TENANT_DATA_KEYS})
-    state[TENANT_USER_KEY] = USER_A_ID
-    state["ai_workspace_setting_tone"] = "Formal"
-    state["ai_workspace_excluded_workspace"] = ["a.pdf"]
-    monkeypatch.setattr("streamlit.session_state", state)
-
-    clear_tenant_session()
-
-    assert TENANT_USER_KEY not in state
-    for key in TENANT_DATA_KEYS:
-        assert key not in state
-    assert "ai_workspace_setting_tone" not in state
-    assert "ai_workspace_excluded_workspace" not in state
-
-
-def test_user_switch_scenario_user_b_starts_clean(
-    two_user_env,
-    user_a_workspace,
-    monkeypatch,
-):
-    state = _SessionState(
-        {
-            TENANT_USER_KEY: USER_A_ID,
-            "projects": [{"id": user_a_workspace["project_id"]}],
-            "ai_workspace_messages": [{"role": "user", "content": "Generate report"}],
-            "draft_report": {"report": {"narrative": "secret"}},
-            "selected_report": user_a_workspace["report"],
-            "quick_report_documents": ["quick_secret.txt"],
-        }
-    )
-    monkeypatch.setattr("streamlit.session_state", state)
-
-    ensure_tenant_context(USER_B_ID)
-    _as_user(monkeypatch, USER_B)
-
-    assert ProjectService().get_projects() == []
-    assert DocumentService().get_documents(QUICK_REPORT_PROJECT_ID) == []
-    assert ReportService.get_reports(QUICK_REPORT_PROJECT_ID) == []
-    assert "ai_workspace_messages" not in state
-    assert "draft_report" not in state
-    assert "selected_report" not in state
-
-
 def test_user_switch_scenario_user_a_data_restored_after_return(
     two_user_env,
     user_a_workspace,
     monkeypatch,
 ):
-    ensure_tenant_context(USER_A_ID)
     _as_user(monkeypatch, USER_B)
-    ensure_tenant_context(USER_B_ID)
-
-    ensure_tenant_context(USER_A_ID)
     _as_user(monkeypatch, USER_A)
 
     projects = ProjectService().get_projects()
@@ -303,65 +206,6 @@ def test_file_store_rejects_traversal_project_id(two_user_env, as_user_b):
         store.list_files("../secrets", "documents")
 
 
-def test_cached_report_session_not_visible_after_user_switch(
-    two_user_env,
-    user_a_workspace,
-    monkeypatch,
-):
-    state = _SessionState(
-        {
-            TENANT_USER_KEY: USER_A_ID,
-            "draft_report": {
-                "report": user_a_workspace["report"],
-                "workspace": {"id": user_a_workspace["project_id"]},
-            },
-            "selected_report": user_a_workspace["report"],
-        }
-    )
-    monkeypatch.setattr("streamlit.session_state", state)
-
-    ensure_tenant_context(USER_B_ID)
-
-    assert "draft_report" not in state
-    assert "selected_report" not in state
-
-
-def test_conversation_state_not_visible_after_user_switch(monkeypatch):
-    state = _SessionState(
-        {
-            TENANT_USER_KEY: USER_A_ID,
-            "ai_workspace_messages": [
-                {"role": "user", "content": "Summarize my confidential board pack"}
-            ],
-            "copilot_answer": "User A secret answer",
-            "copilot_sources": ["secret.txt"],
-        }
-    )
-    monkeypatch.setattr("streamlit.session_state", state)
-
-    ensure_tenant_context(USER_B_ID)
-
-    assert "ai_workspace_messages" not in state
-    assert "copilot_answer" not in state
-    assert "copilot_sources" not in state
-
-
-def test_visualization_cache_cleared_on_user_switch(monkeypatch):
-    state = _SessionState(
-        {
-            TENANT_USER_KEY: USER_A_ID,
-            "viewer_visual_insights_message": "charts ready",
-            "draft_visual_insights_message": "charts ready",
-        }
-    )
-    monkeypatch.setattr("streamlit.session_state", state)
-
-    clear_tenant_session()
-
-    assert "viewer_visual_insights_message" not in state
-    assert "draft_visual_insights_message" not in state
-
-
 def test_json_backend_isolation(two_user_env, user_a_workspace, as_user_b):
     user_a_root = two_user_env["root"] / USER_A_ID
     user_b_root = two_user_env["root"] / USER_B_ID
@@ -372,26 +216,6 @@ def test_json_backend_isolation(two_user_env, user_a_workspace, as_user_b):
     assert not (user_b_root / "projects.json").exists() or ProjectService().get_projects() == []
 
 
-def test_login_after_logout_clears_session(monkeypatch):
-    state = _SessionState(
-        {
-            TENANT_USER_KEY: USER_A_ID,
-            "projects": [{"id": "project-a"}],
-            "ai_workspace_messages": [{"role": "user", "content": "hello"}],
-        }
-    )
-    monkeypatch.setattr("streamlit.session_state", state)
-
-    clear_tenant_session()
-
-    assert TENANT_USER_KEY not in state
-    assert "projects" not in state
-    assert "ai_workspace_messages" not in state
-
-    ensure_tenant_context(USER_B_ID)
-    assert state[TENANT_USER_KEY] == USER_B_ID
-
-
 def test_require_current_user_fails_closed_when_unauthenticated(monkeypatch):
     from core.current_user import (
         AuthenticationRequiredError,
@@ -400,7 +224,6 @@ def test_require_current_user_fails_closed_when_unauthenticated(monkeypatch):
     )
 
     clear_current_user_binding()
-    monkeypatch.setattr("core.auth.get_current_user", lambda: None)
 
     with pytest.raises(AuthenticationRequiredError, match="Authentication is required"):
         require_current_user()

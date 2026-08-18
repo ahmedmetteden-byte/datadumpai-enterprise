@@ -11,7 +11,6 @@ import pytest
 
 import config
 from core.telemetry import get_recent_events, track
-from services.admin_service import AdminService
 from services.notification_service import NotificationService
 from services.profile_service import ProfileService
 from tests.conftest import TEST_USER, TEST_USER_ID
@@ -47,31 +46,6 @@ def test_notify_report_ready_skips_when_disabled(isolated_env, monkeypatch):
         email=TEST_USER.email,
     )
     assert result == "skipped"
-
-
-def test_is_admin_by_user_id(isolated_env, monkeypatch):
-    monkeypatch.setattr("config.ADMIN_USER_IDS", (TEST_USER_ID,))
-    from core.auth import is_admin
-
-    assert is_admin() is True
-
-
-def test_admin_lists_local_user(isolated_env, monkeypatch):
-    monkeypatch.setattr("config.ADMIN_USER_IDS", (TEST_USER_ID,))
-    ProfileService().save({"full_name": "Admin Tester"})
-
-    users = AdminService().list_users()
-    assert any(user["user_id"] == TEST_USER_ID for user in users)
-
-
-def test_admin_set_user_plan(isolated_env, monkeypatch):
-    monkeypatch.setattr("config.ADMIN_USER_IDS", (TEST_USER_ID,))
-    AdminService().set_user_plan(TEST_USER_ID, "starter", actor_user_id=TEST_USER_ID)
-
-    from services.subscription_service import SubscriptionService
-
-    state = SubscriptionService.for_user_id(TEST_USER_ID).load_state()
-    assert state["billing_plan"] == "starter"
 
 
 def test_telemetry_writes_local_events(tmp_path, monkeypatch):

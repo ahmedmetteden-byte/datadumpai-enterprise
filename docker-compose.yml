@@ -16,41 +16,6 @@ services:
     depends_on:
       - api
 
-  app:
-    build: .
-    env_file:
-      - .env
-    ports:
-      - "${STREAMLIT_PORT:-8501}:8501"
-    volumes:
-      - app_data:/app/data
-      - ./assets:/app/assets:ro
-      - ./static:/app/static
-      - ./app.py:/app/app.py:ro
-      - ./config.py:/app/config.py:ro
-      - ./core:/app/core:ro
-      - ./services:/app/services:ro
-      - ./ui:/app/ui:ro
-      - ./application:/app/application:ro
-      - ./models:/app/models:ro
-      - ./repositories:/app/repositories:ro
-      - ./storage:/app/storage:ro
-      - ./api:/app/api:ro
-      - ./.streamlit:/app/.streamlit:ro
-    restart: unless-stopped
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health')",
-        ]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 90s
-
   api:
     build: .
     env_file:
@@ -76,7 +41,6 @@ services:
       - ./storage:/app/storage:ro
       - ./core:/app/core:ro
       - ./models:/app/models:ro
-      - ./application:/app/application:ro
       - ./config.py:/app/config.py:ro
     depends_on:
       - qdrant

@@ -52,24 +52,16 @@ logger = logging.getLogger(__name__)
 
 
 def _trace(msg: str, *args: object) -> None:
-    from core.signup_trace import signup_trace_log
-
-    signup_trace_log(logger, msg, *args)
+    logger.info(msg, *args)
 
 
 def _trace_warn(msg: str, *args: object, **kwargs: object) -> None:
-    from core.signup_trace import append_signup_trace_line
-
     line = msg % args if args else msg
-    append_signup_trace_line(line)
     logger.warning(line, **kwargs)
 
 
 def _trace_exc(msg: str, *args: object) -> None:
-    from core.signup_trace import append_signup_trace_line
-
     line = msg % args if args else msg
-    append_signup_trace_line(line)
     logger.exception(line)
 
 
@@ -934,40 +926,33 @@ class AuthService:
     def exchange_auth_code(self, code: str) -> AuthSession:
         """Exchange a Supabase email link code for a session."""
 
-        from core.recovery_callback_trace import log_supabase_exchange
-
         client = self._require_client()
         assert client is not None
 
         try:
             response = client.auth.exchange_code_for_session({"auth_code": code})
         except AuthError as exc:
-            log_supabase_exchange(
-                operation="exchange_code_for_session",
-                branch="pkce",
-                success=False,
-                error=str(exc),
-                exception_type=type(exc).__name__,
+            logger.warning(
+                "supabase.exchange_code_for_session failed branch=pkce error=%s exception_type=%s",
+                exc,
+                type(exc).__name__,
             )
             raise
         except Exception as exc:
-            log_supabase_exchange(
-                operation="exchange_code_for_session",
-                branch="pkce",
-                success=False,
-                error=str(exc),
-                exception_type=type(exc).__name__,
+            logger.warning(
+                "supabase.exchange_code_for_session failed branch=pkce error=%s exception_type=%s",
+                exc,
+                type(exc).__name__,
             )
             raise AuthError("This link is invalid or has expired.") from exc
 
         session_returned = response.session is not None
         user_returned = response.user is not None
-        log_supabase_exchange(
-            operation="exchange_code_for_session",
-            branch="pkce",
-            success=session_returned and user_returned,
-            session_returned=session_returned,
-            user_returned=user_returned,
+        logger.info(
+            "supabase.exchange_code_for_session branch=pkce success=%s session_returned=%s user_returned=%s",
+            session_returned and user_returned,
+            session_returned,
+            user_returned,
         )
 
         if response.session is None or response.user is None:
@@ -987,8 +972,6 @@ class AuthService:
     def exchange_recovery_token_hash(self, token_hash: str) -> AuthSession:
         """Establish a recovery session from a Supabase email token hash."""
 
-        from core.recovery_callback_trace import log_supabase_exchange
-
         client = self._require_client()
         assert client is not None
 
@@ -1000,21 +983,17 @@ class AuthService:
                 }
             )
         except AuthError as exc:
-            log_supabase_exchange(
-                operation="verify_otp",
-                branch="otp",
-                success=False,
-                error=str(exc),
-                exception_type=type(exc).__name__,
+            logger.warning(
+                "supabase.verify_otp failed branch=otp error=%s exception_type=%s",
+                exc,
+                type(exc).__name__,
             )
             raise
         except Exception as exc:
-            log_supabase_exchange(
-                operation="verify_otp",
-                branch="otp",
-                success=False,
-                error=str(exc),
-                exception_type=type(exc).__name__,
+            logger.warning(
+                "supabase.verify_otp failed branch=otp error=%s exception_type=%s",
+                exc,
+                type(exc).__name__,
             )
             raise AuthError(
                 "This password reset link is invalid or has expired."
@@ -1022,12 +1001,11 @@ class AuthService:
 
         session_returned = response.session is not None
         user_returned = response.user is not None
-        log_supabase_exchange(
-            operation="verify_otp",
-            branch="otp",
-            success=session_returned and user_returned,
-            session_returned=session_returned,
-            user_returned=user_returned,
+        logger.info(
+            "supabase.verify_otp branch=otp success=%s session_returned=%s user_returned=%s",
+            session_returned and user_returned,
+            session_returned,
+            user_returned,
         )
 
         if response.session is None or response.user is None:

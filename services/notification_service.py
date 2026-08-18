@@ -49,9 +49,8 @@ class NotificationService:
         if self._current_user.email:
             return self._current_user.email
         # self._current_user is resolved via require_current_user(), which
-        # already bridges to the Streamlit session when running there — a
-        # second, direct core.auth call here would just re-derive the same
-        # user and was dead weight, not an additional fallback.
+        # already fully resolves the authenticated user — a second lookup
+        # here would just re-derive the same value.
         profile_email = (self._profile.load().get("email") or "").strip()
         return profile_email or None
 

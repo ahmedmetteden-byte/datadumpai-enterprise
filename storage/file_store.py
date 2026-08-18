@@ -59,12 +59,7 @@ class FileStore:
 
     @classmethod
     def for_current_user(cls, *, access_token: str | None = None) -> FileStore:
-        token = access_token
-        if token is None:
-            from core.auth import get_access_token
-
-            token = get_access_token()
-        return cls(require_current_user(), access_token=token)
+        return cls(require_current_user(), access_token=access_token)
 
     @staticmethod
     def _resolve_backend() -> str:

@@ -56,31 +56,15 @@ def require_current_user() -> CurrentUser:
     if override is not None:
         return override
 
-    from core.auth import get_current_user
-
-    user = get_current_user()
-    if user is None:
-        raise AuthenticationRequiredError(
-            "Authentication is required to access this resource."
-        )
-
-    return CurrentUser.from_user(user)
+    raise AuthenticationRequiredError(
+        "Authentication is required to access this resource."
+    )
 
 
 def get_current_user_optional() -> CurrentUser | None:
     """Return the authenticated user when present, otherwise ``None``."""
 
-    override = _current_user_override.get()
-    if override is not None:
-        return override
-
-    from core.auth import get_current_user
-
-    user = get_current_user()
-    if user is None:
-        return None
-
-    return CurrentUser.from_user(user)
+    return _current_user_override.get()
 
 
 def current_user_id() -> str:
