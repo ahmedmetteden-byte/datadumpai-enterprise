@@ -74,4 +74,4 @@ Automatic on every push to `main` via `.github/workflows/deploy.yml` — a pre-d
 
 ## License
 
-`LICENSE.txt` at the repo root is currently the vendored license from a bundled third-party tool, not a license for this project — worth resolving separately before treating this repo as licensed under it.
+Proprietary. All rights reserved — see [LICENSE.txt](./LICENSE.txt).
