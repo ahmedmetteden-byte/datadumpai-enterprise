@@ -153,14 +153,14 @@ jobs:
               echo "=== docker compose ps ==="
               docker compose -f "$APP_DIR/docker-compose.yml" ps || true
               echo ""
-              echo "=== app logs (last 200 lines) ==="
-              docker compose -f "$APP_DIR/docker-compose.yml" logs --tail 200 app || true
+              echo "=== api logs (last 200 lines) ==="
+              docker compose -f "$APP_DIR/docker-compose.yml" logs --tail 200 api || true
               echo ""
               echo "=== webhooks logs (last 200 lines) ==="
               docker compose -f "$APP_DIR/docker-compose.yml" logs --tail 200 webhooks || true
               echo ""
               echo "=== health probes ==="
-              curl -fsS --max-time 10 http://127.0.0.1:8501/_stcore/health || echo "Streamlit health probe failed"
+              curl -fsS --max-time 10 http://127.0.0.1:8000/health || echo "API health probe failed"
               curl -fsS --max-time 10 http://127.0.0.1:8001/health || echo "Webhook health probe failed"
             } >> "$LOG_FILE" 2>&1 || true
 
@@ -213,7 +213,7 @@ jobs:
             echo "| Deploy step | \`${{ steps.ssh_deploy.outcome }}\` |"
             echo ""
             echo "### Health endpoints verified on server"
-            echo "- Streamlit: \`http://127.0.0.1:8501/_stcore/health\`"
+            echo "- API: \`http://127.0.0.1:8000/health\`"
             echo "- Webhook API: \`http://127.0.0.1:8001/health\`"
             echo ""
             if [ "${{ steps.ssh_deploy.outcome }}" = "success" ]; then

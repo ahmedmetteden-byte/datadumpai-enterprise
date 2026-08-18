@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Wait for Docker services and verify Streamlit + webhook health endpoints.
+# Wait for Docker services and verify api + webhook health endpoints.
 set -euo pipefail
 
-STREAMLIT_HEALTH_URL="${STREAMLIT_HEALTH_URL:-http://127.0.0.1:8501/_stcore/health}"
+API_HEALTH_URL="${API_HEALTH_URL:-http://127.0.0.1:8000/health}"
 WEBHOOK_HEALTH_URL="${WEBHOOK_HEALTH_URL:-http://127.0.0.1:8001/health}"
 HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-180}"
 HEALTH_INTERVAL_SECONDS="${HEALTH_INTERVAL_SECONDS:-5}"
@@ -82,24 +82,24 @@ main() {
   fi
 
   local deadline=$((SECONDS + HEALTH_TIMEOUT_SECONDS))
-  local streamlit_ok=0
+  local api_ok=0
   local webhook_ok=0
 
   log "Probing application endpoints..."
 
   while ((SECONDS < deadline)); do
-    streamlit_ok=0
+    api_ok=0
     webhook_ok=0
 
-    if check_endpoint "Streamlit" "$STREAMLIT_HEALTH_URL"; then
-      streamlit_ok=1
+    if check_endpoint "API" "$API_HEALTH_URL"; then
+      api_ok=1
     fi
 
     if check_endpoint "Webhook API" "$WEBHOOK_HEALTH_URL"; then
       webhook_ok=1
     fi
 
-    if [ "$streamlit_ok" -eq 1 ] && [ "$webhook_ok" -eq 1 ]; then
+    if [ "$api_ok" -eq 1 ] && [ "$webhook_ok" -eq 1 ]; then
       log "All health checks passed."
       exit 0
     fi
@@ -108,8 +108,8 @@ main() {
   done
 
   log "ERROR: Health checks failed after ${HEALTH_TIMEOUT_SECONDS}s."
-  log "Streamlit: ${STREAMLIT_HEALTH_URL}"
-  log "Webhook:   ${WEBHOOK_HEALTH_URL}"
+  log "API:     ${API_HEALTH_URL}"
+  log "Webhook: ${WEBHOOK_HEALTH_URL}"
   exit 1
 }
 

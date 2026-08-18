@@ -4,11 +4,6 @@ Notification preferences, in-app alerts, and outbound email orchestration.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any
-
-import streamlit as st
-
 import config
 from core.current_user import CurrentUser, require_current_user
 from services.email_service import EmailDeliveryError, is_email_configured, send_email
@@ -57,18 +52,6 @@ class NotificationService:
     def _should_send(self, preference_key: str) -> bool:
         return bool(self.get_preferences().get(preference_key, False))
 
-    def push_in_app(self, message: str, *, level: str = "info") -> None:
-        notifications = list(st.session_state.get("notifications", []))
-        notifications.insert(
-            0,
-            {
-                "message": message,
-                "level": level,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            },
-        )
-        st.session_state.notifications = notifications[:20]
-
     def notify_report_ready(
         self,
         *,
@@ -91,11 +74,8 @@ class NotificationService:
             f"Open the app: {config.AUTH_REDIRECT_URL}\n"
         )
         try:
-            provider = send_email(to_email=recipient, subject=subject, body_text=body)
-            self.push_in_app(f'Report "{report_name}" is ready.', level="success")
-            return provider
+            return send_email(to_email=recipient, subject=subject, body_text=body)
         except EmailDeliveryError:
-            self.push_in_app(f'Report "{report_name}" is ready.', level="success")
             return "failed"
 
     def notify_usage_limit(
@@ -153,24 +133,6 @@ class NotificationService:
             f"{config.AUTH_REDIRECT_URL}\n"
         )
         return self.notify_billing_event(subject=subject, body=body, email=email)
-
-
-def render_notification_bell() -> None:
-    """Render recent in-app notifications in the sidebar."""
-
-    notifications: list[dict[str, Any]] = st.session_state.get("notifications", [])
-    if not notifications:
-        return
-
-    with st.expander(f"Notifications ({len(notifications)})", expanded=False):
-        for item in notifications[:5]:
-            level = item.get("level", "info")
-            prefix = {"success": "✅", "error": "⚠️", "info": "ℹ️"}.get(level, "ℹ️")
-            st.caption(f"{prefix} {item.get('message', '')}")
-
-        if st.button("Clear notifications", key="clear_notifications"):
-            st.session_state.notifications = []
-            st.rerun()
 
 
 def email_status_caption() -> str:

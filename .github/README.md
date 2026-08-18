@@ -21,7 +21,7 @@ For live server layout and operational context, see [PRODUCTION.md](../PRODUCTIO
 │   ├── rollback.sh          # Roll back to a previous commit
 │   ├── verify.sh            # Pre-deploy validation
 │   ├── cleanup.sh           # Safe Docker image cleanup
-│   └── health-check.sh      # Streamlit + webhook health probes
+│   └── health-check.sh      # api + webhook health probes
 └── README.md
 ```
 
@@ -50,7 +50,7 @@ Tests must pass before any production deploy or release proceeds.
 
 | Trigger | Purpose |
 |---------|---------|
-| Push to `main` | Deploy Streamlit + webhook stack |
+| Push to `main` | Deploy api + webhook stack |
 | `workflow_dispatch` | Manual deploy (optional test skip for emergencies) |
 
 Pipeline:
@@ -128,7 +128,7 @@ Environment variables (for future staging/dev):
 
 Waits for Docker health states (when available), then probes:
 
-- Streamlit: `http://127.0.0.1:8501/_stcore/health`
+- API: `http://127.0.0.1:8000/health`
 - Webhook: `http://127.0.0.1:8001/health`
 
 Exits non-zero if either endpoint is unhealthy after the timeout (default 180s). **Deployment fails.**
@@ -383,7 +383,7 @@ Confirm in the workflow summary:
 
 - Commit hash matches the push
 - Container status is healthy
-- Streamlit and webhook health checks passed
+- API and webhook health checks passed
 
 ### Marketing deploy
 
@@ -432,7 +432,7 @@ bash .github/scripts/deploy-marketing.sh
 |---------|--------------|--------|
 | SSH connection failed | Wrong host, key, or firewall | Verify secrets; test `ssh -i key user@host` locally |
 | `missing .env` | Secrets file absent on server | Create from `.env.example` / `scripts/generate_production_env.sh` |
-| Health check timeout | Slow Streamlit cold start | Wait and check `docker compose logs app`; increase `HEALTH_TIMEOUT_SECONDS` |
+| Health check timeout | Slow api cold start | Wait and check `docker compose logs api`; increase `HEALTH_TIMEOUT_SECONDS` |
 | Webhook unhealthy | Port 8001 not listening | `docker compose logs webhooks` |
 | Deploy script not found | Server not synced | Run bootstrap `git reset --hard origin/main` |
 | Tests fail in CI | Code regression | Fix tests locally with `pytest` |
@@ -445,9 +445,9 @@ bash .github/scripts/deploy-marketing.sh
 ```bash
 cd /opt/datadumpai-enterprise
 docker compose ps
-docker compose logs -f app
+docker compose logs -f api
 docker compose logs -f webhooks
-curl -fs http://127.0.0.1:8501/_stcore/health
+curl -fs http://127.0.0.1:8000/health
 curl -fs http://127.0.0.1:8001/health
 pm2 logs datadump-marketing --lines 100
 ```
@@ -458,7 +458,7 @@ pm2 logs datadump-marketing --lines 100
 
 | Service | Endpoint | Used by |
 |---------|----------|---------|
-| Streamlit | `http://127.0.0.1:8501/_stcore/health` | `health-check.sh`, `deploy.sh` |
+| API | `http://127.0.0.1:8000/health` | `health-check.sh`, `deploy.sh` |
 | Webhook API | `http://127.0.0.1:8001/health` | `health-check.sh`, `deploy.sh` |
 | Marketing | `http://127.0.0.1:3000/` | `deploy-marketing.sh` |
 

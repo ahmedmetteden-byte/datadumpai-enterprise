@@ -32,15 +32,12 @@ COPY . .
 
 RUN mkdir -p data
 
-EXPOSE 8501
+EXPOSE 8000
 
+# Both live services (api, webhooks in docker-compose.yml) override this
+# command and define their own healthcheck; this default only matters for
+# an ad hoc `docker run` with no explicit command.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health')" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')" || exit 1
 
-CMD ["streamlit", "run", "app.py", \
-    "--server.port=8501", \
-    "--server.address=0.0.0.0", \
-    "--server.headless=true", \
-    "--browser.gatherUsageStats=false", \
-    "--server.enableCORS=false", \
-    "--server.enableXsrfProtection=false"]
+CMD ["uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "8000"]
