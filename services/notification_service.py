@@ -10,7 +10,6 @@ from typing import Any
 import streamlit as st
 
 import config
-from core.auth import get_current_user
 from core.current_user import CurrentUser, require_current_user
 from services.email_service import EmailDeliveryError, is_email_configured, send_email
 from services.profile_service import ProfileService
@@ -49,11 +48,10 @@ class NotificationService:
             return email.strip()
         if self._current_user.email:
             return self._current_user.email
-        # Legacy Streamlit-only fallback (st.session_state-backed) — a no-op
-        # in the FastAPI/SPA request flow, kept only for the Streamlit app.
-        user = get_current_user()
-        if user and user.email:
-            return user.email
+        # self._current_user is resolved via require_current_user(), which
+        # already bridges to the Streamlit session when running there — a
+        # second, direct core.auth call here would just re-derive the same
+        # user and was dead weight, not an additional fallback.
         profile_email = (self._profile.load().get("email") or "").strip()
         return profile_email or None
 

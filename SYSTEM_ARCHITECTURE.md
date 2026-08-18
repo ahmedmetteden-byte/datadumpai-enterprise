@@ -4,6 +4,8 @@ This document describes the overall system design: how components interact, wher
 
 For server-specific deployment details (IPs, SSH, rollback commands), see [PRODUCTION.md](./PRODUCTION.md).
 
+> **This document was rewritten to match what's actually running in production.** The previous version described Streamlit as the primary authenticated application. That's no longer true: the product was rebuilt as a FastAPI + React SPA, and Streamlit is now dead code — still built and deployed as a container per `docker-compose.yml`, but unreachable from `app.getdatadump.com` (confirmed by tracing the live request path; see "Application" below). It has not been deleted yet, only retired from the request path, so it's documented here for completeness and to make its status unambiguous to anyone reading this cold.
+
 ---
 
 ## Overview
@@ -13,8 +15,10 @@ DataDumpAI Enterprise is a multi-surface product:
 | Surface | Technology | Role |
 |---------|------------|------|
 | **Marketing site** | Next.js 15 (App Router) | Public homepage, SEO, pricing, docs, contact |
-| **Application** | Streamlit (Python) | Authenticated workspace — uploads, AI reports, billing |
-| **Webhook service** | FastAPI (Python) | Stripe and Paystack subscription events |
+| **Application (live)** | FastAPI (`api/`) + React SPA (`web/`) | Authenticated workspace — projects, documents, AI reports, billing |
+| **Application (dead code)** | Streamlit (`app.py`, `ui/`, `application/`) | The original implementation. Still built and running as a container, but no live traffic reaches it — see below. Not yet deleted. |
+| **Webhook service** | FastAPI (`api/webhook_server.py`) | Paystack (and dormant Stripe) subscription events |
+| **Vector search** | Qdrant | Document chunk embeddings for retrieval-grounded report generation |
 | **Platform backend** | Supabase | Auth, PostgreSQL metadata, object storage |
 
 The marketing site and application are **separate deployables** on the same server, fronted by Nginx.
@@ -32,17 +36,26 @@ The marketing site and application are **separate deployables** on the same serv
    www.getdatadump.com    app.getdatadump.com       │
             │                   │                   │
    ┌────────▼────────┐  ┌───────▼────────┐         │
-   │  PM2 :3000      │  │ Docker :8501   │         │
-   │  Next.js        │  │ Streamlit app  │         │
-   │  marketing-site │  │                │         │
+   │  PM2 :3000      │  │ Docker         │         │
+   │  Next.js        │  │ frontend :3001 │         │
+   │  marketing-site │  │ (React SPA +   │         │
+   │                 │  │  nginx)        │         │
    └────────┬────────┘  └───────┬────────┘         │
-            │                   │                   │
-            │ Launch App        │  ┌────────────────▼──┐
-            └──────────────────►│ Docker :8001       │
-                                  │ FastAPI webhooks   │
-                                  └────────┬───────────┘
-                                           │
-                              ┌────────────▼────────────┐
+            │                   │ same-origin       │
+            │ Launch App        │ /api/* proxy      │
+            └──────────────────►│                   │
+                                ┌▼──────────────┐    │
+                                │ Docker api    │    │
+                                │ :8000         │    │
+                                │ (FastAPI)     │◄───┼── Docker qdrant :6333
+                                └───────┬───────┘    │
+                                        │             │
+                                        │  ┌──────────▼──────────┐
+                                        │  │ Docker webhooks :8001│
+                                        │  │ (Paystack/Stripe)    │
+                                        │  └──────────┬───────────┘
+                                        │             │
+                              ┌─────────▼─────────────▼──┐
                               │      Supabase Cloud      │
                               │  Auth · Postgres · Storage│
                               └─────────────────────────┘
@@ -50,76 +63,113 @@ The marketing site and application are **separate deployables** on the same serv
                               ┌────────────▼────────────┐
                               │       OpenAI API         │
                               └─────────────────────────┘
+
+   Docker app :8501 (Streamlit) also runs per docker-compose.yml,
+   but no nginx location routes to it — dead code path, not deleted.
 ```
 
 ---
 
-## Streamlit application
+## Application (live): FastAPI + React SPA
 
-**Entry point:** `app.py`  
-**Framework:** Streamlit 1.x on Python 3.12
+**Backend entry point:** `api/app.py` (product API), `api/webhook_server.py` (payment webhooks, separate process)
+**Frontend entry point:** `web/` — a Vite/React SPA, built to static files and served by its own nginx inside the `frontend` container (`web/nginx.conf`)
+
+This is what a real user actually reaches at `app.getdatadump.com` today. Verified directly: `GET /` returns the SPA shell; `GET /api/v1/health` returns `{"status":"ok"}` from FastAPI.
 
 ### Responsibilities
 
-- User authentication gate (Supabase Auth)
-- Workspace UI — projects, documents, reports, settings
-- AI Copilot chat and document search
-- Report generation (Executive Summary, Board Report, Financial Analysis, etc.)
-- PDF/DOCX/Markdown export
-- Billing UI (Stripe/Paystack checkout flows)
-- Admin panel and onboarding wizard
+- User authentication (Supabase Auth, JWT-verified per request in `api/deps.py`)
+- Projects ("workspaces") — create, list, document upload, background indexing status
+- Document library — multi-format extraction (PDF via 3 engines + OCR fallback, DOCX, XLSX/CSV with verified numeric stats, TXT)
+- Retrieval-grounded AI report generation (`services/spa_report_generation_service.py` + `services/report_retrieval_service.py`) — reports are generated from semantically-retrieved document chunks via Qdrant, not a blind dump of the first N documents
+- "Ask AI" / Intelligence Studio chat — real RAG over the workspace's indexed documents, with optional live web search
+- Report export: PDF / DOCX / PPTX, plan-gated
+- Billing UI (Paystack checkout; Stripe code path exists but is hard-disabled at the service layer)
 
 ### Application layers
 
 ```
-app.py                          ← Streamlit entry, auth gate, routing
-├── core/                       ← Session, auth, navigation, database client
-│   ├── auth.py                 ← Supabase session management
-│   ├── database.py             ← Supabase PostgreSQL client
-│   └── navigation.py           ← Page routing
-├── ui/                         ← Streamlit pages and components
-│   ├── workspace/              ← Main authenticated workspace
-│   ├── auth/                   ← Sign-in, sign-up, password reset
-│   └── landing/                ← Public landing page
-├── services/                   ← Business logic
-│   ├── auth_service.py
-│   ├── report_service.py
-│   ├── document_processor.py
-│   ├── stripe_billing_service.py
-│   └── ...
-├── repositories/               ← Data access (Supabase or JSON fallback)
-│   ├── supabase_project_repository.py
-│   └── json_project_repository.py
-├── application/                ← Use-case pipelines
-│   ├── use_cases/
-│   ├── chat_pipeline.py
-│   └── search_pipeline.py
-├── storage/                    ← Blob storage abstraction
-│   └── file_store.py           ← Local filesystem or Supabase Storage
-└── config.py                   ← Environment-driven configuration
+api/
+├── app.py                      ← FastAPI entry, mounts routers under /api/v1
+├── webhook_server.py            ← Separate FastAPI process for payment webhooks
+├── deps.py                      ← JWT auth, per-request principal/access-token resolution
+├── auth_jwt.py                  ← AuthenticatedPrincipal
+├── schemas/                     ← Pydantic request/response models
+└── routers/                     ← workspaces, knowledge, reports, intelligence, billing, me, home, public
+
+web/
+├── src/pages/                   ← Home, Knowledge (Library), Account, Billing
+├── src/components/
+├── src/services/                ← Typed API clients (fetch wrappers per router)
+└── nginx.conf                   ← Serves the built SPA; proxies /api/ → api:8000 same-origin
+
+services/                        ← Shared business logic (used by api/, NOT by the dead Streamlit stack
+│                                   except services/ai_service.py, which is Streamlit-only)
+├── document_processor.py        ← Text/table extraction per file type
+├── indexing_service.py          ← extract → chunk → embed → Qdrant upsert pipeline
+├── report_retrieval_service.py  ← Facet-query retrieval + evidence assembly for report generation
+├── spa_report_generation_service.py  ← Report prompt construction + OpenAI call + save
+├── intelligence_rag_service.py  ← RAG for the chat/Copilot feature
+├── report_service.py            ← Report persistence (shared: read by both live and dead-code paths)
+├── project_service.py, document_service.py  ← Project/document persistence (shared)
+├── billing_service.py           ← Paystack/Stripe facade
+└── ...
+
+core/
+├── current_user.py              ← Request-scoped CurrentUser via ContextVar; the correct mechanism
+│                                   for api/ and services/. Falls back to core/auth.py only when no
+│                                   override is bound — which is what lets the dead Streamlit code
+│                                   keep resolving its own session user without a separate code path.
+├── auth.py                      ← Streamlit session_state-backed auth. Do not call this directly
+│                                   from api/ or services/ — always go through core/current_user.py.
+│                                   (This exact bug — a live service calling core.auth directly —
+│                                   has been found and fixed multiple times; see "Known pitfalls" below.)
+└── database.py                  ← Supabase client, user-scoped and service-role
+
+repositories/                    ← Data access (Supabase or JSON fallback), shared
+storage/file_store.py            ← Blob storage abstraction (Supabase Storage or local filesystem), shared
+qdrant/                          ← (external service, see docker-compose.yml) — chunk vectors, one
+                                    collection, tenant-isolated by a workspace_id payload filter
 ```
 
 ### Request lifecycle
 
-1. `app.py` sets page config, injects SEO metadata, initializes session
-2. Auth cookies are checked; unauthenticated users see landing or auth pages
-3. Authenticated users enter the workspace shell (`ui/workspace/shell.py`)
-4. Services load data through repositories (Supabase PostgreSQL when configured)
-5. File uploads and exports go through `FileStore` (Supabase Storage or local `data/`)
+1. Browser loads the SPA from `frontend` (nginx serves static files, or `index.html` for client-side routes).
+2. SPA calls `/api/...` same-origin; `frontend`'s nginx proxies these to `api:8000`.
+3. `api/deps.py` verifies the Supabase JWT and resolves an `AuthenticatedPrincipal`; route handlers wrap their body in `user_request_scope(principal)`, which binds `core/current_user.py`'s request-scoped `CurrentUser` for the duration of the request.
+4. Services (`ProjectService`, `DocumentService`, `ReportService`, etc.) read/write through `repositories/` (Supabase Postgres or local JSON) and `storage/file_store.py` (Supabase Storage or local filesystem), using the request's access token — not a global/shared client — so tenant isolation follows the token, not application logic.
+5. Document upload triggers a background indexing job (`services/indexing_service.py`): extract text → chunk → embed (OpenAI) → upsert into Qdrant, tagged with `workspace_id`.
+6. Report generation retrieves relevant chunks from Qdrant per a set of fixed "facet" queries (summary/findings/risks/opportunities/recommendations + the user's instructions), assembles evidence within a character budget, and calls OpenAI to write the report — see `services/report_retrieval_service.py`.
 
-### Configuration
+### Known pitfalls (read before touching auth-adjacent code)
 
-Backend behavior is controlled by environment variables in `config.py`:
+- **`core.auth` vs `core.current_user`**: any live-path service must resolve the current user via `core.current_user` (a bound `CurrentUser`, or `require_current_user()`), never by calling `core.auth.get_current_user()` directly. The latter is Streamlit-session-backed and returns `None` (or silently does nothing) inside a FastAPI request — this exact bug has broken checkout in production once and been found in two other services. `core/current_user.py`'s own fallback to `core.auth` is intentional (it's what keeps the dead Streamlit stack's auth working without a separate code path) and should not be "fixed" — the bug is specifically a *live* service reaching into `core.auth` directly, bypassing `core.current_user` entirely.
+- **Workspace vs Project**: the API and UI call the top-level container a "workspace," but it is implemented as a single-level project — there is no multi-project-per-organization nesting, and no `WorkspaceType`/`SubscriptionPlan` database enum. Treat "workspace" and "project" as the same thing when reading this codebase.
 
-- `DATABASE_BACKEND=supabase` → metadata in Supabase PostgreSQL
-- `STORAGE_BACKEND=supabase` → files in Supabase Storage bucket `datadumpai-files`
-- Falls back to local JSON/filesystem when Supabase is not configured (development only)
+---
+
+## Application (dead code): Streamlit
+
+**Entry point:** `app.py` · **Framework:** Streamlit 1.x on Python 3.12
+
+Still built into the Docker image and still run as the `app` container (port 8501) per `docker-compose.yml` — but **no nginx location routes public traffic to it**. Zero imports connect it to `api/` or the live `services/*` call paths (only `services/ai_service.py` is Streamlit-exclusive; everything else it uses is shared with the live app). It has not been deleted because that decision is still pending; this section exists so nobody mistakes it for the live application.
+
+```
+app.py                          ← Streamlit entry, auth gate, routing
+├── ui/                         ← Streamlit pages and components
+├── application/                ← Use-case pipelines (report_pipeline.py, chat_pipeline.py, etc.)
+├── services/ai_service.py      ← The one Streamlit-exclusive service module
+└── core/auth.py, navigation.py ← Streamlit session/routing helpers
+```
+
+If/when this is retired for real: stop building/running the `app` service in `docker-compose.yml`, then delete `app.py`, `ui/`, `application/`, and `services/ai_service.py`.
 
 ---
 
 ## Next.js marketing site
 
-**Location:** `marketing-site/`  
+**Location:** `marketing-site/`
 **Framework:** Next.js 15, TypeScript, Tailwind CSS, App Router
 
 ### Responsibilities
@@ -127,23 +177,9 @@ Backend behavior is controlled by environment variables in `config.py`:
 - Public product homepage and brand presence
 - SEO (metadata API, JSON-LD, sitemap, robots.txt)
 - Marketing pages: Features, Solutions, Industries, Pricing, About, Contact
-- Documentation hub (placeholder content)
 - Legal pages: Privacy, Terms, Security
-- "Launch App" CTA → links to Streamlit at `NEXT_PUBLIC_APP_URL`
-
-### Key files
-
-```
-marketing-site/
-├── src/app/              ← App Router pages
-├── src/components/       ← Header, Footer, Hero, forms
-├── src/lib/
-│   ├── site.ts           ← Site URL and app URL config
-│   ├── metadata.ts       ← SEO helpers
-│   └── content.ts        ← Static marketing copy
-├── public/               ← Optimized images (WebP + PNG fallbacks)
-└── .env.example          ← Public env var template
-```
+- "Launch App" CTA → links to the React SPA at `NEXT_PUBLIC_APP_URL`
+- Contact form → wired to a real backend endpoint (`api/routers/public.py`), not client-side-only
 
 ### Runtime
 
@@ -151,83 +187,46 @@ marketing-site/
 - **Production:** `npm run build && npm start` under PM2 on port 3000
 - Nginx proxies `getdatadump.com` / `www.getdatadump.com` → `:3000`
 
-The marketing site has **no backend API** of its own — it is a static/SSR frontend. Contact form submission is client-side (wire to an email API in production).
+The marketing site has no backend of its own beyond that one contact-form call into the product API.
 
 ---
 
 ## FastAPI webhook service
 
-**Entry point:** `api/webhook_server.py`  
-**Runtime:** Separate Docker container (same image as Streamlit, different command)
-
-Streamlit cannot reliably receive raw POST bodies from payment providers, so billing webhooks run in a dedicated FastAPI process.
+**Entry point:** `api/webhook_server.py`
+**Runtime:** Separate Docker container (`webhooks`, same image as the other Python services, different `uvicorn` command), port 8001
 
 ### Endpoints
 
 | Method | Path | Purpose |
 |--------|------|---------|
 | `GET` | `/health` | Container health check |
-| `POST` | `/webhooks/stripe` | Stripe subscription lifecycle events |
-| `POST` | `/webhooks/paystack` | Paystack charge events |
+| `POST` | `/webhooks/paystack` | Paystack charge/subscription events (primary, active) |
+| `POST` | `/webhooks/stripe` | Stripe subscription lifecycle events (code path present but Stripe checkout is hard-disabled at the service layer — see `services/billing_service.py`) |
 
-### Event handling
-
-- **Stripe:** `checkout.session.completed`, `customer.subscription.updated/deleted`, `invoice.payment_failed`
-- **Paystack:** `charge.success` and related subscription events
-
-Events update subscription state via `SubscriptionService` and `billing_repository`, and may trigger email notifications.
-
-Nginx routes `https://app.getdatadump.com/webhooks/*` → container port `8001`.
+Events update subscription state via `billing_repository` using the Supabase service-role client (not a per-request user token, since webhooks have no authenticated user).
 
 ---
 
 ## Storage
 
-DataDumpAI uses a dual-storage model: **metadata in PostgreSQL**, **blobs in object storage**.
+DataDumpAI uses a dual-storage model: **metadata in PostgreSQL**, **blobs in object storage**, both with a local-filesystem/JSON fallback for development.
 
 ### Metadata (Supabase PostgreSQL)
 
-When `DATABASE_BACKEND=supabase`, application records live in Supabase:
+When `DATABASE_BACKEND=supabase`, application records live in Supabase (`user_profiles`, `user_usage`, `projects`, `documents`, `reports`, `subscriptions`, `activity_logs`, `login_lockouts`). Schema in `supabase/migrations/001` through `008`; Row Level Security enforces per-user isolation.
 
-| Table | Contents |
-|-------|----------|
-| `user_profiles` | Name, company, job title |
-| `user_usage` | Plan limits, monthly counters |
-| `projects` | Workspace projects per user |
-| `documents` | Document metadata and storage paths |
-| `reports` | Generated report metadata |
-| `subscriptions` | Billing state |
-| `activity_logs` | Audit trail |
-| `login_lockouts` | Failed sign-in tracking |
-
-Schema defined in `supabase/migrations/001` through `008`. Row Level Security (RLS) enforces per-user isolation.
-
-**Fallback:** `DATABASE_BACKEND=json` stores metadata as JSON files under `data/users/{user_id}/` (development and staging only).
+**Fallback:** `DATABASE_BACKEND=json` stores metadata as JSON files under `data/users/{user_id}/` (development only).
 
 ### File blobs (Supabase Storage)
 
-When `STORAGE_BACKEND=supabase`, files are stored in the private bucket `datadumpai-files`:
+When `STORAGE_BACKEND=supabase`, files live in the private bucket `datadumpai-files` at `{user_id}/{project_id}/{category}/{filename}` (`documents`, `reports`, `exports`). Access is controlled by Supabase Storage policies; the server uses `SUPABASE_SERVICE_ROLE_KEY` for privileged operations.
 
-```
-{user_id}/{project_id}/{category}/{filename}
-```
+**Fallback:** `STORAGE_BACKEND=local` writes to `data/users/{user_id}/projects/{project_id}/` on disk — the `app_data` Docker volume in production, shared across the `app`, `api`, and `webhooks` containers (not `frontend`, which serves only static files and has no backend logic).
 
-Categories: `documents`, `reports`, `exports`
+### Vector storage (Qdrant)
 
-Access is controlled by Supabase Storage policies (users can only read/write their own prefix). The server uses `SUPABASE_SERVICE_ROLE_KEY` for privileged operations.
-
-**Fallback:** `STORAGE_BACKEND=local` writes to `data/users/{user_id}/projects/{project_id}/` on disk. In Docker, this maps to the `app_data` volume.
-
-### Local runtime directories
-
-| Path | Purpose | Git tracked |
-|------|---------|-------------|
-| `data/users/` | Per-user JSON metadata (fallback mode) | `.gitkeep` only |
-| `data/uploads/` | Temporary upload staging | `.gitkeep` only |
-| `data/reports/` | Generated report cache | `.gitkeep` only |
-| `data/cache/` | Application cache | `.gitkeep` only |
-| `exports/` | User export downloads | `.gitkeep` only |
-| `static/` | SEO assets served by nginx (robots, sitemap, logos) | Yes |
+New since the retrieval-grounded report generation work: `services/qdrant_service.py` upserts one point per document chunk, embedded with OpenAI `text-embedding-3-small`, tagged with a `workspace_id` payload field. All queries filter strictly by `workspace_id`, which is the tenant-isolation boundary at this layer — the actual "does this user own this workspace" check happens one layer up, at project ownership resolution (`ProjectService.get_project`), before a `workspace_id` ever reaches Qdrant. Data persists in the `qdrant_data` Docker volume.
 
 ---
 
@@ -235,47 +234,12 @@ Access is controlled by Supabase Storage policies (users can only read/write the
 
 Supabase is the production platform backend for auth, database, and file storage.
 
-### Authentication
-
-- Email/password sign-up with email confirmation
-- Password reset via magic link
-- Anonymous sign-ins disabled in production
-- `AUTH_REDIRECT_URL` must match the Streamlit domain (`https://app.getdatadump.com`)
-- `AUTH_DEV_BYPASS=true` bypasses Supabase for local dev only
-
-**Client-side:** `SUPABASE_URL` + `SUPABASE_ANON_KEY` (safe for frontend)  
-**Server-side:** `SUPABASE_SERVICE_ROLE_KEY` (lockout tracking, admin ops, storage uploads)
-
-### Database client
-
-`core/database.py` provides:
-
-- `get_database_client(access_token=...)` — user-scoped queries (respects RLS)
-- `get_service_role_client()` — server-side operations
-
-Repositories switch between Supabase and JSON implementations based on `DATABASE_BACKEND`.
-
-### Storage client
-
-`storage/file_store.py` abstracts read/write/delete across backends. Production uses the Supabase Storage SDK with the service role key.
-
-### Migrations
-
-Apply in order via the Supabase SQL editor or CLI:
-
-```
-supabase/migrations/
-├── 001_initial_schema.sql
-├── 002_subscription.sql
-├── 003_storage.sql
-├── 004_billing.sql
-├── 005_notification_preferences.sql
-├── 006_admin_roles_audit.sql
-├── 007_auth_profile_enhancements.sql
-└── 008_platform_features.sql
-```
-
-Migration script for legacy JSON data: `scripts/migrate_json_to_supabase.py`
+- Email/password sign-up with email confirmation; password reset via magic link; anonymous sign-ins disabled in production.
+- `AUTH_REDIRECT_URL` must match the SPA domain (`https://app.getdatadump.com`).
+- `AUTH_DEV_BYPASS=true` bypasses Supabase for local dev only.
+- **Client-side:** `SUPABASE_URL` + `SUPABASE_ANON_KEY`. **Server-side:** `SUPABASE_SERVICE_ROLE_KEY` (lockout tracking, admin ops, storage uploads, webhook processing).
+- `core/database.py` provides `get_database_client(access_token=...)` (user-scoped, respects RLS) and `get_service_role_client()` (server-side).
+- Migrations apply in order via the Supabase SQL editor or CLI, `supabase/migrations/001` through `008`. Legacy JSON migration: `scripts/migrate_json_to_supabase.py`.
 
 ---
 
@@ -283,103 +247,55 @@ Migration script for legacy JSON data: `scripts/migrate_json_to_supabase.py`
 
 ```
 /opt/datadumpai-enterprise/
-├── Dockerfile              ← Python 3.12-slim, Streamlit + deps
-├── docker-compose.yml      ← app + webhooks services
-├── .dockerignore
+├── Dockerfile              ← Python 3.12-slim, shared by app/api/webhooks
+├── web/Dockerfile          ← Node build → static nginx image, for frontend
+├── docker-compose.yml      ← 5 services (below)
 ├── .env                    ← production secrets (not in git)
 └── (application source)
 ```
 
-### Services
-
 ```yaml
 services:
-  app:        # Streamlit → :8501
+  frontend:   # React SPA + nginx → :3001 (host) — what app.getdatadump.com actually serves
+  app:        # Streamlit → :8501 — dead code, still built/run, not routed to
+  api:        # uvicorn api.app:app → :8000 — the live product API
   webhooks:   # uvicorn api.webhook_server:app → :8001
+  qdrant:     # qdrant/qdrant:v1.13.2 → :6333/:6334
 
 volumes:
-  app_data:   # Shared /app/data for local fallback storage
+  app_data:    # Shared /app/data for local fallback storage (app, api, webhooks)
+  qdrant_data: # Qdrant's own storage
 ```
 
-Both services build from the same `Dockerfile`. The webhook service overrides the default `CMD` with `uvicorn`.
-
-Health checks are built into both the Dockerfile and compose file. Containers restart automatically unless stopped.
+`app`, `api`, and `webhooks` all build from the same root `Dockerfile` and differ only by command. `frontend` builds separately from `web/` and bakes `VITE_*` env vars into the static bundle at build time — changing them requires a rebuild, not just a restart.
 
 ---
 
 ## Deployment flow
 
-```mermaid
-flowchart LR
-    subgraph dev [Development]
-        Code[Local codebase]
-        Tests[pytest / npm run build]
-    end
+Deploys run via GitHub Actions (`.github/workflows/deploy.yml`) on every push to `main`:
 
-    subgraph ci [Release]
-        GitHub[GitHub push to main]
-    end
+1. **Test gate** (`test.yml`) — pytest suite must pass (skippable only via manual `workflow_dispatch` with an explicit override).
+2. **Validate** — `docker compose config` and workflow lint (`actionlint`) against the target ref.
+3. **Deploy** — SSHes into the production server, `git fetch && git reset --hard` to the deploy ref, then runs `.github/scripts/deploy.sh` (which runs `docker compose build`/`up -d` for the changed services; a plain Python-file-only change can also be picked up by the `app`/`api`/`webhooks` containers' read-only bind mounts without a rebuild, but the deploy script rebuilds regardless for consistency).
+4. **On failure** — automatic rollback (`AUTO_ROLLBACK=true`), diagnostic log collection (compose `ps`, container logs, health probes), uploaded as a workflow artifact.
+5. **Summary** — commit, duration, and health-probe results posted to the GitHub Actions run summary.
 
-    subgraph server [Production Server]
-        Pull[git pull]
-        DockerBuild[docker compose build]
-        DockerUp[docker compose up -d]
-        NpmBuild[npm ci && npm run build]
-        Pm2Restart[pm2 restart datadump-marketing]
-        Health[Health checks]
-    end
+Marketing site deploys separately via `.github/workflows/marketing.yml` (`npm ci && npm run build`, `pm2 restart`).
 
-    Code --> Tests --> GitHub --> Pull
-    Pull --> DockerBuild --> DockerUp --> Health
-    Pull --> NpmBuild --> Pm2Restart --> Health
-```
-
-### Blue/green pattern (used for v1.0 cutover)
-
-1. Deploy new stack on alternate ports (`8501`, `8001`) alongside the old stack (`8080`, `8000`)
-2. Verify health endpoints and smoke-test functionality
-3. Switch Nginx upstreams and reload
-4. Keep old containers running for instant rollback
-
-This pattern is documented in detail in [PRODUCTION.md](./PRODUCTION.md).
+Manual rollback: `bash .github/scripts/rollback.sh` on the server.
 
 ---
 
 ## Nginx topology
 
-Nginx runs on the host (not in Docker) and terminates TLS for all public domains.
+Nginx runs on the host (not in Docker) and terminates TLS for all public domains. The host-level config is not tracked in this repo (only a reference/historical config lives at [deploy/nginx-getdatadump-v1.conf](./deploy/nginx-getdatadump-v1.conf), explicitly labeled Streamlit-only era — do not treat it as current). What's confirmed by tracing live requests:
 
-```
-                    ┌──────────────────────────────────────┐
-                    │         Nginx :443 (TLS)             │
-                    │  cert: /etc/letsencrypt/live/        │
-                    │        getdatadump.com/              │
-                    └──────────────┬───────────────────────┘
-                                   │
-          ┌────────────────────────┼────────────────────────┐
-          │                        │                        │
-   server_name:              server_name:              port 80
-   getdatadump.com           app.getdatadump.com       → 301 HTTPS
-   www.getdatadump.com
-          │                        │
-   location /                 location /
-   → :3000 (PM2)              → :8501 (Docker Streamlit)
-                              location /webhooks/
-                              → :8001 (Docker FastAPI)
-```
-
-### Proxy headers
-
-All upstreams receive:
-
-- `Host`, `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Forwarded-For`
-- `Upgrade` / `Connection` for WebSocket support (Streamlit and Next.js)
-
-Streamlit additionally uses `proxy_read_timeout 86400` for long-running sessions.
-
-### Static assets
-
-SEO files for the Streamlit era are served from `/opt/datadumpai-enterprise/static/` when configured in nginx (`robots.txt`, `sitemap.xml`, `og-image.png`, favicons). The Next.js marketing site serves its own assets from `marketing-site/public/`.
+- `getdatadump.com` / `www.getdatadump.com` → PM2 Next.js on `:3000`.
+- `app.getdatadump.com` `/` → the `frontend` container (React SPA).
+- `app.getdatadump.com` `/api/*` → same-origin, proxied by `frontend`'s own nginx (`web/nginx.conf`) to `api:8000`. Whether the host nginx also has a direct `/api/` location or this proxy hop happens entirely inside the `frontend` container is not re-verified here — treat `web/nginx.conf` as authoritative for the proxy behavior either way.
+- `app.getdatadump.com` `/webhooks/*` → `webhooks:8001`.
+- Nothing routes to `:8501` (Streamlit) — confirmed dead path.
 
 ---
 
@@ -387,10 +303,11 @@ SEO files for the Streamlit era are served from `/opt/datadumpai-enterprise/stat
 
 | Service | Used by | Purpose |
 |---------|---------|---------|
-| **OpenAI** | Streamlit services | Report generation, Copilot, embeddings |
+| **OpenAI** | `services/` (live path) | Report generation, chat/Copilot, `text-embedding-3-small` embeddings |
+| **Qdrant** | `services/qdrant_service.py` | Vector search for retrieval-grounded reports and chat RAG |
 | **Supabase** | Auth, DB, Storage | Platform backend |
-| **Stripe** | Billing UI + webhooks | Subscriptions (USD) |
-| **Paystack** | Billing UI + webhooks | Subscriptions (NGN) |
+| **Paystack** | Billing UI + `webhooks` | Subscriptions (NGN) — the only active payment provider |
+| **Stripe** | Webhook handler only | Code path present, hard-disabled at the service layer (`services/billing_service.py`); not offered to users |
 | **SMTP / Resend** | Email service | Verification, notifications, billing alerts |
 | **Google Analytics** | Marketing site | Optional traffic analytics |
 | **Sentry** | Marketing site | Optional error monitoring |
@@ -399,10 +316,11 @@ SEO files for the Streamlit era are served from `/opt/datadumpai-enterprise/stat
 
 ## Testing
 
-- **Backend:** `pytest` (122+ tests covering auth, billing, reports, storage, pipelines)
+- **Backend:** `pytest` (400+ tests covering auth, billing, retrieval, report generation, document extraction, storage, security/tenant isolation)
 - **Marketing site:** `npm run lint`, `npm run build` (production build verification)
+- **Frontend (`web/`):** typecheck + build as part of CI
 
-Run tests locally before deploying. Production health endpoints confirm runtime availability but not functional correctness.
+Run tests locally before deploying (`docker compose exec api python3 -m pytest tests/ -q`, with a fresh copy of `tests/` into the container since it's not bind-mounted). Production health endpoints confirm runtime availability but not functional correctness — verify real user flows after any deploy that touches report generation, retrieval, or billing.
 
 ---
 
@@ -411,20 +329,23 @@ Run tests locally before deploying. Production health endpoints confirm runtime 
 | Version | Stack | Notes |
 |---------|-------|-------|
 | Legacy (`/opt/datadump-ai`) | FastAPI + React + Postgres + Qdrant | Pre-Enterprise; kept for rollback |
-| v1.0 (`/opt/datadumpai-enterprise`) | Streamlit + Supabase + FastAPI webhooks | Current production |
-| Marketing split | + Next.js on PM2, `app.` subdomain | Current production layout |
+| v1.0 (`/opt/datadumpai-enterprise`) | Streamlit + Supabase + FastAPI webhooks | Superseded — Streamlit is now dead code, not deleted |
+| **Current** | **FastAPI (`api/`) + React SPA (`web/`) + Supabase + Qdrant + FastAPI webhooks** | **Live production application** |
+| Marketing split | Next.js on PM2, `app.` subdomain for the product | Unchanged, still current |
 
 ---
 
 ## Related files
 
 | File | Description |
-|------|-------------|
+|------|--------------|
 | [PRODUCTION.md](./PRODUCTION.md) | Server ops, env vars, deploy and rollback |
 | [docker-compose.yml](./docker-compose.yml) | Container definitions |
-| [Dockerfile](./Dockerfile) | Application image |
-| [deploy/nginx-getdatadump-v1.conf](./deploy/nginx-getdatadump-v1.conf) | Reference nginx config (Streamlit-only era) |
+| [Dockerfile](./Dockerfile) | Python services image (app/api/webhooks) |
+| [web/Dockerfile](./web/Dockerfile) | Frontend SPA image |
+| [web/nginx.conf](./web/nginx.conf) | Frontend container's internal nginx — same-origin `/api` proxy |
+| [deploy/nginx-getdatadump-v1.conf](./deploy/nginx-getdatadump-v1.conf) | Reference nginx config (Streamlit-only era — historical, not current) |
 | [deploy/remote-setup.sh](./deploy/remote-setup.sh) | Server bootstrap script |
-| [scripts/generate_production_env.sh](./scripts/generate_production_env.sh) | Env generation from legacy stack |
+| [.github/workflows/deploy.yml](./.github/workflows/deploy.yml) | Production deploy pipeline |
 | [.env.example](./.env.example) | Environment variable template |
 | [marketing-site/README.md](./marketing-site/README.md) | Marketing site docs |

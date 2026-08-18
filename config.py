@@ -384,11 +384,6 @@ def backend_configuration_warnings() -> list[str]:
     return warnings
 
 
-# Legacy placeholders — use core.auth.get_current_user() instead.
-CURRENT_USER = "Local User"
-CURRENT_ROLE = "Workspace"
-
-
 # ==========================================================
 # AI CONFIGURATION
 # ==========================================================
