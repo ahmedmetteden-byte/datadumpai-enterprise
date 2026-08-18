@@ -50,39 +50,41 @@ class DocumentProcessor:
 
         if suffix == ".csv":
             df = pd.read_csv(uploaded_file)
-            truncated = False
-
-            if max_tabular_rows is not None and len(df) > max_tabular_rows:
-                df = df.head(max_tabular_rows)
-                truncated = True
-
-            text = df.to_string(index=False)
-
-            if truncated:
-                text += (
-                    f"\n\n[… first {max_tabular_rows} rows only; "
-                    "remaining rows omitted for faster processing …]"
-                )
-
-            return text
+            return DocumentProcessor._render_tabular_block(
+                df, heading=None, max_tabular_rows=max_tabular_rows
+            )
 
         if suffix == ".xlsx":
-            df = pd.read_excel(uploaded_file)
-            truncated = False
+            # sheet_name=None returns every sheet as {name: DataFrame} —
+            # pd.read_excel's default keeps only the first sheet, silently
+            # discarding the rest of the workbook.
+            sheets = pd.read_excel(uploaded_file, sheet_name=None)
+            non_empty_sheets = {
+                name: sheet_df for name, sheet_df in sheets.items() if len(sheet_df.columns) > 0
+            }
 
-            if max_tabular_rows is not None and len(df) > max_tabular_rows:
-                df = df.head(max_tabular_rows)
-                truncated = True
+            if not non_empty_sheets:
+                return ""
 
-            text = df.to_string(index=False)
+            blocks: list[str] = []
+            multi_sheet = len(non_empty_sheets) > 1
 
-            if truncated:
-                text += (
-                    f"\n\n[… first {max_tabular_rows} rows only; "
-                    "remaining rows omitted for faster processing …]"
+            if multi_sheet:
+                blocks.append(
+                    f"Workbook contains {len(non_empty_sheets)} sheets: "
+                    f"{', '.join(non_empty_sheets)}."
                 )
 
-            return text
+            for name, sheet_df in non_empty_sheets.items():
+                blocks.append(
+                    DocumentProcessor._render_tabular_block(
+                        sheet_df,
+                        heading=f"Sheet: {name}" if multi_sheet else None,
+                        max_tabular_rows=max_tabular_rows,
+                    )
+                )
+
+            return "\n\n".join(blocks)
 
         return ""
 
@@ -135,6 +137,124 @@ class DocumentProcessor:
         except Exception:
             logger.exception("Document extraction crashed")
             raise
+
+    @staticmethod
+    def _truncate_dataframe(
+        df: pd.DataFrame, max_tabular_rows: int | None
+    ) -> tuple[pd.DataFrame, bool]:
+        if max_tabular_rows is not None and len(df) > max_tabular_rows:
+            return df.head(max_tabular_rows), True
+        return df, False
+
+    @staticmethod
+    def _format_cell_value(value) -> str:
+        """Render one cell for both the stats block and the markdown table.
+        Numeric values are comma-formatted (never scientific notation, so
+        an LLM can read them reliably); NaN/NaT become an empty string
+        rather than a literal "nan"; a literal "|" is substituted (not
+        escaped) since report_markdown_renderer.py's table parser splits
+        on "|" without any escape handling."""
+
+        if value is None:
+            return ""
+        try:
+            if pd.isna(value):
+                return ""
+        except (TypeError, ValueError):
+            pass
+
+        if isinstance(value, bool):
+            return "True" if value else "False"
+
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            number = None
+
+        if number is not None:
+            if number == int(number) and abs(number) < 1e15:
+                return f"{int(number):,}"
+            return f"{number:,.4f}".rstrip("0").rstrip(".")
+
+        text = str(value).replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+        return text.replace("|", "/").strip()
+
+    @staticmethod
+    def _dataframe_stats_block(df: pd.DataFrame) -> str:
+        """Verified, computed-by-pandas summary statistics per numeric
+        column — the primary numeric payload for the LLM to cite, since it
+        should never be left to eyeball totals/averages off a rendered
+        table itself."""
+
+        numeric_columns = [col for col in df.columns if pd.api.types.is_numeric_dtype(df[col])]
+
+        if not numeric_columns:
+            return "No numeric columns detected in this data."
+
+        lines = ["Summary statistics (computed across all rows):"]
+        for column in numeric_columns:
+            series = df[column].dropna()
+            if series.empty:
+                lines.append(f"- {column}: no non-null values.")
+                continue
+            lines.append(
+                f"- {column}: count={len(series)}, "
+                f"sum={DocumentProcessor._format_cell_value(series.sum())}, "
+                f"mean={DocumentProcessor._format_cell_value(series.mean())}, "
+                f"min={DocumentProcessor._format_cell_value(series.min())}, "
+                f"max={DocumentProcessor._format_cell_value(series.max())}"
+            )
+        return "\n".join(lines)
+
+    @staticmethod
+    def _dataframe_markdown_table(df: pd.DataFrame) -> str:
+        """GFM pipe table — survives a hard chunk-boundary cut far better
+        than a fixed-width df.to_string() table (pipes stay distinguishable
+        even once whitespace gets collapsed downstream; column alignment
+        does not), and parses directly via
+        report_markdown_renderer.py's existing table block support."""
+
+        headers = [DocumentProcessor._format_cell_value(column) for column in df.columns]
+        header_row = "| " + " | ".join(headers) + " |"
+        separator_row = "| " + " | ".join("---" for _ in headers) + " |"
+
+        if df.empty:
+            return f"{header_row}\n{separator_row}\n(no data rows)"
+
+        data_rows = [
+            "| " + " | ".join(DocumentProcessor._format_cell_value(value) for value in row) + " |"
+            for row in df.itertuples(index=False, name=None)
+        ]
+        return "\n".join([header_row, separator_row, *data_rows])
+
+    @staticmethod
+    def _render_tabular_block(
+        df: pd.DataFrame,
+        *,
+        heading: str | None,
+        max_tabular_rows: int | None,
+    ) -> str:
+        """Stats block first, then the table — every clip/budget mechanism
+        downstream (SpaReportGenerationService._clip,
+        report_retrieval_service.py's per-document/total budgets) truncates
+        from the tail, so putting verified numbers first maximizes the odds
+        they survive intact even when the full table gets cut."""
+
+        stats = DocumentProcessor._dataframe_stats_block(df)
+        truncated_df, truncated = DocumentProcessor._truncate_dataframe(df, max_tabular_rows)
+        table = DocumentProcessor._dataframe_markdown_table(truncated_df)
+
+        parts: list[str] = []
+        if heading:
+            parts.append(f"### {heading}")
+        parts.append(stats)
+        if truncated:
+            parts.append(
+                f"(stats computed across all {len(df)} rows; "
+                f"table below shows first {max_tabular_rows})"
+            )
+        parts.append(table)
+        return "\n\n".join(parts)
 
     @staticmethod
     def _call_pdf_extractor(
