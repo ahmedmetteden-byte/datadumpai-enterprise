@@ -4,7 +4,7 @@ This document describes the overall system design: how components interact, wher
 
 For server-specific deployment details (IPs, SSH, rollback commands), see [PRODUCTION.md](./PRODUCTION.md).
 
-> **This document was rewritten to match what's actually running in production.** The previous version described Streamlit as the primary authenticated application. That's no longer true: the product was rebuilt as a FastAPI + React SPA, and Streamlit is now dead code — still built and deployed as a container per `docker-compose.yml`, but unreachable from `app.getdatadump.com` (confirmed by tracing the live request path; see "Application" below). It has not been deleted yet, only retired from the request path, so it's documented here for completeness and to make its status unambiguous to anyone reading this cold.
+> **This document was rewritten to match what's actually running in production.** The previous version described Streamlit as the primary authenticated application. That's no longer true: the product was rebuilt as a FastAPI + React SPA. Streamlit (`app.py`, `ui/`, `application/`, and the `core/*.py`/`services/*.py` modules exclusive to it) had zero live traffic since that rebuild and has since been deleted from the repo entirely, along with its Docker service — see "Version history" below.
 
 ---
 
@@ -15,8 +15,7 @@ DataDumpAI Enterprise is a multi-surface product:
 | Surface | Technology | Role |
 |---------|------------|------|
 | **Marketing site** | Next.js 15 (App Router) | Public homepage, SEO, pricing, docs, contact |
-| **Application (live)** | FastAPI (`api/`) + React SPA (`web/`) | Authenticated workspace — projects, documents, AI reports, billing |
-| **Application (dead code)** | Streamlit (`app.py`, `ui/`, `application/`) | The original implementation. Still built and running as a container, but no live traffic reaches it — see below. Not yet deleted. |
+| **Application** | FastAPI (`api/`) + React SPA (`web/`) | Authenticated workspace — projects, documents, AI reports, billing |
 | **Webhook service** | FastAPI (`api/webhook_server.py`) | Paystack (and dormant Stripe) subscription events |
 | **Vector search** | Qdrant | Document chunk embeddings for retrieval-grounded report generation |
 | **Platform backend** | Supabase | Auth, PostgreSQL metadata, object storage |
@@ -63,14 +62,11 @@ The marketing site and application are **separate deployables** on the same serv
                               ┌────────────▼────────────┐
                               │       OpenAI API         │
                               └─────────────────────────┘
-
-   Docker app :8501 (Streamlit) also runs per docker-compose.yml,
-   but no nginx location routes to it — dead code path, not deleted.
 ```
 
 ---
 
-## Application (live): FastAPI + React SPA
+## Application: FastAPI + React SPA
 
 **Backend entry point:** `api/app.py` (product API), `api/webhook_server.py` (payment webhooks, separate process)
 **Frontend entry point:** `web/` — a Vite/React SPA, built to static files and served by its own nginx inside the `frontend` container (`web/nginx.conf`)
@@ -111,20 +107,16 @@ services/                        ← Shared business logic (used by api/, NOT by
 ├── report_retrieval_service.py  ← Facet-query retrieval + evidence assembly for report generation
 ├── spa_report_generation_service.py  ← Report prompt construction + OpenAI call + save
 ├── intelligence_rag_service.py  ← RAG for the chat/Copilot feature
-├── report_service.py            ← Report persistence (shared: read by both live and dead-code paths)
-├── project_service.py, document_service.py  ← Project/document persistence (shared)
+├── report_service.py            ← Report persistence
+├── project_service.py, document_service.py  ← Project/document persistence
 ├── billing_service.py           ← Paystack/Stripe facade
 └── ...
 
 core/
-├── current_user.py              ← Request-scoped CurrentUser via ContextVar; the correct mechanism
-│                                   for api/ and services/. Falls back to core/auth.py only when no
-│                                   override is bound — which is what lets the dead Streamlit code
-│                                   keep resolving its own session user without a separate code path.
-├── auth.py                      ← Streamlit session_state-backed auth. Do not call this directly
-│                                   from api/ or services/ — always go through core/current_user.py.
-│                                   (This exact bug — a live service calling core.auth directly —
-│                                   has been found and fixed multiple times; see "Known pitfalls" below.)
+├── current_user.py              ← Request-scoped CurrentUser via ContextVar; the only mechanism
+│                                   for api/ and services/. Fails closed (raises
+│                                   AuthenticationRequiredError / returns None) when no override is
+│                                   bound — no fallback to anything else.
 └── database.py                  ← Supabase client, user-scoped and service-role
 
 repositories/                    ← Data access (Supabase or JSON fallback), shared
@@ -144,26 +136,16 @@ qdrant/                          ← (external service, see docker-compose.yml) 
 
 ### Known pitfalls (read before touching auth-adjacent code)
 
-- **`core.auth` vs `core.current_user`**: any live-path service must resolve the current user via `core.current_user` (a bound `CurrentUser`, or `require_current_user()`), never by calling `core.auth.get_current_user()` directly. The latter is Streamlit-session-backed and returns `None` (or silently does nothing) inside a FastAPI request — this exact bug has broken checkout in production once and been found in two other services. `core/current_user.py`'s own fallback to `core.auth` is intentional (it's what keeps the dead Streamlit stack's auth working without a separate code path) and should not be "fixed" — the bug is specifically a *live* service reaching into `core.auth` directly, bypassing `core.current_user` entirely.
+- **Current-user resolution**: every live-path service must resolve the current user via `core.current_user` (a bound `CurrentUser`, or `require_current_user()`). This used to have a second, Streamlit-session-backed mechanism (`core/auth.py`) that a live service could accidentally call directly — that bug broke checkout in production once and was found in two other services before `core/auth.py` was deleted along with the rest of the Streamlit stack. `core/current_user.py` now has no fallback of any kind; a missing binding fails closed immediately.
 - **Workspace vs Project**: the API and UI call the top-level container a "workspace," but it is implemented as a single-level project — there is no multi-project-per-organization nesting, and no `WorkspaceType`/`SubscriptionPlan` database enum. Treat "workspace" and "project" as the same thing when reading this codebase.
 
 ---
 
-## Application (dead code): Streamlit
+## Retired: the original Streamlit application
 
-**Entry point:** `app.py` · **Framework:** Streamlit 1.x on Python 3.12
+The product's original implementation — `app.py`, `ui/` (67 files), `application/`, `services/ai_service.py`, plus a dozen `core/*.py` modules that existed only to support it (`auth.py`, `navigation.py`, `auth_callbacks.py`, and others) — has been deleted from the repo. It had zero live traffic since the FastAPI + React SPA rebuild; deletion just made that unreachability permanent by removing the code and its Docker service (`app`, port 8501) rather than leaving it dormant. Two shared, still-live files (`services/auth_service.py`, `core/database.py`'s admin-user HTTP helpers) had a couple of diagnostic-only calls into Streamlit-coupled tracing modules — those calls were replaced with plain logging rather than deleting the surrounding (real, non-Streamlit) auth logic. See git history around the "Retire dead Streamlit stack" commit for the full file list.
 
-Still built into the Docker image and still run as the `app` container (port 8501) per `docker-compose.yml` — but **no nginx location routes public traffic to it**. Zero imports connect it to `api/` or the live `services/*` call paths (only `services/ai_service.py` is Streamlit-exclusive; everything else it uses is shared with the live app). It has not been deleted because that decision is still pending; this section exists so nobody mistakes it for the live application.
-
-```
-app.py                          ← Streamlit entry, auth gate, routing
-├── ui/                         ← Streamlit pages and components
-├── application/                ← Use-case pipelines (report_pipeline.py, chat_pipeline.py, etc.)
-├── services/ai_service.py      ← The one Streamlit-exclusive service module
-└── core/auth.py, navigation.py ← Streamlit session/routing helpers
-```
-
-If/when this is retired for real: stop building/running the `app` service in `docker-compose.yml`, then delete `app.py`, `ui/`, `application/`, and `services/ai_service.py`.
+Not yet done (tracked separately, non-blocking): trimming the now-unused `streamlit` package and its companions from `requirements.txt` (blocked on a small refactor of `services/notification_service.py`, which still imports it for an in-app notification feature that was never reachable outside a real Streamlit session), and the matching `Dockerfile`/CI-script cleanup.
 
 ---
 
@@ -329,7 +311,7 @@ Run tests locally before deploying (`docker compose exec api python3 -m pytest t
 | Version | Stack | Notes |
 |---------|-------|-------|
 | Legacy (`/opt/datadump-ai`) | FastAPI + React + Postgres + Qdrant | Pre-Enterprise; kept for rollback |
-| v1.0 (`/opt/datadumpai-enterprise`) | Streamlit + Supabase + FastAPI webhooks | Superseded — Streamlit is now dead code, not deleted |
+| v1.0 (`/opt/datadumpai-enterprise`) | Streamlit + Supabase + FastAPI webhooks | Superseded — Streamlit code and its Docker service have been deleted |
 | **Current** | **FastAPI (`api/`) + React SPA (`web/`) + Supabase + Qdrant + FastAPI webhooks** | **Live production application** |
 | Marketing split | Next.js on PM2, `app.` subdomain for the product | Unchanged, still current |
 
@@ -341,7 +323,7 @@ Run tests locally before deploying (`docker compose exec api python3 -m pytest t
 |------|--------------|
 | [PRODUCTION.md](./PRODUCTION.md) | Server ops, env vars, deploy and rollback |
 | [docker-compose.yml](./docker-compose.yml) | Container definitions |
-| [Dockerfile](./Dockerfile) | Python services image (app/api/webhooks) |
+| [Dockerfile](./Dockerfile) | Python services image (api/webhooks) |
 | [web/Dockerfile](./web/Dockerfile) | Frontend SPA image |
 | [web/nginx.conf](./web/nginx.conf) | Frontend container's internal nginx — same-origin `/api` proxy |
 | [deploy/nginx-getdatadump-v1.conf](./deploy/nginx-getdatadump-v1.conf) | Reference nginx config (Streamlit-only era — historical, not current) |

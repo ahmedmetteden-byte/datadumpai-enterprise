@@ -2,7 +2,7 @@
 
 This document describes how DataDumpAI Enterprise is deployed in production. It is the single source of truth for server layout, routing, secrets, and operational procedures.
 
-**Last verified:** July 2026
+**Last verified:** August 2026 (post-Streamlit-retirement)
 
 ---
 
@@ -49,8 +49,11 @@ The server clones from GitHub. Local development may not have a remote configure
 |--------|---------|----------|
 | `https://getdatadump.com` | Public marketing site | PM2 → `:3000` |
 | `https://www.getdatadump.com` | Public marketing site (alias) | PM2 → `:3000` |
-| `https://app.getdatadump.com` | Authenticated Streamlit application | Docker → `:8501` |
-| `https://app.getdatadump.com/webhooks/*` | Billing webhooks (Stripe, Paystack) | Docker → `:8001` |
+| `https://app.getdatadump.com` | Authenticated application (React SPA) | Docker → `frontend` (`:3001` host / `:80` container) |
+| `https://app.getdatadump.com/api/*` | Product API (FastAPI) | Same-origin proxy from `frontend`'s nginx → `api` (`:8000`) |
+| `https://app.getdatadump.com/webhooks/*` | Billing webhooks (Paystack; Stripe code path present but disabled) | Docker → `:8001` |
+
+The original Streamlit application (`app.py`, `ui/`, `application/`) has been deleted — it had zero live traffic since the FastAPI + React SPA rebuild. See [SYSTEM_ARCHITECTURE.md](./SYSTEM_ARCHITECTURE.md) for the full current architecture.
 
 HTTP (port 80) on all domains redirects to HTTPS.
 
@@ -68,7 +71,8 @@ Nginx (:443 / :80)  —  host-level, not containerized
     │       └── proxy_pass → 127.0.0.1:3000   (PM2: datadump-marketing)
     │
     └── app.getdatadump.com
-            ├── /           → 127.0.0.1:8501   (Docker: Streamlit app)
+            ├── /           → 127.0.0.1:3001   (Docker: frontend — React SPA + nginx)
+            │                     └── /api/*  same-origin proxy → api:8000 (inside frontend's own nginx)
             └── /webhooks/  → 127.0.0.1:8001   (Docker: FastAPI webhooks)
 
 Legacy rollback stack (not serving public traffic):
@@ -86,14 +90,18 @@ Compose file: `docker-compose.yml` (run from `/opt/datadumpai-enterprise`).
 
 | Container | Service | Port | Command | Health check |
 |-----------|---------|------|---------|--------------|
-| `datadumpai-enterprise-app-1` | Streamlit application | `8501` | `streamlit run app.py` | `GET /_stcore/health` |
+| `datadumpai-frontend` | React SPA + nginx | `3001` (host) → `80` | nginx serving `web/dist`, proxies `/api/` | — |
+| `datadumpai-enterprise-api-1` | Product API (FastAPI) | `8000` | `uvicorn api.app:app` | `GET /health` |
 | `datadumpai-enterprise-webhooks-1` | Billing webhooks | `8001` | `uvicorn api.webhook_server:app` | `GET /health` |
+| `datadumpai-enterprise-qdrant` | Vector search | `6333`/`6334` | `qdrant/qdrant` image | — |
 
-Both containers:
+`api` and `webhooks`:
 
 - Read secrets from `/opt/datadumpai-enterprise/.env`
 - Share the `app_data` Docker volume mounted at `/app/data`
 - Restart policy: `unless-stopped`
+
+The Streamlit `app` service (port `8501`) has been removed from `docker-compose.yml` — the code it ran (`app.py`, `ui/`, `application/`) has been deleted from the repo.
 
 ### Common Docker commands
 
@@ -108,11 +116,11 @@ docker compose build
 docker compose up -d
 
 # Logs
-docker compose logs -f app
+docker compose logs -f api
 docker compose logs -f webhooks
 
 # Health checks (from the server)
-curl -s http://127.0.0.1:8501/_stcore/health
+curl -s http://127.0.0.1:8000/health
 curl -s http://127.0.0.1:8001/health
 ```
 
@@ -162,8 +170,8 @@ Reference copy in the repo: `deploy/nginx-getdatadump-v1.conf` (Streamlit-only l
 | Server name | Location | Upstream | Notes |
 |-------------|----------|----------|-------|
 | `getdatadump.com`, `www.getdatadump.com` | `/` | `http://127.0.0.1:3000` | WebSocket headers for Next.js |
-| `app.getdatadump.com` | `/` | `http://127.0.0.1:8501` | Streamlit; `proxy_read_timeout 86400` |
-| `app.getdatadump.com` | `/webhooks/` | `http://127.0.0.1:8001` | Stripe and Paystack endpoints |
+| `app.getdatadump.com` | `/` | `http://127.0.0.1:3001` | React SPA (`frontend` container); `/api/*` is proxied same-origin inside that container's own nginx, not by this host rule |
+| `app.getdatadump.com` | `/webhooks/` | `http://127.0.0.1:8001` | Paystack endpoint (Stripe code path present but disabled) |
 
 `client_max_body_size` is `50m` on the app vhost (document uploads).
 
@@ -223,7 +231,7 @@ docker compose build --no-cache frontend && docker compose up -d frontend
 
 See `web/.env.example` and [web/README.md](./web/README.md#frontend-environment).
 
-### Streamlit + webhooks (`.env` on server)
+### Backend / webhooks (`.env` on server)
 
 Generated from `.env.example`. Production values are **never committed**. Use `scripts/generate_production_env.sh` to bootstrap from the legacy stack, then add Supabase keys manually.
 
@@ -273,7 +281,7 @@ ssh root@104.248.169.183
 cd /opt/datadumpai-enterprise
 git pull origin main
 
-# Backend (Streamlit + webhooks)
+# Backend (api + webhooks; frontend rebuilds too if web/ changed)
 docker compose build
 docker compose up -d
 
@@ -284,7 +292,7 @@ npm run build
 pm2 restart datadump-marketing
 
 # Verify
-curl -s http://127.0.0.1:8501/_stcore/health
+curl -s http://127.0.0.1:8000/health
 curl -s http://127.0.0.1:8001/health
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3000/
 ```
@@ -335,7 +343,7 @@ The legacy containers (`datadump-ai-*` on ports 8080/8000) remain running and im
 
 ### Level 2 — Roll back application containers
 
-Use when the new Streamlit or webhook containers are broken but nginx routing is correct.
+Use when the `api`, `webhooks`, or `frontend` containers are broken but nginx routing is correct.
 
 ```bash
 cd /opt/datadumpai-enterprise
@@ -372,7 +380,7 @@ Only if Postgres/Qdrant data from the old platform must be recovered:
 curl -sk https://getdatadump.com/api/v1/system/health
 
 # Or current stack health
-curl -sk https://app.getdatadump.com/_stcore/health
+curl -sk https://app.getdatadump.com/api/v1/health
 curl -sk https://www.getdatadump.com/ -o /dev/null -w "%{http_code}\n"
 ```
 
