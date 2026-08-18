@@ -140,6 +140,53 @@ class SpaReportGenerationService:
             sources.append({"filename": filename, "excerpt": _clip(text, 6000)})
         return sources
 
+    def _find_previous_report(
+        self, workspace_id: str, template_id: str
+    ) -> dict[str, Any] | None:
+        """Most recent previously-saved SPA report for this workspace+template,
+        or None if there isn't one (brand-new workspace, first report of this
+        template, or only legacy/non-SPA reports exist). Must run before the
+        report currently being generated is saved, so it can never match
+        itself.
+
+        Note: ReportService.get_reports()'s top-level "created_at" is computed
+        at call time, not the report's actual creation time — ordering must
+        use report_data["createdAt"] instead, which is written once by
+        generate() and never touched again.
+        """
+
+        try:
+            entries = ReportService.get_reports(
+                workspace_id, access_token=self._access_token
+            )
+        except Exception:
+            logger.exception(
+                "Failed to load prior reports for comparison workspace=%s",
+                workspace_id,
+            )
+            return None
+
+        candidates: list[dict[str, Any]] = []
+        for entry in entries:
+            data = entry.get("report_data")
+            if not isinstance(data, dict):
+                continue  # legacy Streamlit report, no report_data sidecar
+            if data.get("templateId") != template_id:
+                continue
+            content = data.get("content")
+            created_at = data.get("createdAt")
+            if not isinstance(content, str) or not content.strip():
+                continue
+            if not isinstance(created_at, str) or not created_at:
+                continue
+            candidates.append(data)
+
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda d: d["createdAt"], reverse=True)
+        return candidates[0]
+
     def _gather_sources(
         self,
         workspace_id: str,
@@ -211,6 +258,7 @@ class SpaReportGenerationService:
         template_name: str,
         sources: list[dict[str, str]],
         instructions: str | None = None,
+        previous_report: dict[str, Any] | None = None,
     ) -> str:
         if not self._client or not sources:
             return self._fallback_markdown(
@@ -250,6 +298,32 @@ class SpaReportGenerationService:
             if source_count > 1
             else ""
         )
+        comparison_context = ""
+        comparison_requirement = ""
+        if (
+            previous_report
+            and isinstance(previous_report.get("content"), str)
+            and previous_report["content"].strip()
+        ):
+            previous_excerpt = _clip(previous_report["content"], 4000)
+            previous_created = previous_report.get("createdAt") or "an earlier date"
+            comparison_context = (
+                f"\n\n### Previous Report (for comparison only — {previous_created})\n"
+                "This is the most recent prior report of the same type in this workspace. "
+                "It is provided ONLY so you can identify what has changed since it was written. "
+                "Do not treat it as evidence for new facts, and do not cite it as a source for "
+                "findings in any other section — only the 'Changes Since Last Report' section "
+                f"should reference it.\n{previous_excerpt}"
+            )
+            comparison_requirement = (
+                "## Changes Since Last Report\n"
+                "Compare this report against the previous report supplied above. Call out: "
+                "what is new since then, what has been resolved or is no longer present, and "
+                "how any key figures moved (cite both the old and new number when both reports "
+                "state one). If nothing material changed, say so plainly rather than inventing "
+                "a difference. Do not use this section to introduce findings that belong in "
+                "Key Findings — its purpose is strictly the delta between the two reports.\n\n"
+            )
         prompt = (
             f"Write a {template_name} titled \"{title}\" covering the period '{period_name}', "
             "using only the evidence provided below.\n"
@@ -287,11 +361,12 @@ class SpaReportGenerationService:
             "generic advice, but recommendations that follow directly from the findings above. Each "
             "recommendation MUST start a new line with '1. ', '2. ', etc. — never run multiple "
             "recommendations together in one paragraph.\n\n"
+            f"{comparison_requirement}"
             "## Conclusion\n"
             "2-3 sentences closing the report and restating what should happen next.\n\n"
             "Do not wrap your answer in a code fence. Output raw markdown starting directly with the "
             "## Executive Summary heading.\n\n"
-            f"Evidence:\n{evidence}"
+            f"Evidence:\n{evidence}{comparison_context}"
         )
         try:
             response = self._client.chat.completions.create(
@@ -348,6 +423,7 @@ class SpaReportGenerationService:
         period = period_by_id(period_id)
         workspace_name = str(project.get("name") or "Workspace")
         report_title = (title or "").strip() or f"{template['name']} — {period['name']}"
+        previous_report = self._find_previous_report(workspace_id, template_id)
         sources = self._gather_sources(
             workspace_id,
             project,
@@ -361,6 +437,7 @@ class SpaReportGenerationService:
             template_name=template["name"],
             sources=sources,
             instructions=instructions,
+            previous_report=previous_report,
         )
         report = ReportData(
             report_type=template["name"],

@@ -244,3 +244,333 @@ def test_generated_report_is_retrievable_after_the_request_ends(
     ]
     reloaded_match = next(item for item in reloaded if item["id"] == record["id"])
     assert reloaded_match["status"] == "ready"
+
+
+class _FakeChatCompletion:
+    """Captures the prompt sent to chat.completions.create() and returns a
+    canned response, so tests can inspect real prompt construction without
+    needing an OPENAI_API_KEY or hitting the network."""
+
+    def __init__(self, response_text: str = "## Executive Summary\nOK.\n"):
+        self.response_text = response_text
+        self.calls: list[dict] = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+
+        class _Choice:
+            def __init__(self, content: str):
+                self.message = type("Msg", (), {"content": content})()
+
+        class _Response:
+            def __init__(self, content: str):
+                self.choices = [_Choice(content)]
+
+        return _Response(self.response_text)
+
+
+def _fake_openai_client(response_text: str = "## Executive Summary\nOK.\n"):
+    completions = _FakeChatCompletion(response_text)
+    chat = type("Chat", (), {"completions": completions})()
+    client = type("Client", (), {"chat": chat})()
+    return client, completions
+
+
+def _seed_report(
+    project_id: str,
+    *,
+    name: str,
+    template_id: str,
+    created_at: str,
+    content: str,
+    report_id: str | None = None,
+) -> dict:
+    """Write a saved SPA-shaped report directly (bypassing generate()) so
+    tests can control createdAt/templateId precisely."""
+
+    saved = ReportService.save_report(
+        project_id, name, report_text=content, source_documents=[]
+    )
+    record = {
+        "id": report_id or f"rpt_{name}",
+        "filename": saved["filename"],
+        "name": name,
+        "path": saved["path"],
+        "size": saved["size"],
+        "createdAt": created_at,
+        "updatedAt": created_at,
+        "reportType": name,
+        "templateId": template_id,
+        "periodId": "custom",
+        "periodName": "Custom / Ad hoc",
+        "status": "draft",
+        "content": content,
+        "sourceDocuments": [],
+        "instructions": None,
+    }
+    ReportService.save_report_metadata(
+        project_id,
+        saved["filename"],
+        report_type=name,
+        source_documents=[],
+        report_data=record,
+    )
+    return record
+
+
+def test_find_previous_report_matches_same_template_id_only(
+    isolated_env, project_service: ProjectService
+):
+    project = project_service.create_project("Template Match Test Project")
+    _seed_report(
+        project["id"],
+        name="Other Template Report",
+        template_id="risk_assessment",
+        created_at="2026-01-01T00:00:00+00:00",
+        content="Risk content.",
+    )
+    matching = _seed_report(
+        project["id"],
+        name="Executive Summary Report",
+        template_id="executive_summary",
+        created_at="2026-01-02T00:00:00+00:00",
+        content="Exec content.",
+    )
+
+    found = SpaReportGenerationService()._find_previous_report(
+        project["id"], "executive_summary"
+    )
+
+    assert found is not None
+    assert found["id"] == matching["id"]
+
+
+def test_find_previous_report_returns_most_recent_by_created_at_field(
+    isolated_env, project_service: ProjectService
+):
+    """Ordering must use report_data['createdAt'], not save order and not
+    ReportService.get_reports()'s outer (call-time-computed) 'created_at'."""
+
+    project = project_service.create_project("Ordering Test Project")
+    # Saved FIRST but stamped with the LATER createdAt.
+    later = _seed_report(
+        project["id"],
+        name="Later Report Saved First",
+        template_id="executive_summary",
+        created_at="2026-06-01T00:00:00+00:00",
+        content="Later content.",
+    )
+    # Saved SECOND but stamped with the EARLIER createdAt.
+    _seed_report(
+        project["id"],
+        name="Earlier Report Saved Second",
+        template_id="executive_summary",
+        created_at="2026-01-01T00:00:00+00:00",
+        content="Earlier content.",
+    )
+
+    found = SpaReportGenerationService()._find_previous_report(
+        project["id"], "executive_summary"
+    )
+
+    assert found is not None
+    assert found["id"] == later["id"]
+
+
+def test_find_previous_report_skips_legacy_reports_without_report_data(
+    isolated_env, project_service: ProjectService
+):
+    project = project_service.create_project("Legacy Skip Test Project")
+    # A legacy/non-SPA report: no source_documents means save_report()
+    # never writes a report_data sidecar at all.
+    ReportService.save_report(
+        project["id"],
+        "Legacy Streamlit Report",
+        report_text="Old content.",
+    )
+    valid = _seed_report(
+        project["id"],
+        name="Valid SPA Report",
+        template_id="executive_summary",
+        created_at="2026-01-01T00:00:00+00:00",
+        content="Valid content.",
+    )
+
+    found = SpaReportGenerationService()._find_previous_report(
+        project["id"], "executive_summary"
+    )
+
+    assert found is not None
+    assert found["id"] == valid["id"]
+
+
+def test_find_previous_report_skips_malformed_report_data(
+    isolated_env, project_service: ProjectService
+):
+    project = project_service.create_project("Malformed Skip Test Project")
+    saved = ReportService.save_report(
+        project["id"],
+        "Malformed Report",
+        report_text="Some content.",
+        source_documents=[],
+    )
+    # report_data present but missing createdAt/content.
+    ReportService.save_report_metadata(
+        project["id"],
+        saved["filename"],
+        report_type="Malformed Report",
+        source_documents=[],
+        report_data={"id": "rpt_malformed", "templateId": "executive_summary"},
+    )
+    valid = _seed_report(
+        project["id"],
+        name="Valid SPA Report",
+        template_id="executive_summary",
+        created_at="2026-01-01T00:00:00+00:00",
+        content="Valid content.",
+    )
+
+    found = SpaReportGenerationService()._find_previous_report(
+        project["id"], "executive_summary"
+    )
+
+    assert found is not None
+    assert found["id"] == valid["id"]
+
+
+def test_find_previous_report_returns_none_when_nothing_matches(
+    isolated_env, project_service: ProjectService
+):
+    project = project_service.create_project("No Match Test Project")
+    _seed_report(
+        project["id"],
+        name="Different Template Report",
+        template_id="risk_assessment",
+        created_at="2026-01-01T00:00:00+00:00",
+        content="Content.",
+    )
+
+    found = SpaReportGenerationService()._find_previous_report(
+        project["id"], "executive_summary"
+    )
+
+    assert found is None
+
+
+def test_find_previous_report_returns_none_for_empty_workspace(
+    isolated_env, project_service: ProjectService
+):
+    project = project_service.create_project("Empty Workspace Test Project")
+
+    found = SpaReportGenerationService()._find_previous_report(
+        project["id"], "executive_summary"
+    )
+
+    assert found is None
+
+
+def test_generate_markdown_prompt_unchanged_when_no_previous_report():
+    svc = SpaReportGenerationService()
+    client, completions = _fake_openai_client()
+    svc._client = client
+    sources = [{"filename": "a.pdf", "excerpt": "Some evidence."}]
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_name="Executive Summary",
+        sources=sources,
+    )
+    prompt_without_param = completions.calls[0]["messages"][1]["content"]
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_name="Executive Summary",
+        sources=sources,
+        previous_report=None,
+    )
+    prompt_with_explicit_none = completions.calls[1]["messages"][1]["content"]
+
+    assert prompt_without_param == prompt_with_explicit_none
+    assert "Changes Since Last Report" not in prompt_without_param
+
+
+def test_generate_markdown_includes_changes_section_when_previous_report_present():
+    svc = SpaReportGenerationService()
+    client, completions = _fake_openai_client()
+    svc._client = client
+    sources = [{"filename": "a.pdf", "excerpt": "Some evidence."}]
+    previous_report = {
+        "content": "## Executive Summary\nVendor contract was unsigned.\nRevenue: $1.2M.",
+        "createdAt": "2026-01-01T00:00:00+00:00",
+    }
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_name="Executive Summary",
+        sources=sources,
+        previous_report=previous_report,
+    )
+    prompt = completions.calls[0]["messages"][1]["content"]
+
+    assert "## Changes Since Last Report" in prompt
+    assert prompt.index("## Strategic Recommendations") < prompt.index(
+        "## Changes Since Last Report"
+    )
+    assert prompt.index("## Changes Since Last Report") < prompt.index("## Conclusion")
+    assert "Vendor contract was unsigned" in prompt
+    assert "Revenue: $1.2M" in prompt
+
+
+def test_generate_markdown_omits_changes_section_when_previous_report_has_no_content():
+    svc = SpaReportGenerationService()
+    client, completions = _fake_openai_client()
+    svc._client = client
+    sources = [{"filename": "a.pdf", "excerpt": "Some evidence."}]
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_name="Executive Summary",
+        sources=sources,
+        previous_report={"content": "", "createdAt": "2026-01-01T00:00:00+00:00"},
+    )
+    prompt = completions.calls[0]["messages"][1]["content"]
+
+    assert "Changes Since Last Report" not in prompt
+
+
+def test_generate_wires_previous_report_lookup_across_calls(
+    isolated_env, project_service: ProjectService, monkeypatch
+):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    project = project_service.create_project("Wiring Test Project")
+
+    first = SpaReportGenerationService().generate(
+        workspace_id=project["id"],
+        project=project,
+        template_id="executive_summary",
+        period_id="custom",
+    )
+
+    calls: list[tuple[str, str]] = []
+    svc = SpaReportGenerationService()
+    original = svc._find_previous_report
+
+    def _spy(workspace_id, template_id):
+        calls.append((workspace_id, template_id))
+        return original(workspace_id, template_id)
+
+    monkeypatch.setattr(svc, "_find_previous_report", _spy)
+
+    second = svc.generate(
+        workspace_id=project["id"],
+        project=project,
+        template_id="executive_summary",
+        period_id="custom",
+    )
+
+    assert calls == [(project["id"], "executive_summary")]
+    assert second["id"] != first["id"]
