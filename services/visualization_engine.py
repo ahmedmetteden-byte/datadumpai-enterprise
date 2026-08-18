@@ -18,7 +18,7 @@ EXECUTIVE_DASHBOARD_HEADING = "Executive Dashboard"
 LEGACY_VISUAL_ANALYTICS_HEADING = "Visual Analytics"
 
 CURRENCY_PATTERN = re.compile(
-    r"(?:[$€£₦]\s?[\d,]+(?:\.\d{1,2})?|[\d,]+(?:\.\d{1,2})?\s?(?:USD|EUR|GBP|NGN|million|billion|bn|m))",
+    r"(?:[$€£₦]\s?[\d,]+(?:\.\d{1,2})?|[\d,]+(?:\.\d{1,2})?\s?(?:USD|EUR|GBP|NGN|million|billion|bn|m)\b)",
     re.IGNORECASE,
 )
 PERCENTAGE_PATTERN = re.compile(r"\b\d+(?:\.\d+)?\s?%")
@@ -435,6 +435,8 @@ def decide_visualization_strategies(
         strategies.append(VisualizationStrategy.TABLE_ONLY)
         if data_profile.contains_dates:
             strategies.append(VisualizationStrategy.TIMELINE)
+        if data_profile.contains_currency or data_profile.contains_percentages:
+            strategies.append(VisualizationStrategy.BAR_CHART)
 
     elif report_type == ReportType.RISK:
         strategies.append(VisualizationStrategy.RISK_MATRIX)
@@ -460,6 +462,19 @@ def decide_visualization_strategies(
             strategies.append(VisualizationStrategy.BAR_CHART)
 
     if intent == ReportIntent.EXECUTIVE_BRIEF:
+        # EXECUTIVE_BRIEF intent excludes bar/line/pie charts below, but if
+        # one was chosen because the content has genuine quantitative
+        # signal (currency, percentages, etc.), substitute KPI cards rather
+        # than silently dropping the visualization entirely.
+        had_chart_strategy = any(
+            strategy
+            in {
+                VisualizationStrategy.BAR_CHART,
+                VisualizationStrategy.LINE_CHART,
+                VisualizationStrategy.PIE_CHART,
+            }
+            for strategy in strategies
+        )
         strategies = [
             strategy
             for strategy in strategies
@@ -472,6 +487,8 @@ def decide_visualization_strategies(
                 VisualizationStrategy.TABLE_ONLY,
             }
         ] or strategies[:2]
+        if had_chart_strategy and VisualizationStrategy.KPI_CARDS not in strategies:
+            strategies.append(VisualizationStrategy.KPI_CARDS)
 
     elif intent == ReportIntent.PRESENTATION:
         if VisualizationStrategy.BAR_CHART not in strategies and data_profile.has_quantitative_signal():
@@ -661,12 +678,112 @@ def _financial_series(report_data: ReportData, text: str) -> list[dict[str, Any]
     return []
 
 
-def _kpi_items(report_data: ReportData) -> list[dict[str, Any]]:
+_FINDING_HEADING_PATTERN = re.compile(r"^###\s+\*\*(.+?)\*\*\s*$", re.MULTILINE)
+_SECTION_HEADING_PATTERN = re.compile(r"^##\s+(?!#)", re.MULTILINE)
+
+
+_KPI_VALUE_PATTERN = re.compile(
+    r"^(?P<currency_symbol>[$€£₦])?\s?(?P<number>[\d,]+(?:\.\d+)?)\s?"
+    r"(?P<suffix>%|USD|EUR|GBP|NGN|million|billion|bn|m)?$",
+    re.IGNORECASE,
+)
+
+
+def _normalize_kpi_value(raw: str) -> tuple[float, str] | None:
+    """Parse a matched currency/percentage figure into (numeric magnitude,
+    unit key), so figures that share a unit can be grouped onto one
+    comparable chart axis (a bar chart mixing e.g. "68.0%" with "N1,558.7
+    billion" on the same axis would be visually meaningless)."""
+
+    match = _KPI_VALUE_PATTERN.match(raw.strip())
+    if not match:
+        return None
+
+    try:
+        number = float(match.group("number").replace(",", ""))
+    except ValueError:
+        return None
+
+    unit = (match.group("currency_symbol") or match.group("suffix") or "").lower()
+    return number, unit
+
+
+def _extract_finding_kpis(text: str) -> dict[str, float]:
+    """Pull headline KPI values from the report's own "### **Finding**"
+    sub-headings — the structured shape the report-generation prompt
+    enforces for every finding (bolded title, then explanation, then
+    Confidence/Source lines).
+
+    Using the model's own bolded finding title as the label is far safer
+    than deriving one from a keyword regex: it's human-readable text the
+    model already wrote about that specific figure, not a guess about
+    which nearby number a keyword refers to. Values are grouped by unit
+    and only the largest same-unit group is kept, so the resulting chart
+    never plots incompatible magnitudes against each other.
+    """
+
+    candidates: list[tuple[str, float, str]] = []
+    headings = list(_FINDING_HEADING_PATTERN.finditer(text))
+    section_starts = [m.start() for m in _SECTION_HEADING_PATTERN.finditer(text)]
+
+    for index, match in enumerate(headings):
+        start = match.end()
+        # Bound the body by whichever comes first: the next finding, or the
+        # next top-level "## " section (e.g. "## Detailed Analysis") — the
+        # last finding in "## Key Findings" would otherwise sweep in every
+        # section that follows, since it has no next "###" heading to stop at.
+        next_finding = headings[index + 1].start() if index + 1 < len(headings) else len(text)
+        next_section = next((pos for pos in section_starts if pos > start), len(text))
+        end = min(next_finding, next_section)
+        body = text[start:end]
+
+        # Prefer the LAST figure in the body over the first: findings are
+        # commonly phrased as "grew from X to Y", and the ending/resulting
+        # value is the more meaningful headline number to surface.
+        figure_matches = list(CURRENCY_PATTERN.finditer(body)) or list(PERCENTAGE_PATTERN.finditer(body))
+        if not figure_matches:
+            continue
+
+        normalized = _normalize_kpi_value(figure_matches[-1].group(0))
+        if normalized is None:
+            continue
+
+        label = match.group(1).strip()
+        if label:
+            candidates.append((label, normalized[0], normalized[1]))
+
+    if not candidates:
+        return {}
+
+    groups: dict[str, list[tuple[str, float]]] = {}
+    for label, number, unit in candidates:
+        groups.setdefault(unit, []).append((label, number))
+
+    # Keep only the unit shared by the most findings, so the resulting bar
+    # chart never plots incompatible magnitudes (e.g. a 68% figure next to
+    # a 1,558.7-billion figure) against each other on one axis.
+    winning = max(groups.values(), key=len)
+
+    kpis: dict[str, float] = {}
+    for label, number in winning:
+        if label not in kpis:
+            kpis[label] = number
+        if len(kpis) >= 6:
+            break
+
+    return kpis
+
+
+def _kpi_items(report_data: ReportData, text: str = "") -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
 
     for key, value in report_data.kpis.items():
         label = key.replace("_", " ").title()
         items.append({"label": label, "value": value})
+
+    if not items and text:
+        for label, value in _extract_finding_kpis(text).items():
+            items.append({"label": label, "value": value})
 
     health_score = report_data.charts.get("health_score")
     if health_score is not None and not any(item["label"] == "Health Score" for item in items):
@@ -815,7 +932,7 @@ def build_visualization_blocks(
             priority += 1
 
         elif strategy == VisualizationStrategy.KPI_CARDS:
-            items = _kpi_items(report_data)
+            items = _kpi_items(report_data, text)
             if not items:
                 continue
             blocks.append(

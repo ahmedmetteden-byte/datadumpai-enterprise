@@ -181,6 +181,108 @@ def test_financial_reports_extract_real_values_from_a_markdown_table():
     assert [item["value"] for item in series] == [1200000.0, 1450000.0, 1600000.0, 1900000.0]
 
 
+EXECUTIVE_SUMMARY_FINDINGS_DOCUMENT = """
+=== SOURCE DOCUMENT: Annual_Statistical_Market_Report.pdf ===
+
+## Executive Summary
+The industry achieved a gross written premium of N1,558.7 billion in 2024, a 49.4% increase from 2023. The passage of the Reform Bill modernizes the regulatory framework.
+
+## Key Findings
+
+### **Consistent Growth in Gross Premiums**
+Gross written premiums increased from N789.6 billion in 2022 to N1,558.7 billion in 2024. Growth rate reached a new high.
+**Confidence:** High — Supported by consistent data across multiple years.
+**Source:** Annual_Statistical_Market_Report.pdf.
+
+### **Dominance of Non-Life Insurance Segment**
+The non-life segment accounts for 68.0% of the gross premium pool in 2024.
+**Confidence:** High — Consistent data.
+**Source:** Annual_Statistical_Market_Report.pdf.
+
+### **Surge in Gross Claims**
+Gross claims reported in 2024 grew by 50.9% to N635.5 billion.
+**Confidence:** Medium — Supported by recent data.
+**Source:** Annual_Statistical_Market_Report.pdf.
+
+### **Technological Integration and Modernization**
+The implementation of digital tools and systems, such as Microsoft Office 365 and an Electronic Documentation Management System, has improved operational efficiency.
+**Confidence:** Medium — Mentioned in recent reports.
+**Source:** Annual_Statistical_Market_Report.pdf.
+
+## Detailed Analysis
+The market grew steadily across the period under review.
+
+## Conclusion
+The industry is on a positive trajectory.
+"""
+
+
+def test_executive_summary_reports_get_kpi_cards_from_findings():
+    """Regression test for a real production report (NAICOM Statistical
+    Report, Executive Summary template): EXECUTIVE_BRIEF intent only
+    allows KPI_CARDS among numeric chart types, and a REGULATORY-classified
+    report (this one, due to "regulatory"/reform-bill language) never
+    checked for a KPI signal before — so no chart was ever produced for
+    this exact real-world scenario, reproducing the original user report."""
+
+    # Constructed directly (not via _base_report_data()/extract_report_data(),
+    # which pre-populates generic synthetic KPIs) to match how the live SPA
+    # report-generation flow actually builds ReportData — narrative only,
+    # kpis left empty — which is the real-world condition this regression
+    # test reproduces.
+    report_data = ReportData(
+        report_type="Executive Summary",
+        title="Executive Summary — Custom / Ad hoc",
+        narrative=EXECUTIVE_SUMMARY_FINDINGS_DOCUMENT,
+    )
+    enriched = apply_visualizations(
+        report_data,
+        user_report_type="Executive Summary",
+        document_text=EXECUTIVE_SUMMARY_FINDINGS_DOCUMENT,
+        include_charts=True,
+        force_generate=True,
+    )
+
+    blocks = enriched.charts["visualizations"]
+    assert blocks, "expected at least one visualization block"
+    kpi_blocks = [block for block in blocks if block["type"] == VisualizationStrategy.KPI_CARDS.value]
+    assert kpi_blocks, "expected a KPI_CARDS block"
+
+    items = kpi_blocks[0]["data"]["items"]
+    # "Microsoft Office 365" must not be mistaken for a currency figure
+    # ("365 million"-style word-boundary bug), and the mismatched-unit
+    # 68.0% finding must be dropped in favor of the larger same-unit
+    # (billion-naira) group so the chart doesn't plot incompatible scales.
+    labels = {item["label"] for item in items}
+    assert "Technological Integration and Modernization" not in labels
+    assert "Dominance of Non-Life Insurance Segment" not in labels
+    assert labels == {"Consistent Growth in Gross Premiums", "Surge in Gross Claims"}
+
+    values = {item["label"]: item["value"] for item in items}
+    assert values["Consistent Growth in Gross Premiums"] == 1558.7
+    assert values["Surge in Gross Claims"] == 635.5
+    for item in items:
+        assert isinstance(item["value"], float)
+
+    # Must actually be renderable — this is exactly the crash this test
+    # guards against: KPI_CARDS renders as a Plotly bar chart, which
+    # requires float() on every item's value.
+    figures = build_report_chart_figures(enriched.charts)
+    assert figures
+
+
+def test_currency_pattern_does_not_match_across_word_boundaries():
+    """"Microsoft 365" (digits immediately followed by a word starting
+    with "m") must not be treated as a "365 million"-style currency
+    figure — the suffix alternatives need a word boundary."""
+
+    from services.visualization_engine import CURRENCY_PATTERN
+
+    assert CURRENCY_PATTERN.search("Microsoft Office 365 was deployed") is None
+    assert CURRENCY_PATTERN.search("revenue of $5m was reported") is not None
+    assert CURRENCY_PATTERN.search("grew to 12.4 million users") is not None
+
+
 def test_risk_reports_generate_risk_matrix():
     report_data = _base_report_data(RISK_DOCUMENT, report_type="Risk Assessment Report")
     enriched = apply_visualizations(
