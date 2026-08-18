@@ -93,8 +93,33 @@ class DocumentService:
         filename = self._safe_filename(uploaded_file.name)
 
         if not overwrite:
-            existing = self.get_documents(project_id)
-            if any(document["filename"] == filename for document in existing):
+            from core.workspace_context import is_quick_report
+
+            if is_quick_report(project_id):
+                # Quick Report is a virtual, session-scoped workspace with
+                # no persisted project record to check against — raw
+                # storage is the only source of truth available here.
+                existing_filenames = {
+                    document["filename"] for document in self.get_documents(project_id)
+                }
+            else:
+                # Check the project's own document list (the same source of
+                # truth the Library UI and delete endpoint use), not a raw
+                # storage listing — a prior delete whose storage-level blob
+                # removal silently failed can leave an orphaned file behind
+                # that would otherwise block re-uploading the same filename
+                # forever.
+                from services.project_service import ProjectService
+
+                project = ProjectService(
+                    current_user=self._current_user,
+                    access_token=self.access_token,
+                ).get_project(project_id)
+                existing_filenames = {
+                    str(document.get("filename"))
+                    for document in (project.get("documents") or [])
+                }
+            if filename in existing_filenames:
                 raise ValueError(f"Document already exists: {filename!r}")
 
         content = uploaded_file.read()

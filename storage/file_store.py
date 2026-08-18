@@ -28,6 +28,13 @@ logger = logging.getLogger(__name__)
 _STORAGE_DOWNLOAD_MAX_ATTEMPTS = 3
 _STORAGE_DOWNLOAD_RETRY_DELAY_SECONDS = 1.0
 
+# Same rationale as the download retry above, applied to deletes — a
+# transient failure here used to be silently swallowed by the caller,
+# leaving the blob orphaned in storage forever while the app believed it
+# was gone.
+_STORAGE_DELETE_MAX_ATTEMPTS = 3
+_STORAGE_DELETE_RETRY_DELAY_SECONDS = 1.0
+
 
 class FileStore:
     """Read and write project files across storage backends."""
@@ -197,8 +204,7 @@ class FileStore:
 
         if self._backend == "supabase" or self._looks_like_storage_key(storage_key):
             key = self._normalize_key(storage_key)
-            client = self._supabase_client()
-            client.storage.from_(config.SUPABASE_STORAGE_BUCKET).remove([key])
+            self._remove_from_supabase(key)
 
     def exists(self, storage_key: str) -> bool:
         try:
@@ -225,12 +231,25 @@ class FileStore:
         if self._backend == "supabase":
             prefix = f"{self._user_id}/{storage_scope}/{category}/"
             client = self._supabase_client()
-            entries = client.storage.from_(config.SUPABASE_STORAGE_BUCKET).list(prefix)
+            bucket = client.storage.from_(config.SUPABASE_STORAGE_BUCKET)
             names: list[str] = []
-            for entry in entries or []:
-                name = entry.get("name")
-                if name and not name.endswith("/"):
-                    names.append(name)
+            page_size = 100
+            offset = 0
+            # Supabase Storage's list() caps at 100 objects per call and
+            # does not paginate on its own — without this loop, any
+            # project with more than 100 files silently loses visibility
+            # into the rest (affects duplicate-checking, delete, download).
+            while True:
+                entries = bucket.list(prefix, {"limit": page_size, "offset": offset})
+                if not entries:
+                    break
+                for entry in entries:
+                    name = entry.get("name")
+                    if name and not name.endswith("/"):
+                        names.append(name)
+                if len(entries) < page_size:
+                    break
+                offset += page_size
             return sorted(names)
 
         folder = self._local_root(project_id) / category
@@ -354,6 +373,46 @@ class FileStore:
         raise RuntimeError(
             f"Could not download {Path(key).name!r} from storage after "
             f"{_STORAGE_DOWNLOAD_MAX_ATTEMPTS} attempts. Please try again."
+        ) from last_error
+
+    def _remove_from_supabase(self, key: str) -> None:
+        """Delete one object from Supabase Storage, retrying transient
+        failures with backoff. Raises RuntimeError with a clean message —
+        never the raw client exception — if every attempt fails, so a
+        genuine failure surfaces instead of leaving an orphaned blob behind
+        while callers believe the delete succeeded."""
+
+        last_error: Exception | None = None
+
+        for attempt in range(1, _STORAGE_DELETE_MAX_ATTEMPTS + 1):
+            try:
+                client = self._supabase_client()
+                client.storage.from_(config.SUPABASE_STORAGE_BUCKET).remove([key])
+                return
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "FileStore.delete supabase remove attempt %s/%s failed "
+                    "key=%s bucket=%s error=%s",
+                    attempt,
+                    _STORAGE_DELETE_MAX_ATTEMPTS,
+                    key,
+                    config.SUPABASE_STORAGE_BUCKET,
+                    exc,
+                )
+                if attempt < _STORAGE_DELETE_MAX_ATTEMPTS:
+                    time.sleep(_STORAGE_DELETE_RETRY_DELAY_SECONDS * attempt)
+
+        logger.error(
+            "FileStore.delete supabase remove failed after %s attempts "
+            "key=%s bucket=%s",
+            _STORAGE_DELETE_MAX_ATTEMPTS,
+            key,
+            config.SUPABASE_STORAGE_BUCKET,
+        )
+        raise RuntimeError(
+            f"Could not delete {Path(key).name!r} from storage after "
+            f"{_STORAGE_DELETE_MAX_ATTEMPTS} attempts."
         ) from last_error
 
     def _supabase_client(self):

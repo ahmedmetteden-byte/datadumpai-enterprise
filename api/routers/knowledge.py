@@ -477,9 +477,11 @@ def delete_knowledge(
             pass
         except Exception:
             logger.exception(
-                "Failed to delete document from storage workspace=%s filename=%s",
+                "Failed to delete document from storage workspace=%s filename=%s "
+                "storage_path=%s",
                 workspace_id,
                 filename,
+                document.get("path"),
             )
         project["documents"] = [
             d for d in (project.get("documents") or []) if str(d.get("id")) != knowledge_id

@@ -72,7 +72,7 @@ class TrackingQuery:
 
 
 class FakeStorageBucket:
-    def list(self, _prefix: str):
+    def list(self, _prefix: str, _options: dict | None = None):
         return []
 
     def upload(self, *_args, **_kwargs):
@@ -217,7 +217,7 @@ def test_supabase_file_store_uses_quick_report_scope_not_sentinel(monkeypatch):
     captured_prefixes: list[str] = []
 
     class FakeBucket:
-        def list(self, prefix: str):
+        def list(self, prefix: str, _options: dict | None = None):
             captured_prefixes.append(prefix)
             return []
 
@@ -267,7 +267,7 @@ def test_supabase_quick_report_documents_reports_exports_use_storage_scope(
     uploaded_keys: list[str] = []
 
     class FakeBucket:
-        def list(self, prefix: str):
+        def list(self, prefix: str, _options: dict | None = None):
             if prefix.endswith("/reports/"):
                 return [{"name": "quick_export.md"}]
             if prefix.endswith("/exports/"):
