@@ -574,3 +574,73 @@ def test_generate_wires_previous_report_lookup_across_calls(
 
     assert calls == [(project["id"], "executive_summary")]
     assert second["id"] != first["id"]
+
+
+def test_generate_embeds_chart_block_for_quantitative_content(
+    isolated_env, project_service: ProjectService
+):
+    """Reports whose narrative contains real quantitative data (a numeric
+    table, currency figures) must get an auto-generated chart block
+    embedded in record['content'] — the exact field export_report() reads
+    at export time — even for a report type ("Executive Summary") that the
+    visualization engine's report-type-name confidence scoring alone would
+    never mark HIGH confidence for."""
+
+    project = project_service.create_project("Chartable Report Project")
+    chartable_markdown = (
+        "## Executive Summary\n"
+        "Quarterly revenue grew steadily across the year.\n\n"
+        "## Key Findings\n\n"
+        "### Revenue by Quarter\n\n"
+        "| Quarter | Revenue |\n"
+        "|---------|---------|\n"
+        "| Q1 | $1,200,000 |\n"
+        "| Q2 | $1,450,000 |\n"
+        "| Q3 | $1,600,000 |\n"
+        "| Q4 | $1,900,000 |\n\n"
+        "**Confidence:** High — figures drawn directly from the financial statements.  \n"
+        "**Source:** financials.pdf\n\n"
+        "## Conclusion\n"
+        "Revenue trended upward each quarter.\n"
+    )
+
+    svc = SpaReportGenerationService()
+    svc._generate_markdown = lambda **kwargs: chartable_markdown
+
+    record = svc.generate(
+        workspace_id=project["id"],
+        project=project,
+        template_id="executive_summary",
+        period_id="quarterly",
+    )
+
+    assert "<!-- REPORT_CHARTS" in record["content"]
+
+
+def test_generate_omits_visible_charts_for_purely_narrative_content(
+    isolated_env, project_service: ProjectService, monkeypatch
+):
+    """A report with no chartable data (the no-OPENAI_API_KEY fallback
+    markdown, which is boilerplate prose with no figures) must not produce
+    any chart visuals at export time. The engine still embeds a metadata
+    audit trail (visualization_decision, _suppress_theme_charts=True) even
+    when nothing is chartable — that's harmless bookkeeping invisible in
+    the UI and ignored by exports — so the real assertion is has_chart_
+    visuals(), the exact check export_chart_blocks.py uses to decide
+    whether to render anything, not raw-string presence of the block."""
+
+    from services.report_chart_data import extract_chart_data
+    from services.report_chart_figures import has_chart_visuals
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    project = project_service.create_project("Narrative Only Report Project")
+
+    record = SpaReportGenerationService().generate(
+        workspace_id=project["id"],
+        project=project,
+        template_id="executive_summary",
+        period_id="custom",
+    )
+
+    chart_data = extract_chart_data(record["content"])
+    assert not has_chart_visuals(chart_data)

@@ -17,6 +17,7 @@ from models.report_data import ReportData
 from services.document_service import DocumentService
 from services.report_retrieval_service import build_facet_queries, retrieve_grouped_sources
 from services.report_service import ReportService
+from services.visualization_engine import apply_visualizations
 
 logger = logging.getLogger(__name__)
 
@@ -453,6 +454,15 @@ class SpaReportGenerationService:
             },
             executive_summary={"text": _clip(markdown, 500)},
         )
+
+        report = apply_visualizations(
+            report,
+            user_report_type=template["name"],
+            document_text=markdown,
+            reporting_period=period["name"],
+            force_generate=True,
+        )
+        markdown = report.to_markdown()
 
         saved = ReportService.save_report(
             workspace_id,

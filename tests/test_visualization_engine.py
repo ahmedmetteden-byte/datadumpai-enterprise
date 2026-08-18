@@ -139,6 +139,48 @@ def test_financial_reports_generate_charts():
     assert figures
 
 
+TABULAR_FINANCIAL_DOCUMENT = """
+=== SOURCE DOCUMENT: Quarterly_Revenue.pdf ===
+
+### Revenue by Quarter
+
+| Quarter | Revenue |
+|---------|---------|
+| Q1 | $1,200,000 |
+| Q2 | $1,450,000 |
+| Q3 | $1,600,000 |
+| Q4 | $1,900,000 |
+"""
+
+
+def test_financial_reports_extract_real_values_from_a_markdown_table():
+    """Regression test: a row label like "Q1" sitting right after a
+    "Revenue" table header used to make the keyword-then-nearest-digits
+    regex capture the "1" in "Q1" instead of the real $1,200,000 figure,
+    producing a single fabricated-looking bar instead of the real
+    per-quarter series. The engine must prefer parsing the actual table."""
+
+    report_data = _base_report_data(TABULAR_FINANCIAL_DOCUMENT, report_type="Financial Analysis")
+    enriched = apply_visualizations(
+        report_data,
+        user_report_type="Financial Analysis",
+        document_text=TABULAR_FINANCIAL_DOCUMENT,
+        include_charts=True,
+        force_generate=True,
+    )
+
+    bar_blocks = [
+        block
+        for block in enriched.charts["visualizations"]
+        if block["type"] == VisualizationStrategy.BAR_CHART.value
+    ]
+    assert bar_blocks, "expected a BAR_CHART block from the quarterly revenue table"
+
+    series = bar_blocks[0]["data"]["series"]
+    assert [item["label"] for item in series] == ["Q1", "Q2", "Q3", "Q4"]
+    assert [item["value"] for item in series] == [1200000.0, 1450000.0, 1600000.0, 1900000.0]
+
+
 def test_risk_reports_generate_risk_matrix():
     report_data = _base_report_data(RISK_DOCUMENT, report_type="Risk Assessment Report")
     enriched = apply_visualizations(

@@ -565,7 +565,81 @@ def _extract_action_items(text: str) -> list[dict[str, Any]]:
     return items[:10]
 
 
+_FINANCIAL_COLUMN_KEYWORDS = (
+    "revenue",
+    "expense",
+    "cost",
+    "profit",
+    "margin",
+    "growth",
+    "sales",
+    "amount",
+    "value",
+    "total",
+)
+
+
+def _parse_numeric_cell(cell: str) -> float | None:
+    cleaned = re.sub(r"[$€£₦,%\s]", "", cell)
+    if not cleaned:
+        return None
+
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+def _table_financial_series(text: str) -> list[dict[str, Any]]:
+    """Extract a (label, value) series from a markdown table whose header
+    names a recognizable financial/quantitative column.
+
+    Preferred over scanning prose for a keyword followed by "the nearest
+    digits" — that approach can match the wrong number entirely (e.g. the
+    "1" in a "Q1" row label immediately following a "Revenue" table
+    header), producing a chart with a fabricated-looking single value
+    instead of the real per-row figures.
+    """
+
+    from services.report_markdown_renderer import parse_markdown_blocks
+
+    for block in parse_markdown_blocks(text):
+        if block.block_type != "table" or len(block.rows) < 2:
+            continue
+
+        header = [cell.strip().lower() for cell in block.rows[0]]
+        value_col = next(
+            (
+                index
+                for index, name in enumerate(header)
+                if index > 0 and any(keyword in name for keyword in _FINANCIAL_COLUMN_KEYWORDS)
+            ),
+            None,
+        )
+        if value_col is None:
+            continue
+
+        series: list[dict[str, Any]] = []
+        for row in block.rows[1:]:
+            if len(row) <= value_col:
+                continue
+            value = _parse_numeric_cell(row[value_col])
+            label = row[0].strip()
+            if value is None or value <= 0 or not label:
+                continue
+            series.append({"label": label, "value": value})
+
+        if series:
+            return series
+
+    return []
+
+
 def _financial_series(report_data: ReportData, text: str) -> list[dict[str, Any]]:
+    table_series = _table_financial_series(text)
+    if table_series:
+        return table_series
+
     labels = ("Revenue", "Expenses", "Profit", "Growth")
     values: list[float] = []
 
@@ -757,7 +831,7 @@ def build_visualization_blocks(
             priority += 1
 
         elif strategy == VisualizationStrategy.BAR_CHART:
-            series = _financial_series(report_data, text.lower())
+            series = _financial_series(report_data, text)
             if not series:
                 continue
             blocks.append(
