@@ -127,7 +127,10 @@ export function ReportDetailPanel({
         {
           loading: UI_COPY.reportsRegenerating,
           success: UI_COPY.reportsRegenerated,
-          error: UI_COPY.homeComposerGenerateError,
+          // No static `error` override — feedback.run() falls back to
+          // err.message, which is the backend's actual detail (e.g. a
+          // plan-upgrade reason for a 403) instead of a generic message
+          // that hides why regeneration failed.
         },
       );
       setReport(created);
