@@ -83,7 +83,7 @@ class SubscriptionService:
         self._repository.save(state)
 
     def start_trial(self) -> dict:
-        """Begin a no-card Professional trial for a new account."""
+        """Begin a no-card trial (config.TRIAL_PLAN) for a new account."""
 
         state = self.load_state()
 

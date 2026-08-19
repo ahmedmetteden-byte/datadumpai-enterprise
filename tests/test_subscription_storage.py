@@ -15,7 +15,7 @@ from storage.file_store import FileStore
 from tests.conftest import TEST_USER, TEST_USER_ID
 
 
-def test_start_trial_grants_professional_access(isolated_env):
+def test_start_trial_grants_configured_trial_plan_access(isolated_env):
     service = SubscriptionService()
     state = service.start_trial()
 

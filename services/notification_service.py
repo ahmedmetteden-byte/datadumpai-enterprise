@@ -124,10 +124,13 @@ class NotificationService:
             return "failed"
 
     def notify_trial_ending(self, *, days_remaining: int, email: str | None = None) -> str:
+        trial_plan_label = config.PLANS.get(config.TRIAL_PLAN, {}).get(
+            "label", config.TRIAL_PLAN.title()
+        )
         subject = f"Your {config.APP_NAME} trial ends in {days_remaining} days"
         body = (
             f"Hi,\n\n"
-            f"Your Professional trial ends in {days_remaining} day"
+            f"Your {trial_plan_label} trial ends in {days_remaining} day"
             f"{'s' if days_remaining != 1 else ''}. "
             f"Upgrade to keep unlimited reports and intelligence features.\n\n"
             f"{config.AUTH_REDIRECT_URL}\n"

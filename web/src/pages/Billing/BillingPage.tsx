@@ -97,7 +97,9 @@ export function BillingPage() {
         </p>
         {data.trialDaysRemaining !== null ? (
           <p className="mt-1 text-small text-ink-muted">
-            {data.trialDaysRemaining} {UI_COPY.billingTrialBanner}
+            {data.trialDaysRemaining} {UI_COPY.billingTrialBannerPrefix}{' '}
+            {currentPlan?.label ?? data.effectivePlan}{' '}
+            {UI_COPY.billingTrialBannerSuffix}
           </p>
         ) : null}
 

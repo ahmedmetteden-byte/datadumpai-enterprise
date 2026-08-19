@@ -727,7 +727,7 @@ PLAN_ALIASES = {
 }
 
 DEFAULT_PLAN = "free"
-TRIAL_PLAN = "professional"
+TRIAL_PLAN = "starter"
 TRIAL_DAYS = 14
 
 
