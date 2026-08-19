@@ -156,6 +156,101 @@ def test_sign_up_uses_admin_path_without_verification_email(monkeypatch):
     assert created["payload"]["user_metadata"]["full_name"] == "Ada"
 
 
+def test_sign_up_starts_trial_for_a_genuinely_new_account(monkeypatch):
+    """A brand-new signup must get the standard trial (config.TRIAL_DAYS /
+    TRIAL_PLAN) via the existing SubscriptionService.start_trial() — not a
+    hand-rolled special case."""
+
+    service = AuthService()
+    expected = AuthSession(
+        access_token="a",
+        refresh_token="r",
+        user=AppUser(
+            id="new-user",
+            email="new@example.com",
+            full_name="Ada",
+            email_verified=True,
+        ),
+    )
+
+    monkeypatch.setattr("config.auth_dev_bypass_enabled", lambda: False)
+    monkeypatch.setattr(AuthService, "_admin_sign_up_available", staticmethod(lambda: True))
+    monkeypatch.setattr(service, "_lookup_auth_user_by_email", lambda email: None)
+    monkeypatch.setattr(service, "_delete_orphaned_account_rows", lambda email: None)
+    monkeypatch.setattr(
+        "core.database.admin_create_user",
+        lambda *, email, password, full_name="", email_confirm=True: {
+            "id": "new-user",
+            "email": email,
+        },
+    )
+    monkeypatch.setattr(
+        service, "_session_after_password_sign_in", lambda email, password: expected
+    )
+
+    calls: list[tuple[str, bool]] = []
+
+    class _FakeSubscriptionService:
+        @classmethod
+        def for_user_id(cls, user_id, *, use_service_role=False):
+            calls.append((user_id, use_service_role))
+            return cls()
+
+        def start_trial(self):
+            calls.append(("start_trial", True))
+
+    monkeypatch.setattr(
+        "services.subscription_service.SubscriptionService", _FakeSubscriptionService
+    )
+
+    result = service.sign_up("new@example.com", "password123", full_name="Ada")
+
+    assert result is expected
+    assert ("new-user", True) in calls
+    assert ("start_trial", True) in calls
+
+
+def test_sign_up_does_not_start_trial_when_resuming_an_existing_account(monkeypatch):
+    """Resigning up with an email that already has an auth user must never
+    grant a trial — start_trial() is only for genuinely new accounts, or
+    resubmitting the signup form would let someone re-trial indefinitely."""
+
+    service = AuthService()
+    expected = AuthSession(
+        access_token="a",
+        refresh_token="r",
+        user=AppUser(
+            id="existing-user",
+            email="existing@example.com",
+            full_name="Ada",
+            email_verified=True,
+        ),
+    )
+    existing = SimpleNamespace(
+        id="existing-user",
+        email_confirmed_at="2026-01-01T00:00:00Z",
+        confirmed_at="2026-01-01T00:00:00Z",
+    )
+
+    monkeypatch.setattr("config.auth_dev_bypass_enabled", lambda: False)
+    monkeypatch.setattr(AuthService, "_admin_sign_up_available", staticmethod(lambda: True))
+    monkeypatch.setattr(service, "_lookup_auth_user_by_email", lambda email: existing)
+    monkeypatch.setattr(
+        service, "_session_after_password_sign_in", lambda email, password: expected
+    )
+
+    calls: list[object] = []
+    monkeypatch.setattr(
+        "services.subscription_service.SubscriptionService.for_user_id",
+        lambda *a, **k: calls.append((a, k)),
+    )
+
+    result = service.sign_up("existing@example.com", "password123", full_name="Ada")
+
+    assert result is expected
+    assert calls == []
+
+
 def test_sign_up_never_surfaces_verification_email_rate_limit(monkeypatch):
     """Signup must not raise the old 'Too many verification emails' message."""
 

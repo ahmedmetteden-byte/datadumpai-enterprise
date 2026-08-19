@@ -471,6 +471,27 @@ class AuthService:
             "SIGNUP_TRACE stage=password_sign_in.ok user_id=%s",
             session.user.id,
         )
+
+        # Grant the standard trial (config.TRIAL_DAYS / TRIAL_PLAN) to every
+        # genuinely new account. This is the only branch in sign_up() that
+        # creates a brand-new auth user — _finish_existing_signup() handles
+        # resuming/re-authenticating an email that already has one, and must
+        # never grant a trial, or resubmitting the signup form would let
+        # someone re-trial indefinitely. start_trial() itself is a no-op if
+        # the account is already trialing/active, and a failure here must
+        # never block signup, so it's non-fatal.
+        try:
+            from services.subscription_service import SubscriptionService
+
+            SubscriptionService.for_user_id(
+                str(response["id"]), use_service_role=True
+            ).start_trial()
+        except Exception:
+            logger.exception(
+                "Failed to start trial for newly created user_id=%s",
+                response.get("id"),
+            )
+
         return session
 
     def _existing_account_verification_status(
