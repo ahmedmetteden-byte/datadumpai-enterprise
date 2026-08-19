@@ -464,6 +464,8 @@ export const UI_COPY = {
   authForgotSubtitle: 'We’ll email you a secure link to choose a new password.',
   authEmail: 'Email',
   authPassword: 'Password',
+  authShowPassword: 'Show password',
+  authHidePassword: 'Hide password',
   authConfirmPassword: 'Confirm password',
   authFullName: 'Full name',
   authOrganisation: 'Organisation',

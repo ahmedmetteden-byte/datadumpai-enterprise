@@ -18,6 +18,7 @@ export function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -58,14 +59,61 @@ export function LoginPage() {
           <span className="text-caption text-ink-muted">
             {UI_COPY.authPassword}
           </span>
-          <Input
-            type="password"
-            autoComplete="current-password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="••••••••"
-          />
+          <div className="relative">
+            <Input
+              type={showPassword ? 'text' : 'password'}
+              autoComplete="current-password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+              className="pr-11"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((prev) => !prev)}
+              className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-ink-faint hover:text-ink-muted focus-visible:outline-none focus-visible:text-ink-muted"
+              aria-label={showPassword ? UI_COPY.authHidePassword : UI_COPY.authShowPassword}
+              aria-pressed={showPassword}
+            >
+              {showPassword ? (
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 20 20"
+                  fill="none"
+                  className="h-5 w-5"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M2.5 10.5C2.5 10.5 5.5 5 10 5s7.5 5.5 7.5 5.5-3 5.5-7.5 5.5-7.5-5.5-7.5-5.5Z"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <circle cx="10" cy="10.5" r="2.25" stroke="currentColor" strokeWidth="1.5" />
+                  <path d="M3 17 17 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+              ) : (
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 20 20"
+                  fill="none"
+                  className="h-5 w-5"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M2.5 10.5C2.5 10.5 5.5 5 10 5s7.5 5.5 7.5 5.5-3 5.5-7.5 5.5-7.5-5.5-7.5-5.5Z"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <circle cx="10" cy="10.5" r="2.25" stroke="currentColor" strokeWidth="1.5" />
+                </svg>
+              )}
+            </button>
+          </div>
         </label>
 
         <div className="flex justify-end">
