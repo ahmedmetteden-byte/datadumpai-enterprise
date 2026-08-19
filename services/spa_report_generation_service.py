@@ -15,6 +15,10 @@ from openai import OpenAI
 
 from models.report_data import ReportData
 from services.document_service import DocumentService
+from services.quantitative_analysis_service import (
+    extract_metric_tables,
+    format_metrics_for_evidence,
+)
 from services.report_retrieval_service import build_facet_queries, retrieve_grouped_sources
 from services.report_service import ReportService
 from services.visualization_engine import apply_visualizations
@@ -260,6 +264,7 @@ class SpaReportGenerationService:
         sources: list[dict[str, str]],
         instructions: str | None = None,
         previous_report: dict[str, Any] | None = None,
+        metric_tables: list[dict[str, Any]] | None = None,
     ) -> str:
         if not self._client or not sources:
             return self._fallback_markdown(
@@ -280,6 +285,14 @@ class SpaReportGenerationService:
             f"\nThe user specifically asked for: {instructions.strip()}\n"
             "Prioritize this request while still grounding every claim in the evidence below.\n"
             if instructions and instructions.strip()
+            else ""
+        )
+        calculated_metrics_context = format_metrics_for_evidence(metric_tables or [])
+        calculated_metrics_requirement = (
+            "Where the evidence includes a 'Verified Calculations' block, treat those figures "
+            "as ground truth — cite them exactly as given rather than re-deriving or estimating "
+            "your own percentage or growth figures from the raw numbers in the source text.\n\n"
+            if calculated_metrics_context
             else ""
         )
         synthesis_requirement = (
@@ -330,6 +343,7 @@ class SpaReportGenerationService:
             "using only the evidence provided below.\n"
             f"{instructions_line}\n"
             f"{synthesis_requirement}"
+            f"{calculated_metrics_requirement}"
             "Go beyond summarizing — synthesize. For every major point, explain not just what "
             "happened but why it matters, what pattern or trend it fits into, what changed since "
             "prior context (if evidence shows it), and what the implication is for decision-makers. "
@@ -367,7 +381,7 @@ class SpaReportGenerationService:
             "2-3 sentences closing the report and restating what should happen next.\n\n"
             "Do not wrap your answer in a code fence. Output raw markdown starting directly with the "
             "## Executive Summary heading.\n\n"
-            f"Evidence:\n{evidence}{comparison_context}"
+            f"Evidence:\n{evidence}{calculated_metrics_context}{comparison_context}"
         )
         try:
             response = self._client.chat.completions.create(
@@ -432,6 +446,7 @@ class SpaReportGenerationService:
             period=period,
             instructions=instructions,
         )
+        metric_tables = extract_metric_tables(sources)
         markdown = self._generate_markdown(
             title=report_title,
             period_name=period["name"],
@@ -439,6 +454,7 @@ class SpaReportGenerationService:
             sources=sources,
             instructions=instructions,
             previous_report=previous_report,
+            metric_tables=metric_tables,
         )
         report = ReportData(
             report_type=template["name"],
@@ -452,6 +468,7 @@ class SpaReportGenerationService:
                 "template_name": template["name"],
                 "workspace_name": workspace_name,
             },
+            metrics={"tables": metric_tables} if metric_tables else {},
             executive_summary={"text": _clip(markdown, 500)},
         )
 
