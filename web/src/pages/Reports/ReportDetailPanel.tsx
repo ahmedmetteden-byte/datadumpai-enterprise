@@ -3,6 +3,7 @@ import { InlineRequestStatus } from '@/components/feedback';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { CopyButton } from '@/components/ui/CopyButton';
+import { ReportCharts } from '@/components/ui/ReportCharts';
 import { ReportMarkdown } from '@/components/ui/ReportMarkdown';
 import { ExportFilenameDialog } from '@/pages/Reports/ExportFilenameDialog';
 import { ExportUpgradeDialog } from '@/pages/Reports/ExportUpgradeDialog';
@@ -10,6 +11,7 @@ import { services } from '@/api/services';
 import { useAuth } from '@/context/AuthContext';
 import { useRequestFeedback } from '@/context/RequestFeedbackContext';
 import { UI_COPY } from '@/constants/ui';
+import { parseReportContent } from '@/lib/reportCharts';
 import type { ReportDetail, ReportExportFormat } from '@/types/reports';
 
 function downloadBlob(blob: Blob, filename: string) {
@@ -176,6 +178,10 @@ export function ReportDetailPanel({
 
   if (!report) return null;
 
+  const parsedContent = report.content
+    ? parseReportContent(report.content)
+    : null;
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-2">
@@ -246,11 +252,14 @@ export function ReportDetailPanel({
           <h3 className="text-caption uppercase tracking-wide text-ink-faint">
             {UI_COPY.reportsPreview}
           </h3>
-          {report.content ? <CopyButton text={report.content} /> : null}
+          {parsedContent ? <CopyButton text={parsedContent.text} /> : null}
         </div>
-        <div className="max-h-[36rem] overflow-auto">
-          {report.content ? (
-            <ReportMarkdown content={report.content} />
+        <div className="max-h-[36rem] space-y-4 overflow-auto">
+          {parsedContent ? (
+            <>
+              <ReportCharts visualizations={parsedContent.visualizations} />
+              <ReportMarkdown content={parsedContent.text} />
+            </>
           ) : (
             <p className="text-small text-ink-muted">—</p>
           )}

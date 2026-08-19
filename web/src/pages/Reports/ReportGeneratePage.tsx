@@ -4,6 +4,8 @@ import { InlineRequestStatus } from '@/components/feedback';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
+import { ReportCharts } from '@/components/ui/ReportCharts';
+import { ReportMarkdown } from '@/components/ui/ReportMarkdown';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { services } from '@/api/services';
 import { useAuth } from '@/context/AuthContext';
@@ -11,6 +13,7 @@ import { useWorkspace } from '@/context/WorkspaceContext';
 import { useWorkspaceList } from '@/hooks/useWorkspaceList';
 import { ROUTES, UI_COPY } from '@/constants/ui';
 import { cn } from '@/lib/cn';
+import { parseReportContent } from '@/lib/reportCharts';
 import type {
   ReportDetail,
   ReportExportFormat,
@@ -420,9 +423,19 @@ export function ReportGeneratePage() {
         {step === 'save' && report ? (
           <div className="space-y-4">
             <h3 className="text-section text-ink">{report.name}</h3>
-            <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-lg bg-surface-alt/60 p-3 text-small text-ink">
-              {report.content}
-            </pre>
+            <div className="max-h-80 space-y-4 overflow-auto rounded-lg bg-surface-alt/60 p-3">
+              {report.content ? (
+                (() => {
+                  const parsed = parseReportContent(report.content);
+                  return (
+                    <>
+                      <ReportCharts visualizations={parsed.visualizations} />
+                      <ReportMarkdown content={parsed.text} />
+                    </>
+                  );
+                })()
+              ) : null}
+            </div>
             <Button onClick={() => void handleSave()} disabled={busy}>
               {busy ? UI_COPY.reportsSaving : UI_COPY.reportsSaveAction}
             </Button>
