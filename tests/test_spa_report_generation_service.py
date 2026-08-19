@@ -8,6 +8,7 @@ from services.project_service import ProjectService
 from services.report_service import ReportService
 from services.spa_report_generation_service import (
     SpaReportGenerationService,
+    _clip,
     _strip_wrapping_code_fence,
     period_by_id,
     template_by_id,
@@ -33,6 +34,45 @@ def test_strip_wrapping_code_fence_leaves_inline_fences_alone():
     # A fence that isn't wrapping the *entire* response shouldn't be touched.
     text = 'Some text.\n\n```python\nprint("hi")\n```\n\nMore text.'
     assert _strip_wrapping_code_fence(text) == text
+
+
+def test_clip_preserves_table_row_newlines_while_collapsing_prose():
+    """Regression test: this module's local _clip() (used by
+    _gather_sources_legacy(), among other call sites) used to collapse ALL
+    whitespace including the newlines between markdown table rows, making
+    tables unparseable by report_markdown_renderer.parse_markdown_blocks()
+    downstream — silently defeating quantitative_analysis_service's table
+    detection for the legacy-fallback source-gathering path. Mirrors the
+    equivalent test in test_report_retrieval_service.py."""
+
+    text = (
+        "  Some   messy \n prose   with\nline   wraps.\n\n"
+        "| Year | Gross Premium |\n"
+        "|------|---------------:|\n"
+        "| 2022 | 789.6 |\n"
+        "| 2023 | 1,043.1 |\n"
+        "| 2024 | 1,558.7 |\n"
+        "\nMore   trailing    prose.\n"
+    )
+
+    clipped = _clip(text, limit=10_000)
+
+    table_lines = [line for line in clipped.splitlines() if line.strip().startswith("|")]
+    assert table_lines == [
+        "| Year | Gross Premium |",
+        "|------|---------------:|",
+        "| 2022 | 789.6 |",
+        "| 2023 | 1,043.1 |",
+        "| 2024 | 1,558.7 |",
+    ]
+    assert "Some messy prose with line wraps." in clipped
+    assert "More trailing prose." in clipped
+
+
+def test_clip_still_truncates_by_length_with_ellipsis():
+    clipped = _clip("word " * 100, limit=20)
+    assert len(clipped) == 20
+    assert clipped.endswith("…")
 
 
 def test_generate_includes_instructions_in_fallback_markdown(

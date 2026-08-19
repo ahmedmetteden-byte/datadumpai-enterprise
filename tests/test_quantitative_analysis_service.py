@@ -156,6 +156,33 @@ def test_deduplicates_the_same_metric_across_multiple_source_documents():
     assert matches[0]["source_document"] == "Annual-Statistical-Market-Report-2024.pdf"
 
 
+def test_comma_grouped_year_labels_are_still_recognized_as_temporal():
+    """Regression test: XLSX-sourced tables render integer years through
+    document_processor.py's cell formatter, which comma-groups every
+    numeric cell — turning "2022" into "2,022". Calculations must still
+    fire for this real-world case, not silently no-op."""
+
+    source = {
+        "filename": "q4_revenue.xlsx",
+        "excerpt": (
+            "| Year | Gross Premium |\n"
+            "|------|---------------:|\n"
+            "| 2,022 | 789.6 |\n"
+            "| 2,023 | 1,043.1 |\n"
+            "| 2,024 | 1,558.7 |\n"
+        ),
+    }
+    tables = extract_metric_tables([source])
+
+    premium = next(t for t in tables if t["title"] == "Gross Premium")
+    assert [row["label"] for row in premium["rows"]] == ["2022", "2023", "2024"]
+
+    total = premium["calculations"]["total_change"]
+    assert total["percent"] == 97.4
+    yoy = premium["calculations"]["period_over_period"]
+    assert yoy[0]["percent"] == 32.1 and yoy[1]["percent"] == 49.4
+
+
 def test_evidence_block_cites_exact_computed_figures():
     tables = extract_metric_tables([PREMIUM_TABLE_SOURCE])
     block = format_metrics_for_evidence(tables)

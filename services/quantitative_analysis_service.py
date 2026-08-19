@@ -90,6 +90,23 @@ def _looks_temporal(label: str) -> bool:
     )
 
 
+def _normalize_temporal_label(label: str) -> str:
+    """A year can arrive comma-grouped (e.g. "2,022") because upstream
+    tabular rendering (document_processor.py's cell formatter) applies
+    thousands-separator formatting to every numeric cell, including a
+    year/period column. Strip the comma when doing so reveals a valid
+    temporal label, so "2,022" is recognized as the year 2022 instead of
+    silently failing _looks_temporal() and disabling all calculations for
+    the table. Leave genuinely non-temporal labels (which may legitimately
+    contain a comma) untouched."""
+
+    stripped = label.strip()
+    if "," not in stripped:
+        return stripped
+    without_commas = stripped.replace(",", "")
+    return without_commas if _looks_temporal(without_commas) else stripped
+
+
 @dataclass
 class MetricSeries:
     title: str
@@ -156,7 +173,7 @@ def _extract_from_table(rows: list[list[str]], *, source_document: str) -> list[
     if len(header) < 2:
         return []
 
-    labels = [row[0].strip() for row in data_rows if row]
+    labels = [_normalize_temporal_label(row[0].strip()) for row in data_rows if row]
     temporal = labels and sum(1 for label in labels if _looks_temporal(label)) >= max(
         2, len(labels) - 1
     )
@@ -172,7 +189,7 @@ def _extract_from_table(rows: list[list[str]], *, source_document: str) -> list[
         for row in data_rows:
             if len(row) <= col_index:
                 continue
-            label = row[0].strip()
+            label = _normalize_temporal_label(row[0].strip())
             value = _parse_numeric_cell(row[col_index])
             if not label or value is None:
                 continue

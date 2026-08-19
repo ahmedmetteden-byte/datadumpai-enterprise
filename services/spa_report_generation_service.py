@@ -81,8 +81,37 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+_TABLE_ROW = re.compile(r"^\|.*\|$")
+
+
 def _clip(text: str, limit: int = 3500) -> str:
-    cleaned = re.sub(r"\s+", " ", text).strip()
+    """Collapse whitespace to normalize messy extraction artifacts (PDF
+    line-wraps, repeated spaces) while preserving markdown table
+    structure — collapsing a table's one-row-per-line layout onto a
+    single line makes it unparseable by report_markdown_renderer.
+    parse_markdown_blocks(), which quantitative_analysis_service.py
+    depends on to find real tables in retrieved evidence. Mirrors
+    services/report_retrieval_service.py's identical fix."""
+
+    segments: list[tuple[str, list[str]]] = []
+    for line in text.splitlines():
+        kind = "table" if _TABLE_ROW.match(line.strip()) else "prose"
+        if segments and segments[-1][0] == kind:
+            segments[-1][1].append(line)
+        else:
+            segments.append((kind, [line]))
+
+    rendered: list[str] = []
+    for kind, lines in segments:
+        if kind == "table":
+            rendered.append("\n".join(line.strip() for line in lines))
+        else:
+            collapsed = re.sub(r"\s+", " ", " ".join(lines)).strip()
+            if collapsed:
+                rendered.append(collapsed)
+
+    cleaned = "\n\n".join(rendered).strip()
+
     if len(cleaned) <= limit:
         return cleaned
     return cleaned[: limit - 1].rstrip() + "…"

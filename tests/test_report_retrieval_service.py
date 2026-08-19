@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from services.report_retrieval_service import (
     FACETS,
+    _clip,
     build_facet_queries,
     retrieve_grouped_sources,
 )
@@ -145,3 +146,72 @@ def test_retrieve_grouped_sources_caps_documents_and_chunks_per_document(monkeyp
     )
     assert [source["filename"] for source in result] == ["a.pdf", "b.pdf"]
     assert result[0]["excerpt"] == "A chunk 1"
+
+
+def test_clip_preserves_table_row_newlines_while_collapsing_prose():
+    """Regression test for the bug that silently defeated Step 1's
+    quantitative analysis: _clip() used to collapse ALL whitespace,
+    including the newlines between a markdown table's rows, making the
+    table unparseable by report_markdown_renderer.parse_markdown_blocks()
+    downstream. Table rows must survive clipping intact; surrounding prose
+    should still have its whitespace normalized as before."""
+
+    text = (
+        "  Some   messy \n prose   with\nline   wraps.\n\n"
+        "| Year | Gross Premium |\n"
+        "|------|---------------:|\n"
+        "| 2022 | 789.6 |\n"
+        "| 2023 | 1,043.1 |\n"
+        "| 2024 | 1,558.7 |\n"
+        "\nMore   trailing    prose.\n"
+    )
+
+    clipped = _clip(text, limit=10_000)
+
+    table_lines = [line for line in clipped.splitlines() if line.strip().startswith("|")]
+    assert table_lines == [
+        "| Year | Gross Premium |",
+        "|------|---------------:|",
+        "| 2022 | 789.6 |",
+        "| 2023 | 1,043.1 |",
+        "| 2024 | 1,558.7 |",
+    ]
+    assert "Some messy prose with line wraps." in clipped
+    assert "More trailing prose." in clipped
+
+
+def test_clip_still_truncates_by_length_with_ellipsis():
+    clipped = _clip("word " * 100, limit=20)
+    assert len(clipped) == 20
+    assert clipped.endswith("…")
+
+
+def test_retrieve_grouped_sources_excerpt_preserves_table_structure_when_clipped():
+    """End-to-end (through retrieve_grouped_sources, not just _clip directly):
+    a hit whose text contains a real markdown table must come back with the
+    table's rows still newline-separated, not collapsed onto one line."""
+
+    table_text = (
+        "Some narrative text about the report.\n\n"
+        "| Year | Gross Premium |\n"
+        "|------|---------------:|\n"
+        "| 2022 | 789.6 |\n"
+        "| 2023 | 1,043.1 |\n"
+        "| 2024 | 1,558.7 |\n"
+    )
+    hits = {
+        0: [_hit("c1", 0.9, "doc-a", "a.xlsx", 0, table_text)],
+    }
+    result = retrieve_grouped_sources(
+        "ws1", ["only query"], embedder=_FakeEmbedder(), qdrant=_FakeQdrant(hits)
+    )
+    assert len(result) == 1
+    excerpt = result[0]["excerpt"]
+    table_lines = [line for line in excerpt.splitlines() if line.strip().startswith("|")]
+    assert table_lines == [
+        "| Year | Gross Premium |",
+        "|------|---------------:|",
+        "| 2022 | 789.6 |",
+        "| 2023 | 1,043.1 |",
+        "| 2024 | 1,558.7 |",
+    ]
