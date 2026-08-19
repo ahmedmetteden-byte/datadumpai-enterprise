@@ -1,0 +1,184 @@
+"""
+Tests for the deterministic report-planning layer (Step A of the Premium
+Report Generation Upgrade): materiality ranking, metric-vs-metric
+relationships, and chart selection — all computed from already-calculated
+quantitative_analysis_service output, with no LLM call.
+"""
+
+from __future__ import annotations
+
+from services.report_plan_service import (
+    ChartRequirement,
+    RankedFinding,
+    ReportPlan,
+    _chart_requirements,
+    build_report_plan,
+    render_plan_for_prompt,
+)
+
+PREMIUM_TABLE = {
+    "title": "Gross Premium",
+    "source_document": "report.pdf",
+    "unit": "₦ billion",
+    "rows": [
+        {"label": "2022", "value": 789.6},
+        {"label": "2023", "value": 1043.1},
+        {"label": "2024", "value": 1558.7},
+    ],
+    "calculations": {
+        "period_over_period": [
+            {"from": "2022", "to": "2023", "absolute": 253.5, "percent": 32.1},
+            {"from": "2023", "to": "2024", "absolute": 515.6, "percent": 49.4},
+        ],
+        "total_change": {"from": "2022", "to": "2024", "absolute": 769.1, "percent": 97.4},
+    },
+}
+
+CLAIMS_TABLE = {
+    "title": "Gross Claims",
+    "source_document": "report.pdf",
+    "unit": "₦ billion",
+    "rows": [
+        {"label": "2022", "value": 420.0},
+        {"label": "2023", "value": 421.0},
+        {"label": "2024", "value": 635.5},
+    ],
+    "calculations": {
+        "period_over_period": [
+            {"from": "2022", "to": "2023", "absolute": 1.0, "percent": 0.2},
+            {"from": "2023", "to": "2024", "absolute": 214.5, "percent": 50.9},
+        ],
+        "total_change": {"from": "2022", "to": "2024", "absolute": 215.5, "percent": 51.3},
+    },
+}
+
+MARKET_SHARE_TABLE = {
+    "title": "Segment Market Share",
+    "source_document": "report.pdf",
+    "unit": "%",
+    "rows": [
+        {"label": "Life", "value": 32.0},
+        {"label": "Non-Life", "value": 68.0},
+    ],
+    "calculations": {},
+}
+
+
+def test_build_report_plan_is_empty_for_no_metric_tables():
+    plan = build_report_plan(metric_tables=[])
+    assert plan.is_empty()
+    assert render_plan_for_prompt(plan) == ""
+
+
+def test_ranks_findings_by_materiality_descending():
+    plan = build_report_plan(metric_tables=[CLAIMS_TABLE, PREMIUM_TABLE])
+
+    labels = [f.label for f in plan.ranked_findings]
+    assert labels == ["Gross Premium", "Gross Claims"]
+    assert plan.ranked_findings[0].materiality_score == 97.4
+    assert plan.ranked_findings[0].direction == "increase"
+    assert plan.ranked_findings[0].metric_ref == "Gross Premium"
+
+
+def test_categorical_non_temporal_tables_are_excluded_from_ranking():
+    plan = build_report_plan(metric_tables=[MARKET_SHARE_TABLE, PREMIUM_TABLE])
+
+    labels = [f.label for f in plan.ranked_findings]
+    assert labels == ["Gross Premium"]
+
+
+def test_caps_ranked_findings_at_max():
+    tables = [
+        {**PREMIUM_TABLE, "title": f"Metric {i}",
+         "calculations": {"total_change": {"percent": float(i)}}}
+        for i in range(1, 12)
+    ]
+    plan = build_report_plan(metric_tables=tables)
+    assert len(plan.ranked_findings) == 8
+
+
+def test_finds_key_relationship_between_two_metrics_with_a_real_gap():
+    plan = build_report_plan(metric_tables=[PREMIUM_TABLE, CLAIMS_TABLE])
+
+    assert len(plan.key_relationships) == 1
+    relationship = plan.key_relationships[0]
+    assert "Gross Premium grew faster than Gross Claims" in relationship
+    assert "+97.4%" in relationship
+    assert "+51.3%" in relationship
+
+
+def test_no_relationship_manufactured_when_gap_is_negligible():
+    almost_identical = {
+        **CLAIMS_TABLE,
+        "title": "Almost Identical",
+        "calculations": {
+            "period_over_period": [],
+            "total_change": {"percent": 97.9},
+        },
+    }
+    plan = build_report_plan(metric_tables=[PREMIUM_TABLE, almost_identical])
+    assert plan.key_relationships == []
+
+
+def test_chart_requirements_follow_ranked_findings_and_are_capped():
+    tables = [
+        {**PREMIUM_TABLE, "title": f"Metric {i}",
+         "calculations": {
+             "period_over_period": [{"percent": float(i)}],
+             "total_change": {"percent": float(100 - i)},
+         }}
+        for i in range(1, 6)
+    ]
+    plan = build_report_plan(metric_tables=tables)
+
+    assert len(plan.chart_requirements) == 3
+    assert all(c.strategy == "LINE_CHART" for c in plan.chart_requirements)
+    # Highest materiality (smallest i, since percent = 100 - i) charted first.
+    assert plan.chart_requirements[0].metric_title == "Metric 1"
+
+
+def test_chart_requirements_use_bar_chart_for_categorical_ranked_findings():
+    """_chart_requirements() itself (not build_report_plan(), which never
+    ranks categorical tables today) must still choose BAR_CHART correctly
+    for a non-temporal metric if it ever appears in ranked_findings — this
+    exercises that branch directly since the public API can't reach it yet."""
+
+    ranked = [RankedFinding(label="Segment Market Share", materiality_score=10, direction="increase")]
+    requirements = _chart_requirements([MARKET_SHARE_TABLE], ranked)
+
+    assert len(requirements) == 1
+    assert requirements[0].strategy == "BAR_CHART"
+    assert requirements[0].metric_title == "Segment Market Share"
+
+
+def test_render_plan_for_prompt_includes_all_sections_and_marks_internal():
+    plan = ReportPlan(
+        ranked_findings=[
+            RankedFinding(label="Gross Premium", materiality_score=97.4, direction="increase")
+        ],
+        key_relationships=["Gross Claims grew faster than Gross Premium (+51.3% vs +97.4%)."],
+        chart_requirements=[
+            ChartRequirement(strategy="LINE_CHART", metric_title="Gross Premium", reason="test reason")
+        ],
+    )
+
+    block = render_plan_for_prompt(plan)
+
+    assert "Report Plan (internal" in block
+    assert "Gross Premium: increase of 97.4%" in block
+    assert "Gross Claims grew faster than Gross Premium" in block
+    assert "Gross Premium (LINE_CHART): test reason" in block
+
+
+def test_report_plan_to_dict_round_trips_all_fields():
+    plan = build_report_plan(metric_tables=[PREMIUM_TABLE, CLAIMS_TABLE])
+    payload = plan.to_dict()
+
+    assert set(payload.keys()) == {
+        "ranked_findings",
+        "key_relationships",
+        "emphasis_sections",
+        "chart_requirements",
+    }
+    assert payload["ranked_findings"][0]["label"] == "Gross Premium"
+    assert payload["chart_requirements"][0]["strategy"] == "LINE_CHART"

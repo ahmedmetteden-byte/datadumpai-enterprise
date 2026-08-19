@@ -19,6 +19,12 @@ from services.quantitative_analysis_service import (
     extract_metric_tables,
     format_metrics_for_evidence,
 )
+from services.report_plan_service import (
+    REPORT_PLAN_ENABLED,
+    ReportPlan,
+    build_report_plan,
+    render_plan_for_prompt,
+)
 from services.report_retrieval_service import build_facet_queries, retrieve_grouped_sources
 from services.report_service import ReportService
 from services.visualization_engine import apply_visualizations
@@ -294,6 +300,7 @@ class SpaReportGenerationService:
         instructions: str | None = None,
         previous_report: dict[str, Any] | None = None,
         metric_tables: list[dict[str, Any]] | None = None,
+        report_plan: ReportPlan | None = None,
     ) -> str:
         if not self._client or not sources:
             return self._fallback_markdown(
@@ -322,6 +329,16 @@ class SpaReportGenerationService:
             "as ground truth — cite them exactly as given rather than re-deriving or estimating "
             "your own percentage or growth figures from the raw numbers in the source text.\n\n"
             if calculated_metrics_context
+            else ""
+        )
+        report_plan_context = render_plan_for_prompt(report_plan) if report_plan else ""
+        report_plan_requirement = (
+            "A Report Plan is included in the evidence below, ranking findings by materiality "
+            "and identifying which metrics warrant a chart. Use it to decide what belongs in the "
+            "Executive Summary and which Key Findings to lead with — do not silently ignore it, "
+            "and do not present it to the reader as if it were sourced from the documents "
+            "themselves.\n\n"
+            if report_plan_context
             else ""
         )
         synthesis_requirement = (
@@ -373,6 +390,7 @@ class SpaReportGenerationService:
             f"{instructions_line}\n"
             f"{synthesis_requirement}"
             f"{calculated_metrics_requirement}"
+            f"{report_plan_requirement}"
             "Go beyond summarizing — synthesize. For every major point, explain not just what "
             "happened but why it matters, what pattern or trend it fits into, what changed since "
             "prior context (if evidence shows it), and what the implication is for decision-makers. "
@@ -410,7 +428,7 @@ class SpaReportGenerationService:
             "2-3 sentences closing the report and restating what should happen next.\n\n"
             "Do not wrap your answer in a code fence. Output raw markdown starting directly with the "
             "## Executive Summary heading.\n\n"
-            f"Evidence:\n{evidence}{calculated_metrics_context}{comparison_context}"
+            f"Evidence:\n{evidence}{calculated_metrics_context}{report_plan_context}{comparison_context}"
         )
         try:
             response = self._client.chat.completions.create(
@@ -476,6 +494,16 @@ class SpaReportGenerationService:
             instructions=instructions,
         )
         metric_tables = extract_metric_tables(sources)
+        report_plan = (
+            build_report_plan(
+                metric_tables=metric_tables,
+                sources=sources,
+                template_name=template["name"],
+                period_name=period["name"],
+            )
+            if REPORT_PLAN_ENABLED
+            else None
+        )
         markdown = self._generate_markdown(
             title=report_title,
             period_name=period["name"],
@@ -484,6 +512,7 @@ class SpaReportGenerationService:
             instructions=instructions,
             previous_report=previous_report,
             metric_tables=metric_tables,
+            report_plan=report_plan,
         )
         report = ReportData(
             report_type=template["name"],
@@ -496,6 +525,11 @@ class SpaReportGenerationService:
                 "template_id": template_id,
                 "template_name": template["name"],
                 "workspace_name": workspace_name,
+                **(
+                    {"report_plan": report_plan.to_dict()}
+                    if report_plan and not report_plan.is_empty()
+                    else {}
+                ),
             },
             metrics={"tables": metric_tables} if metric_tables else {},
             executive_summary={"text": _clip(markdown, 500)},
