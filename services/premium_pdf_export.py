@@ -40,13 +40,13 @@ from services.report_document_parser import (
     first_ai_insight,
     is_available,
     parse_intelligence_report,
-    strategic_recommendation,
     table_of_contents,
     top_opportunities,
     top_risks,
 )
 from services.report_markdown_renderer import (
     MarkdownBlock,
+    NUMBERED_ITEM_LABEL_PATTERN,
     escape_xml,
     format_bullet_item,
     group_blocks_for_keep_together,
@@ -409,7 +409,6 @@ class PremiumPDFBuilder:
 
         health_score = metrics.get("health_score", "—")
         outlook = metrics.get("outlook", "—")
-        recommendation = strategic_recommendation(parsed) or metrics.get("priority", "—")
 
         summary_rows = []
         if is_available(health_score):
@@ -474,9 +473,12 @@ class PremiumPDFBuilder:
         else:
             story.append(Paragraph("No opportunities were identified in the evidence reviewed.", self.styles["body"]))
 
-        story.append(Spacer(1, 0.1 * inch))
-        story.append(Paragraph("Strategic Recommendation", self.styles["subheading"]))
-        story.append(Paragraph(escape_xml(recommendation), self.styles["body"]))
+        # The full Strategic Recommendations section (with real Action/
+        # Rationale/Measurement structure per item) renders later in
+        # _section_story(); an early singular one-sentence preview here
+        # duplicated it with weaker, regex-extracted text and reliably
+        # produced an isolated near-empty page once everything above it
+        # filled page 2 — dropped rather than replaced.
         story.append(PageBreak())
 
         return story
@@ -617,6 +619,28 @@ class PremiumPDFBuilder:
                     self.styles["evidence"],
                 )
             )
+            return story
+
+        if block.block_type == "numbered":
+            # A numbered recommendation item whose continuation lines
+            # (Rationale/Measurement) broke the list collector only ever
+            # carries its own "Action: ..." clause here — without this
+            # branch it silently vanished, leaving Rationale/Measurement
+            # rendering with no visible recommendation title above them.
+            for item in block.items:
+                label_match = NUMBERED_ITEM_LABEL_PATTERN.match(item)
+
+                if label_match:
+                    story.append(
+                        Paragraph(
+                            highlight_value_html(label_match.group(1), label_match.group(2)),
+                            self.styles["body"],
+                        )
+                    )
+                else:
+                    story.append(Paragraph(inline_to_reportlab_html(item), self.styles["body"]))
+
+            story.append(Spacer(1, 0.04 * inch))
             return story
 
         if block.block_type == "bullets":

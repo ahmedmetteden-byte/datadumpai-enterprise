@@ -108,6 +108,9 @@ Detail text.
 1. **Action:** Conduct a comprehensive review of claims management processes.
    **Rationale:** The 51.3% increase in Gross Claims suggests inefficiencies.
    **Measurement:** Track the ratio of Gross Claims to Gross Premium.
+2. **Action:** Explore new market segments.
+   **Rationale:** The disparity in growth rates indicates untapped potential.
+   **Measurement:** Evaluate new segments based on premium growth metrics.
 
 ## Conclusion
 Momentum should be sustained.
@@ -293,6 +296,82 @@ def test_build_premium_docx_handles_real_spa_format_report_without_crashing():
         ),
     )
     assert docx_bytes.startswith(b"PK")
+
+
+def test_build_premium_pdf_renders_recommendation_action_clause_not_just_rationale():
+    """Report Output Quality Upgrade Step C: a numbered recommendation's
+    **Action:** clause was silently dropped by _render_block() (no
+    "numbered" block-type case existed), so only Rationale/Measurement
+    ever appeared — the recommendation's own title/action was missing."""
+
+    import io
+
+    from PyPDF2 import PdfReader
+
+    pdf_bytes = build_premium_pdf(
+        report_text=SPA_REPORT,
+        metadata=PremiumExportMetadata(
+            project_name="Q4 Revenue Review",
+            report_name="Q4 Revenue Report",
+            reporting_period="Custom / Ad hoc",
+            source_documents=["report.xlsx"],
+            pack_type="executive",
+        ),
+    )
+    pdf_text = "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(pdf_bytes)).pages)
+
+    assert "Conduct a comprehensive review of claims management processes" in pdf_text
+    assert "Explore new market segments" in pdf_text
+    assert "51.3% increase in Gross Claims suggests inefficiencies" in pdf_text
+
+
+def test_build_premium_docx_renders_recommendation_action_clause_not_just_rationale():
+    docx_bytes = build_premium_docx(
+        report_text=SPA_REPORT,
+        metadata=DocxExportMetadata(
+            project_name="Q4 Revenue Review",
+            report_name="Q4 Revenue Report",
+            reporting_period="Custom / Ad hoc",
+            source_documents=["report.xlsx"],
+            pack_type="executive",
+        ),
+    )
+
+    from io import BytesIO
+
+    from docx import Document as DocxDocument
+
+    docx_text = "\n".join(p.text for p in DocxDocument(BytesIO(docx_bytes)).paragraphs)
+
+    assert "Conduct a comprehensive review of claims management processes" in docx_text
+    assert "Explore new market segments" in docx_text
+
+
+def test_build_premium_pdf_drops_isolated_singular_recommendation_preview():
+    """The early one-sentence 'Strategic Recommendation' preview on the
+    executive-summary page duplicated the full section with weaker text
+    and reliably produced an isolated near-empty page — dropped rather
+    than replaced, per Step C."""
+
+    import io
+
+    from PyPDF2 import PdfReader
+
+    pdf_bytes = build_premium_pdf(
+        report_text=SPA_REPORT,
+        metadata=PremiumExportMetadata(
+            project_name="Q4 Revenue Review",
+            report_name="Q4 Revenue Report",
+            reporting_period="Custom / Ad hoc",
+            source_documents=["report.xlsx"],
+            pack_type="executive",
+        ),
+    )
+    pdf_text = "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(pdf_bytes)).pages)
+
+    assert "Strategic Recommendation\n" not in pdf_text
+    # The full, plural section must still be present.
+    assert "Strategic Recommendations" in pdf_text
 
 
 def test_build_premium_presentation_embeds_charts_for_spa_format_report():

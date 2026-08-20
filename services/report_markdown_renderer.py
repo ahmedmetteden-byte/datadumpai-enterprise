@@ -14,6 +14,7 @@ HEADING_PATTERN = re.compile(r"^(#{1,5})\s+(.+)$")
 BULLET_PATTERN = re.compile(r"^[-*]\s+(.+)$")
 ORDERED_LIST_PATTERN = re.compile(r"^\d{1,2}[.)]\s+(.+)$")
 LABEL_VALUE_PATTERN = re.compile(r"^\*\*([^*]+):\*\*\s*(.*)$")
+NUMBERED_ITEM_LABEL_PATTERN = re.compile(r"^([A-Za-z][A-Za-z /]{0,30}):\s*(.+)$")
 HORIZONTAL_RULE = re.compile(r"^-{3,}$")
 TABLE_ROW_PATTERN = re.compile(r"^\|(.+)\|$")
 

@@ -27,13 +27,13 @@ from services.report_document_parser import (
     first_ai_insight,
     is_available,
     parse_intelligence_report,
-    strategic_recommendation,
     table_of_contents,
     top_opportunities,
     top_risks,
 )
 from services.report_markdown_renderer import (
     MarkdownBlock,
+    NUMBERED_ITEM_LABEL_PATTERN,
     classify_label_value,
     format_bullet_item,
     group_blocks_for_keep_together,
@@ -139,8 +139,35 @@ def _add_label_value(document: Document, label: str, value: str) -> None:
         value_run.font.name = "Calibri"
         value_run.font.size = Pt(9)
         value_run.font.color.rgb = _rgb_from_hex(color_hex)
-        _set_paragraph_spacing(value_paragraph, before=0, after=4)
         _set_paragraph_spacing(value_paragraph, before=0, after=10)
+
+
+def _add_numbered_item(document: Document, text: str) -> None:
+    """Render a numbered recommendation item (e.g. its Action clause) at
+    normal body size — unlike _add_label_value's evidence tags, this is
+    primary content (the recommendation title), not subordinate metadata,
+    so it must not silently vanish the way it did before this branch
+    existed at all."""
+
+    match = NUMBERED_ITEM_LABEL_PATTERN.match(text)
+
+    if not match:
+        _add_body_paragraph(document, text)
+        return
+
+    label_clean, value_clean, color_hex = classify_label_value(match.group(1), match.group(2))
+    paragraph = document.add_paragraph()
+    label_run = paragraph.add_run(f"{label_clean}: ")
+    label_run.bold = True
+    label_run.font.name = "Calibri"
+    label_run.font.size = Pt(11)
+    label_run.font.color.rgb = COLOR_SLATE
+    value_run = paragraph.add_run(value_clean)
+    value_run.bold = True
+    value_run.font.name = "Calibri"
+    value_run.font.size = Pt(11)
+    value_run.font.color.rgb = _rgb_from_hex(color_hex)
+    _set_paragraph_spacing(paragraph, before=6, after=4)
 
 
 def _add_bullet(document: Document, text: str) -> None:
@@ -212,6 +239,9 @@ def _render_blocks(document: Document, blocks: list[MarkdownBlock]) -> None:
         elif block.block_type == "bullets":
             for item in block.items:
                 _add_bullet(document, item)
+        elif block.block_type == "numbered":
+            for item in block.items:
+                _add_numbered_item(document, item)
         elif block.block_type == "quote":
             paragraph = document.add_paragraph(f"“{block.content}”")
             paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
@@ -329,8 +359,11 @@ def _executive_summary_page(document: Document, parsed) -> None:
     else:
         _add_body_paragraph(document, "No opportunities were identified in the evidence reviewed.")
 
-    _add_heading(document, "Strategic Recommendation", 2)
-    _add_body_paragraph(document, strategic_recommendation(parsed) or metrics.get("priority", "—"))
+    # The full Strategic Recommendations section (with real Action/
+    # Rationale/Measurement structure per item) renders later via
+    # _render_blocks(); an early singular one-sentence preview here
+    # duplicated it with weaker, regex-extracted text — dropped rather
+    # than replaced, matching the PDF renderer.
     _append_chart_images(document, parsed.chart_data)
     document.add_page_break()
 
