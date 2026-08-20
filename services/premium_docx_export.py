@@ -87,6 +87,10 @@ def _add_heading(document: Document, text: str, level: int) -> None:
     run.font.bold = True
     run.font.color.rgb = COLOR_BLUE if level == 1 else COLOR_SLATE
     _set_paragraph_spacing(paragraph, before=6, after=10)
+    # A heading must never land alone at the bottom of a page with its
+    # content starting fresh on the next — Word's own page-break-avoidance
+    # rule for exactly this ("keep with next paragraph").
+    paragraph.paragraph_format.keep_with_next = True
 
 
 def _add_body_paragraph(document: Document, text: str, *, justify: bool = True) -> None:

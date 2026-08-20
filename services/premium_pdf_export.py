@@ -444,34 +444,44 @@ class PremiumPDFBuilder:
             story.append(Spacer(1, 0.12 * inch))
         story.extend(self._chart_story_elements(parsed.chart_data))
 
-        story.append(Paragraph("Top Risks", self.styles["subheading"]))
+        # Each heading is kept together with at least its first line of
+        # content — otherwise the heading can land alone at the bottom of
+        # a page (an orphan) with its real content starting fresh on the
+        # next page, no heading in sight.
+        risks_block: list[Any] = [Paragraph("Top Risks", self.styles["subheading"])]
         risks = top_risks(parsed)
 
         if risks:
             for card in risks[:5]:
-                story.append(
+                risks_block.append(
                     Paragraph(
                         f"• {escape_xml(card['title'])}",
                         self.styles["bullet"],
                     )
                 )
         else:
-            story.append(Paragraph("No risks were identified in the evidence reviewed.", self.styles["body"]))
+            risks_block.append(
+                Paragraph("No risks were identified in the evidence reviewed.", self.styles["body"])
+            )
+        story.append(KeepTogether(risks_block))
 
         story.append(Spacer(1, 0.1 * inch))
-        story.append(Paragraph("Top Opportunities", self.styles["subheading"]))
+        opportunities_block: list[Any] = [Paragraph("Top Opportunities", self.styles["subheading"])]
         opportunities = top_opportunities(parsed)
 
         if opportunities:
             for item in opportunities[:5]:
-                story.append(
+                opportunities_block.append(
                     Paragraph(
                         format_bullet_item(strip_inline_markdown(item)),
                         self.styles["bullet"],
                     )
                 )
         else:
-            story.append(Paragraph("No opportunities were identified in the evidence reviewed.", self.styles["body"]))
+            opportunities_block.append(
+                Paragraph("No opportunities were identified in the evidence reviewed.", self.styles["body"])
+            )
+        story.append(KeepTogether(opportunities_block))
 
         # The full Strategic Recommendations section (with real Action/
         # Rationale/Measurement structure per item) renders later in
@@ -909,13 +919,18 @@ class PremiumPDFBuilder:
         if not parsed.appendix_sections:
             return []
 
-        story: list[Any] = [PageBreak(), Paragraph("Appendix", self.styles["section_heading"])]
+        # "Appendix" is merged into the first subsection's KeepTogether
+        # block (not a separate top-level flowable) so it can never land
+        # alone at the bottom of a page with its first subsection starting
+        # fresh on the next.
+        story: list[Any] = [PageBreak()]
 
-        for section in parsed.appendix_sections:
-            appendix_block = [
-                Paragraph(escape_xml(section.title), self.styles["subheading"]),
-                *self._markdown_paragraphs(section.body),
-            ]
+        for index, section in enumerate(parsed.appendix_sections):
+            appendix_block: list[Any] = []
+            if index == 0:
+                appendix_block.append(Paragraph("Appendix", self.styles["section_heading"]))
+            appendix_block.append(Paragraph(escape_xml(section.title), self.styles["subheading"]))
+            appendix_block.extend(self._markdown_paragraphs(section.body))
             story.append(KeepTogether(appendix_block))
 
         return story

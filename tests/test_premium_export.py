@@ -270,6 +270,102 @@ def test_build_premium_docx_softens_no_risks_no_opportunities_wording():
     assert "No opportunities identified." not in docx_text
 
 
+def test_executive_summary_page_keeps_top_risks_heading_with_its_content():
+    """Report Output Quality Upgrade Step F: 'Top Opportunities' was seen
+    landing alone at the bottom of a page in a real generated PDF, with
+    its actual bullets starting fresh on the next page — no heading in
+    sight. The heading and at least its first content item must be in the
+    same KeepTogether flowable so ReportLab can never split them apart."""
+
+    from reportlab.platypus import KeepTogether, Paragraph
+
+    from services.premium_pdf_export import PremiumExportMetadata, PremiumPDFBuilder
+    from services.report_document_parser import parse_intelligence_report
+
+    parsed = parse_intelligence_report(SPA_REPORT, source_documents=["report.xlsx"])
+    builder = PremiumPDFBuilder(
+        PremiumExportMetadata(
+            project_name="p", report_name="r", reporting_period="x",
+            source_documents=["report.xlsx"], pack_type="executive",
+        )
+    )
+    story = builder._executive_summary_page(parsed)
+
+    keep_togethers = [item for item in story if isinstance(item, KeepTogether)]
+    assert len(keep_togethers) >= 2, "expected separate KeepTogether blocks for risks and opportunities"
+
+    def _flowable_text(flowable) -> str:
+        frags = getattr(flowable, "frags", None)
+        if frags:
+            return "".join(f.text for f in frags)
+        return ""
+
+    risks_block = keep_togethers[0]
+    assert isinstance(risks_block._content[0], Paragraph)
+    assert _flowable_text(risks_block._content[0]) == "Top Risks"
+    assert len(risks_block._content) >= 2  # heading + at least one content line
+
+    opportunities_block = keep_togethers[1]
+    assert _flowable_text(opportunities_block._content[0]) == "Top Opportunities"
+    assert len(opportunities_block._content) >= 2
+
+
+def test_appendix_heading_stays_with_first_subsection():
+    """The 'Appendix' section title used to be a standalone top-level
+    flowable, so it could land alone at the bottom of a page with the
+    first appendix subsection (e.g. Source References) starting fresh on
+    the next page. It must be merged into the first subsection's
+    KeepTogether block."""
+
+    from reportlab.platypus import KeepTogether, PageBreak, Paragraph
+
+    from services.premium_pdf_export import PremiumExportMetadata, PremiumPDFBuilder
+    from services.report_document_parser import parse_intelligence_report
+
+    parsed = parse_intelligence_report(SPA_REPORT, source_documents=["report.xlsx"])
+    builder = PremiumPDFBuilder(
+        PremiumExportMetadata(
+            project_name="p", report_name="r", reporting_period="x",
+            source_documents=["report.xlsx"], pack_type="executive",
+        )
+    )
+    story = builder._appendix_story(parsed)
+
+    assert isinstance(story[0], PageBreak)
+    first_block = story[1]
+    assert isinstance(first_block, KeepTogether)
+
+    def _flowable_text(flowable) -> str:
+        frags = getattr(flowable, "frags", None)
+        return "".join(f.text for f in frags) if frags else ""
+
+    assert isinstance(first_block._content[0], Paragraph)
+    assert _flowable_text(first_block._content[0]) == "Appendix"
+    assert _flowable_text(first_block._content[1]) == "Source References"
+
+
+def test_docx_headings_are_kept_with_next_paragraph():
+    """DOCX equivalent of the PDF KeepTogether fix — every heading gets
+    Word's 'keep with next' formatting so a heading can never be the last
+    thing on a page with its content starting fresh on the next."""
+
+    from docx import Document as DocxDocument
+    from io import BytesIO
+
+    docx_bytes = build_premium_docx(
+        report_text=SPA_REPORT,
+        metadata=DocxExportMetadata(
+            project_name="p", report_name="r", reporting_period="x",
+            source_documents=["report.xlsx"], pack_type="executive",
+        ),
+    )
+    document = DocxDocument(BytesIO(docx_bytes))
+
+    headings = [p for p in document.paragraphs if p.style.name.startswith("Heading")]
+    assert headings, "expected at least one heading paragraph"
+    assert all(p.paragraph_format.keep_with_next for p in headings)
+
+
 def test_build_premium_pdf_handles_real_spa_format_report_without_crashing():
     pdf_bytes = build_premium_pdf(
         report_text=SPA_REPORT,
