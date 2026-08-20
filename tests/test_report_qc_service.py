@@ -1,0 +1,190 @@
+"""
+Tests for the report quality-control pass (Step F of the Premium Report
+Generation Upgrade). Every check here is deterministic Python; this file
+does not exercise the optional LLM-assisted check (off by default).
+"""
+
+from __future__ import annotations
+
+from services.report_qc_service import (
+    QCIssue,
+    _check_chart_consistency,
+    _check_citation_consistency,
+    _check_duplicate_content,
+    _check_numerical_consistency,
+    _check_period_correctness,
+    _split_sections,
+    run_qc_pass,
+)
+
+PREMIUM_TABLE = {
+    "title": "Gross Premium",
+    "calculations": {
+        "period_over_period": [
+            {"from": "2022", "to": "2023", "percent": 32.1},
+            {"from": "2023", "to": "2024", "percent": 49.4},
+        ],
+        "total_change": {"from": "2022", "to": "2024", "percent": 97.4},
+    },
+}
+
+
+def test_split_sections_splits_by_h2_heading():
+    narrative = "## Executive Summary\nA.\n\n## Key Findings\nB.\n"
+    sections = _split_sections(narrative)
+    assert sections == {"Executive Summary": "A.", "Key Findings": "B."}
+
+
+def test_numerical_consistency_passes_when_all_figures_cited():
+    narrative = "Premiums grew 97.4% overall, with 32.1% and 49.4% year-on-year."
+    issues = _check_numerical_consistency(narrative, [PREMIUM_TABLE])
+    assert issues == []
+
+
+def test_numerical_consistency_flags_missing_figure():
+    narrative = "Premiums grew significantly, roughly doubling."
+    issues = _check_numerical_consistency(narrative, [PREMIUM_TABLE])
+    assert len(issues) == 3  # total_change + 2 period_over_period figures, all missing
+    assert all(issue.category == "numerical_consistency" for issue in issues)
+    assert all(issue.severity == "medium" for issue in issues)
+
+
+def test_citation_consistency_passes_for_known_sources():
+    narrative = "**Source:** report.xlsx"
+    issues = _check_citation_consistency(narrative, ["report.xlsx"])
+    assert issues == []
+
+
+def test_citation_consistency_flags_unknown_source():
+    narrative = "**Source:** made_up_file.pdf"
+    issues = _check_citation_consistency(narrative, ["report.xlsx"])
+    assert len(issues) == 1
+    assert issues[0].severity == "high"
+    assert issues[0].category == "citation_consistency"
+    assert "made_up_file.pdf" in issues[0].message
+
+
+def test_citation_consistency_handles_multiple_comma_separated_sources():
+    narrative = "**Source:** report.xlsx, other.pdf"
+    issues = _check_citation_consistency(narrative, ["report.xlsx"])
+    assert len(issues) == 1
+    assert "other.pdf" in issues[0].message
+
+
+def test_chart_consistency_passes_when_requirement_has_matching_block():
+    requirements = [{"metric_title": "Gross Premium"}]
+    visualizations = [{"title": "Gross Premium"}]
+    assert _check_chart_consistency(requirements, visualizations) == []
+
+
+def test_chart_consistency_flags_missing_chart():
+    requirements = [{"metric_title": "Gross Premium"}]
+    issues = _check_chart_consistency(requirements, [])
+    assert len(issues) == 1
+    assert issues[0].category == "chart_consistency"
+    assert issues[0].severity == "medium"
+
+
+def test_period_correctness_passes_when_no_changes_section():
+    assert _check_period_correctness("## Executive Summary\nText.", None, "custom") == []
+
+
+def test_period_correctness_flags_missing_previous_report():
+    narrative = "## Changes Since Last Report\nNothing changed."
+    issues = _check_period_correctness(narrative, None, "custom")
+    assert len(issues) == 1
+    assert issues[0].severity == "high"
+
+
+def test_period_correctness_flags_period_mismatch():
+    narrative = "## Changes Since Last Report\nNothing changed."
+    previous_report = {"periodId": "quarterly"}
+    issues = _check_period_correctness(narrative, previous_report, "weekly")
+    assert len(issues) == 1
+    assert "quarterly" in issues[0].message
+    assert "weekly" in issues[0].message
+
+
+def test_period_correctness_passes_when_periods_match():
+    narrative = "## Changes Since Last Report\nNothing changed."
+    previous_report = {"periodId": "weekly"}
+    assert _check_period_correctness(narrative, previous_report, "weekly") == []
+
+
+def test_duplicate_content_flags_verbatim_sentence_reuse():
+    narrative = (
+        "## Executive Summary\n"
+        "Gross written premiums increased from 789.6 billion in 2022 to 1558.7 billion in 2024.\n\n"
+        "## Key Findings\n"
+        "Gross written premiums increased from 789.6 billion in 2022 to 1558.7 billion in 2024."
+    )
+    issues = _check_duplicate_content(narrative)
+    assert any(issue.category == "duplicate_content" and "Executive Summary" in issue.message for issue in issues)
+
+
+def test_duplicate_content_flags_repeated_recommendation_action():
+    narrative = (
+        "## Strategic Recommendations\n"
+        "1. **Action:** Monitor claims trends closely.\n"
+        "2. **Action:** Monitor claims trends closely.\n"
+    )
+    issues = _check_duplicate_content(narrative)
+    assert any("Duplicate recommendation action" in issue.message for issue in issues)
+
+
+def test_duplicate_content_passes_for_distinct_content():
+    narrative = (
+        "## Executive Summary\nGross premiums increased materially in 2024.\n\n"
+        "## Key Findings\nClaims growth outpaced premium growth in the final year.\n\n"
+        "## Strategic Recommendations\n"
+        "1. **Action:** Review claims processing.\n"
+        "2. **Action:** Expand into adjacent markets.\n"
+    )
+    assert _check_duplicate_content(narrative) == []
+
+
+def test_run_qc_pass_kill_switch_short_circuits(monkeypatch):
+    monkeypatch.setattr("services.report_qc_service.REPORT_QC_ENABLED", False)
+    report = run_qc_pass("anything", [], metric_tables=[PREMIUM_TABLE])
+    assert report.passed is True
+    assert report.issues == []
+
+
+def test_run_qc_pass_fails_only_on_high_severity_issues():
+    narrative = "## Executive Summary\nSome narrative with no cited figures."
+    report = run_qc_pass(narrative, ["report.xlsx"], metric_tables=[PREMIUM_TABLE])
+    # numerical_consistency issues are "medium" severity -> report still passes.
+    assert report.passed is True
+    assert len(report.issues) == 3
+
+
+def test_run_qc_pass_fails_on_high_severity_citation_issue():
+    narrative = "**Source:** nonexistent.pdf"
+    report = run_qc_pass(narrative, ["report.xlsx"])
+    assert report.passed is False
+    assert any(issue.severity == "high" for issue in report.issues)
+
+
+def test_run_qc_pass_skips_llm_check_when_disabled_even_with_client():
+    calls = []
+
+    class _Client:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kwargs):
+                    calls.append(kwargs)
+                    raise AssertionError("should not be called when disabled")
+
+    run_qc_pass("## Executive Summary\nText.", ["a.pdf"], llm_client=_Client())
+    assert calls == []
+
+
+def test_qc_issue_to_dict():
+    issue = QCIssue(severity="high", category="citation_consistency", message="msg", location="loc")
+    assert issue.to_dict() == {
+        "severity": "high",
+        "category": "citation_consistency",
+        "message": "msg",
+        "location": "loc",
+    }

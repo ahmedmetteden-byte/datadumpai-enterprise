@@ -26,6 +26,7 @@ from services.report_plan_service import (
     render_plan_for_prompt,
     select_dashboard_items,
 )
+from services.report_qc_service import run_qc_pass
 from services.report_retrieval_service import build_facet_queries, retrieve_grouped_sources
 from services.report_service import ReportService
 from services.visualization_engine import apply_visualizations
@@ -182,13 +183,18 @@ class SpaReportGenerationService:
         return sources
 
     def _find_previous_report(
-        self, workspace_id: str, template_id: str
+        self, workspace_id: str, template_id: str, period_id: str
     ) -> dict[str, Any] | None:
-        """Most recent previously-saved SPA report for this workspace+template,
-        or None if there isn't one (brand-new workspace, first report of this
-        template, or only legacy/non-SPA reports exist). Must run before the
-        report currently being generated is saved, so it can never match
-        itself.
+        """Most recent previously-saved SPA report for this workspace+
+        template+period, or None if there isn't one (brand-new workspace,
+        first report of this template/period, or only legacy/non-SPA
+        reports exist). Must run before the report currently being
+        generated is saved, so it can never match itself.
+
+        Matching on period_id too (not just template_id) matters: without
+        it, a Weekly report's "previous report" comparison could silently
+        pick up the last Quarterly report of the same template, comparing
+        against the wrong timeframe entirely.
 
         Note: ReportService.get_reports()'s top-level "created_at" is computed
         at call time, not the report's actual creation time — ordering must
@@ -213,6 +219,8 @@ class SpaReportGenerationService:
             if not isinstance(data, dict):
                 continue  # legacy Streamlit report, no report_data sidecar
             if data.get("templateId") != template_id:
+                continue
+            if data.get("periodId") != period_id:
                 continue
             content = data.get("content")
             created_at = data.get("createdAt")
@@ -532,7 +540,7 @@ class SpaReportGenerationService:
         period = period_by_id(period_id)
         workspace_name = str(project.get("name") or "Workspace")
         report_title = (title or "").strip() or f"{template['name']} — {period['name']}"
-        previous_report = self._find_previous_report(workspace_id, template_id)
+        previous_report = self._find_previous_report(workspace_id, template_id, period_id)
         sources = self._gather_sources(
             workspace_id,
             project,
@@ -597,6 +605,23 @@ class SpaReportGenerationService:
             reporting_period=period["name"],
             force_generate=True,
         )
+
+        qc_report = run_qc_pass(
+            report.narrative,
+            report.source_documents,
+            metric_tables=metric_tables,
+            chart_requirements=(report.metadata.get("report_plan") or {}).get(
+                "chart_requirements"
+            ),
+            visualizations=report.charts.get("visualizations"),
+            previous_report=previous_report,
+            period_id=period_id,
+            evidence="\n\n".join(f"{src['filename']}\n{src['excerpt']}" for src in sources),
+            llm_client=self._client,
+        )
+        if qc_report.issues:
+            report.metadata["qc_report"] = qc_report.to_dict()
+
         markdown = report.to_markdown()
 
         saved = ReportService.save_report(

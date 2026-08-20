@@ -200,3 +200,35 @@ def test_baseline_metric_derived_chart_survives_markdown_round_trip_and_exports(
         chart_export = get_export_chart_images(reconstructed.charts)
         assert chart_export.images
         assert chart_export.images[0][1].startswith(b"\x89PNG")
+
+
+def test_baseline_qc_pass_flags_uncited_figures_without_blocking_generation(
+    isolated_env, project_service: ProjectService, monkeypatch
+):
+    """Step F: the canned test report never cites the computed percentages
+    verbatim, so the QC pass must flag numerical-consistency issues - but
+    since those are medium severity, generation must still succeed and
+    the report must still be saved."""
+
+    project = project_service.create_project("Baseline QC Project")
+
+    record, _prompt, report = _generate_with_fake_llm(project, monkeypatch=monkeypatch)
+
+    assert record is not None  # generation was not blocked
+    assert report is not None
+    qc_report = report.metadata.get("qc_report")
+    assert qc_report is not None
+    assert qc_report["passed"] is True  # only medium-severity issues
+    assert any(issue["category"] == "numerical_consistency" for issue in qc_report["issues"])
+
+
+def test_baseline_qc_pass_kill_switch_omits_qc_report(
+    isolated_env, project_service: ProjectService, monkeypatch
+):
+    monkeypatch.setattr("services.report_qc_service.REPORT_QC_ENABLED", False)
+    project = project_service.create_project("Baseline QC Disabled Project")
+
+    _record, _prompt, report = _generate_with_fake_llm(project, monkeypatch=monkeypatch)
+
+    assert report is not None
+    assert "qc_report" not in report.metadata

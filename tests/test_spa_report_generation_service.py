@@ -325,9 +325,10 @@ def _seed_report(
     created_at: str,
     content: str,
     report_id: str | None = None,
+    period_id: str = "custom",
 ) -> dict:
     """Write a saved SPA-shaped report directly (bypassing generate()) so
-    tests can control createdAt/templateId precisely."""
+    tests can control createdAt/templateId/periodId precisely."""
 
     saved = ReportService.save_report(
         project_id, name, report_text=content, source_documents=[]
@@ -342,7 +343,7 @@ def _seed_report(
         "updatedAt": created_at,
         "reportType": name,
         "templateId": template_id,
-        "periodId": "custom",
+        "periodId": period_id,
         "periodName": "Custom / Ad hoc",
         "status": "draft",
         "content": content,
@@ -379,7 +380,40 @@ def test_find_previous_report_matches_same_template_id_only(
     )
 
     found = SpaReportGenerationService()._find_previous_report(
-        project["id"], "executive_summary"
+        project["id"], "executive_summary", "custom"
+    )
+
+    assert found is not None
+    assert found["id"] == matching["id"]
+
+
+def test_find_previous_report_matches_same_period_id_only(
+    isolated_env, project_service: ProjectService
+):
+    """Regression test: without period_id matching, a Weekly report's
+    'previous report' comparison could silently pick up the last
+    Quarterly report of the same template instead of the last Weekly one."""
+
+    project = project_service.create_project("Period Match Test Project")
+    _seed_report(
+        project["id"],
+        name="Quarterly Report",
+        template_id="executive_summary",
+        created_at="2026-01-02T00:00:00+00:00",
+        content="Quarterly content.",
+        period_id="quarterly",
+    )
+    matching = _seed_report(
+        project["id"],
+        name="Weekly Report",
+        template_id="executive_summary",
+        created_at="2026-01-01T00:00:00+00:00",
+        content="Weekly content.",
+        period_id="weekly",
+    )
+
+    found = SpaReportGenerationService()._find_previous_report(
+        project["id"], "executive_summary", "weekly"
     )
 
     assert found is not None
@@ -411,7 +445,7 @@ def test_find_previous_report_returns_most_recent_by_created_at_field(
     )
 
     found = SpaReportGenerationService()._find_previous_report(
-        project["id"], "executive_summary"
+        project["id"], "executive_summary", "custom"
     )
 
     assert found is not None
@@ -438,7 +472,7 @@ def test_find_previous_report_skips_legacy_reports_without_report_data(
     )
 
     found = SpaReportGenerationService()._find_previous_report(
-        project["id"], "executive_summary"
+        project["id"], "executive_summary", "custom"
     )
 
     assert found is not None
@@ -472,7 +506,7 @@ def test_find_previous_report_skips_malformed_report_data(
     )
 
     found = SpaReportGenerationService()._find_previous_report(
-        project["id"], "executive_summary"
+        project["id"], "executive_summary", "custom"
     )
 
     assert found is not None
@@ -492,7 +526,7 @@ def test_find_previous_report_returns_none_when_nothing_matches(
     )
 
     found = SpaReportGenerationService()._find_previous_report(
-        project["id"], "executive_summary"
+        project["id"], "executive_summary", "custom"
     )
 
     assert found is None
@@ -504,7 +538,7 @@ def test_find_previous_report_returns_none_for_empty_workspace(
     project = project_service.create_project("Empty Workspace Test Project")
 
     found = SpaReportGenerationService()._find_previous_report(
-        project["id"], "executive_summary"
+        project["id"], "executive_summary", "custom"
     )
 
     assert found is None
@@ -770,13 +804,13 @@ def test_generate_wires_previous_report_lookup_across_calls(
         period_id="custom",
     )
 
-    calls: list[tuple[str, str]] = []
+    calls: list[tuple[str, str, str]] = []
     svc = SpaReportGenerationService()
     original = svc._find_previous_report
 
-    def _spy(workspace_id, template_id):
-        calls.append((workspace_id, template_id))
-        return original(workspace_id, template_id)
+    def _spy(workspace_id, template_id, period_id):
+        calls.append((workspace_id, template_id, period_id))
+        return original(workspace_id, template_id, period_id)
 
     monkeypatch.setattr(svc, "_find_previous_report", _spy)
 
@@ -787,7 +821,7 @@ def test_generate_wires_previous_report_lookup_across_calls(
         period_id="custom",
     )
 
-    assert calls == [(project["id"], "executive_summary")]
+    assert calls == [(project["id"], "executive_summary", "custom")]
     assert second["id"] != first["id"]
 
 
