@@ -59,10 +59,11 @@ def test_thin_spa_report_with_neither_metrics_nor_charts_falls_back_to_plain(mon
     assert report_is_intelligence(report) is False
 
 
-def test_kill_switch_defaults_to_false():
-    """Flipping this on changes what real users see in every export for
-    an eligible report — it must never accidentally default on."""
+def test_kill_switch_defaults_to_true():
+    """Signed off after visual review of real generated PDF/DOCX/PPTX
+    samples — enabled by default. Still overridable via the
+    PREMIUM_EXPORT_ROUTING_ENABLED env var for instant rollback."""
 
     from services import report_document
 
-    assert report_document.PREMIUM_EXPORT_ROUTING_ENABLED is False
+    assert report_document.PREMIUM_EXPORT_ROUTING_ENABLED is True

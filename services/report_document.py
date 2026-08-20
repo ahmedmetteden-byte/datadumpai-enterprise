@@ -211,11 +211,11 @@ def prepare_report_view(report: ReportData):
 
 # Kill switch: instant rollback to plain export routing via config, no
 # deploy needed, if the premium-renderer retrofit (Step G of the report
-# quality upgrade) is ever in question. Off by default until the visual
-# output has been signed off — flipping it on changes what real users see
-# in every PDF/DOCX/PPTX export for an eligible report.
+# quality upgrade) is ever in question. Signed off and enabled by default
+# as of the visual review of real generated PDF/DOCX/PPTX samples —
+# flipping it off reverts every eligible report to the plain exporter.
 PREMIUM_EXPORT_ROUTING_ENABLED = os.getenv(
-    "PREMIUM_EXPORT_ROUTING_ENABLED", "false"
+    "PREMIUM_EXPORT_ROUTING_ENABLED", "true"
 ).strip().lower() not in {"0", "false", "no"}
 
 
