@@ -536,6 +536,67 @@ def test_generate_markdown_prompt_unchanged_when_no_previous_report():
     assert "Changes Since Last Report" not in prompt_without_param
 
 
+def test_generate_markdown_requires_fact_analysis_implication_and_basis_tag():
+    """Step B: Key Findings must move FACT -> ANALYSIS -> IMPLICATION and
+    every finding must be tagged with its evidentiary basis, distinguishing
+    a stated source fact from a calculated result from an inference."""
+
+    svc = SpaReportGenerationService()
+    client, completions = _fake_openai_client()
+    svc._client = client
+    sources = [{"filename": "a.pdf", "excerpt": "Some evidence."}]
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_name="Executive Summary",
+        sources=sources,
+    )
+    prompt = completions.calls[0]["messages"][1]["content"]
+
+    assert "FACT" in prompt and "ANALYSIS" in prompt and "IMPLICATION" in prompt
+    assert "`Source fact`" in prompt and "`Calculated result`" in prompt and "`Analytical inference`" in prompt
+    assert "not a paraphrase" in prompt
+    assert "never present an inference as if it were a stated fact" in prompt
+
+
+def test_generate_markdown_instructs_restraint_against_unearned_adjectives():
+    svc = SpaReportGenerationService()
+    client, completions = _fake_openai_client()
+    svc._client = client
+    sources = [{"filename": "a.pdf", "excerpt": "Some evidence."}]
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_name="Executive Summary",
+        sources=sources,
+    )
+    prompt = completions.calls[0]["messages"][1]["content"]
+
+    assert "remarkable" in prompt and "robust" in prompt  # named as words to avoid
+    assert "not a promoter" in prompt
+    assert "does not by itself mean profitability improved" in prompt
+
+
+def test_generate_markdown_forbids_padding_in_detailed_analysis_and_risks():
+    svc = SpaReportGenerationService()
+    client, completions = _fake_openai_client()
+    svc._client = client
+    sources = [{"filename": "a.pdf", "excerpt": "Some evidence."}]
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_name="Executive Summary",
+        sources=sources,
+    )
+    prompt = completions.calls[0]["messages"][1]["content"]
+
+    assert "Do not restate findings from Key Findings to lengthen this section" in prompt
+    assert "state that plainly rather than manufacturing a generic one" in prompt
+
+
 def test_generate_markdown_includes_changes_section_when_previous_report_present():
     svc = SpaReportGenerationService()
     client, completions = _fake_openai_client()
