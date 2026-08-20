@@ -9,6 +9,8 @@ from services.report_retrieval_service import (
     FACETS,
     _clip,
     build_facet_queries,
+    compute_coverage_gaps,
+    detect_all_documents_intent,
     retrieve_grouped_sources,
 )
 
@@ -46,12 +48,21 @@ class _FakeEmbedder:
 
 
 class _FakeQdrant:
-    def __init__(self, hits_by_query_index: dict[int, list[dict]]):
+    def __init__(
+        self,
+        hits_by_query_index: dict[int, list[dict]],
+        hits_by_document_id: dict[str, list[dict]] | None = None,
+    ):
         self._hits_by_query_index = hits_by_query_index
+        self._hits_by_document_id = hits_by_document_id or {}
         self.calls = 0
+        self.document_id_calls: list[str] = []
 
-    def search(self, *, workspace_id, query_vector, limit):
+    def search(self, *, workspace_id, query_vector, limit, document_id=None):
         self.calls += 1
+        if document_id is not None:
+            self.document_id_calls.append(document_id)
+            return self._hits_by_document_id.get(document_id, [])
         index = int(query_vector[0])
         return self._hits_by_query_index.get(index, [])
 
@@ -184,6 +195,126 @@ def test_clip_still_truncates_by_length_with_ellipsis():
     clipped = _clip("word " * 100, limit=20)
     assert len(clipped) == 20
     assert clipped.endswith("…")
+
+
+def test_detect_all_documents_intent_matches_spec_examples():
+    """Document Coverage fix: matches every phrasing given as an example
+    in the spec, plus the exact real-world prompt that triggered the
+    original bug."""
+
+    positives = [
+        "Combine all documents.",
+        "Produce a comprehensive report from all uploaded documents.",
+        "Analyze everything in this workspace.",
+        "Review all four documents.",
+        "Prepare a report using all the documents.",
+        "Produce a comprehensive report by combining all four documents uploaded in this workspace.",
+    ]
+    for instructions in positives:
+        assert detect_all_documents_intent(instructions) is True, instructions
+
+
+def test_detect_all_documents_intent_ignores_targeted_and_empty_instructions():
+    negatives = [
+        None,
+        "",
+        "   ",
+        "What are the claims issues?",
+        "Summarize the annual report.",
+        "Use documents A, B and C only.",
+    ]
+    for instructions in negatives:
+        assert detect_all_documents_intent(instructions) is False, instructions
+
+
+def test_compute_coverage_gaps_returns_empty_when_all_covered():
+    sources = [{"filename": "a.pdf", "excerpt": "x"}, {"filename": "b.pdf", "excerpt": "y"}]
+    documents = [{"filename": "a.pdf", "status": "indexed"}, {"filename": "b.pdf", "status": "indexed"}]
+    assert compute_coverage_gaps(sources, documents) == []
+
+
+def test_compute_coverage_gaps_classifies_missing_documents_by_status():
+    sources = [{"filename": "a.pdf", "excerpt": "x"}]
+    documents = [
+        {"filename": "a.pdf", "status": "indexed"},
+        {"filename": "failed.pdf", "status": "failed"},
+        {"filename": "sparse.pdf", "status": "indexed"},
+        {"filename": "still-processing.pdf", "status": "processing"},
+    ]
+    gaps = compute_coverage_gaps(sources, documents)
+    by_filename = {gap["filename"]: gap["reason"] for gap in gaps}
+    assert by_filename == {
+        "failed.pdf": "processing_failed",
+        "sparse.pdf": "no_matching_evidence",
+        "still-processing.pdf": "not_yet_indexed",
+    }
+
+
+def test_retrieve_grouped_sources_without_documents_param_is_unchanged():
+    """Backward compatibility: omitting `documents` (every existing
+    caller before this fix) must behave exactly as before — no coverage
+    stage, no extra Qdrant calls."""
+
+    hits = {0: [_hit("c1", 0.9, "doc-a", "a.pdf", 0, "A chunk")]}
+    qdrant = _FakeQdrant(hits)
+    result = retrieve_grouped_sources("ws1", ["only query"], embedder=_FakeEmbedder(), qdrant=qdrant)
+    assert [source["filename"] for source in result] == ["a.pdf"]
+    assert qdrant.document_id_calls == []
+
+
+def test_retrieve_grouped_sources_covers_a_document_missed_by_global_retrieval():
+    """The exact real-world regression: a document with real, successfully-
+    indexed chunks that never surfaces in ANY facet query's top-K must
+    still end up in the final sources list when the caller passes the
+    workspace's document list (signaling "all documents" intent was
+    detected)."""
+
+    hits_by_query = {
+        0: [_hit("c1", 0.9, "doc-a-id", "a.pdf", 0, "A chunk")],
+        1: [_hit("c1", 0.9, "doc-a-id", "a.pdf", 0, "A chunk")],
+    }
+    hits_by_document = {
+        "doc-b-id": [_hit("c2", 0.5, "doc-b-id", "b.pdf", 0, "B chunk never in global top-K")],
+    }
+    qdrant = _FakeQdrant(hits_by_query, hits_by_document)
+    documents = [
+        {"id": "doc-a-id", "filename": "a.pdf", "status": "indexed"},
+        {"id": "doc-b-id", "filename": "b.pdf", "status": "indexed"},
+    ]
+
+    result = retrieve_grouped_sources(
+        "ws1", ["q1", "q2"], embedder=_FakeEmbedder(), qdrant=qdrant, documents=documents
+    )
+
+    filenames = {source["filename"] for source in result}
+    assert filenames == {"a.pdf", "b.pdf"}
+    assert "B chunk never in global top-K" in next(
+        s["excerpt"] for s in result if s["filename"] == "b.pdf"
+    )
+    # The coverage query was scoped to the specific missing document.
+    assert "doc-b-id" in qdrant.document_id_calls
+    assert "doc-a-id" not in qdrant.document_id_calls  # already covered, no extra query needed
+
+
+def test_retrieve_grouped_sources_coverage_skips_unindexed_documents():
+    """A document that failed to index (or is still processing) has no
+    chunks the retrieval layer could possibly recover — that's a
+    compute_coverage_gaps() reporting concern, not something this stage
+    should attempt (and silently produce nothing for)."""
+
+    hits_by_query = {0: [_hit("c1", 0.9, "doc-a-id", "a.pdf", 0, "A chunk")]}
+    qdrant = _FakeQdrant(hits_by_query, {})
+    documents = [
+        {"id": "doc-a-id", "filename": "a.pdf", "status": "indexed"},
+        {"id": "doc-b-id", "filename": "b.pdf", "status": "failed"},
+    ]
+
+    result = retrieve_grouped_sources(
+        "ws1", ["q1"], embedder=_FakeEmbedder(), qdrant=qdrant, documents=documents
+    )
+
+    assert [s["filename"] for s in result] == ["a.pdf"]
+    assert qdrant.document_id_calls == []
 
 
 def test_retrieve_grouped_sources_excerpt_preserves_table_structure_when_clipped():

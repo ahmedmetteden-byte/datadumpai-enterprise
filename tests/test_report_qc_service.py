@@ -10,6 +10,7 @@ from services.report_qc_service import (
     QCIssue,
     _check_chart_consistency,
     _check_citation_consistency,
+    _check_document_coverage,
     _check_duplicate_content,
     _check_evidence_leaks_into_narrative,
     _check_growth_terminology,
@@ -241,6 +242,41 @@ def test_evidence_leak_flags_tag_run_into_preceding_prose():
     assert len(issues) == 1
     assert issues[0].category == "evidence_leak"
     assert issues[0].location == "Basis"
+
+
+def test_document_coverage_ignores_reports_where_all_documents_wasnt_requested():
+    assert _check_document_coverage(None) == []
+    assert _check_document_coverage({"all_documents_requested": False}) == []
+    assert _check_document_coverage({}) == []
+
+
+def test_document_coverage_passes_when_every_document_covered():
+    coverage = {
+        "all_documents_requested": True,
+        "documents_in_scope": 4,
+        "documents_covered": 4,
+        "gaps": [],
+    }
+    assert _check_document_coverage(coverage) == []
+
+
+def test_document_coverage_flags_a_missing_document_as_high_severity():
+    """Document Coverage fix: the exact real-world regression — 4
+    documents requested, only 3 covered — must surface as a high-severity
+    issue, not pass silently."""
+
+    coverage = {
+        "all_documents_requested": True,
+        "documents_in_scope": 4,
+        "documents_covered": 3,
+        "gaps": [{"filename": "Minutes - 14th Meeting.pdf", "reason": "no_matching_evidence"}],
+    }
+    issues = _check_document_coverage(coverage)
+    assert len(issues) == 1
+    assert issues[0].severity == "high"
+    assert issues[0].category == "document_coverage"
+    assert "Minutes - 14th Meeting.pdf" in issues[0].message
+    assert "4" in issues[0].message and "3" in issues[0].message
 
 
 def test_run_qc_pass_kill_switch_short_circuits(monkeypatch):

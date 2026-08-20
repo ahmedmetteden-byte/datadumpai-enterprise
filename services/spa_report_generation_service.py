@@ -27,7 +27,12 @@ from services.report_plan_service import (
     select_dashboard_items,
 )
 from services.report_qc_service import run_qc_pass
-from services.report_retrieval_service import build_facet_queries, retrieve_grouped_sources
+from services.report_retrieval_service import (
+    build_facet_queries,
+    compute_coverage_gaps,
+    detect_all_documents_intent,
+    retrieve_grouped_sources,
+)
 from services.report_service import ReportService
 from services.visualization_engine import apply_visualizations
 
@@ -257,7 +262,14 @@ class SpaReportGenerationService:
                     period_name=period["name"],
                     instructions=instructions,
                 )
-                sources = retrieve_grouped_sources(workspace_id, queries)
+                # When the user explicitly asked for every document,
+                # relevance ranking alone must not be allowed to silently
+                # drop one that never scores in any facet query's top-K —
+                # guarantee coverage rather than just retrieving the most
+                # relevant evidence (see report_retrieval_service.py's
+                # _ensure_document_coverage()).
+                coverage_docs = docs if detect_all_documents_intent(instructions) else None
+                sources = retrieve_grouped_sources(workspace_id, queries, documents=coverage_docs)
                 if sources:
                     return sources
             except Exception:
@@ -310,6 +322,7 @@ class SpaReportGenerationService:
         previous_report: dict[str, Any] | None = None,
         metric_tables: list[dict[str, Any]] | None = None,
         report_plan: ReportPlan | None = None,
+        coverage_gaps: list[dict[str, str]] | None = None,
     ) -> str:
         if not self._client or not sources:
             return self._fallback_markdown(
@@ -381,11 +394,32 @@ class SpaReportGenerationService:
                 "between sources. A report that meaningfully engages with only one document while "
                 "glossing over the rest has failed the task — every one of the "
                 f"{source_count} documents must be referenced by name at least once. "
+                "This does not mean forcing equal coverage: if one document supplies most of the "
+                "material and another contributes only a single relevant point, reflect that "
+                "naturally rather than padding the thin one — but never omit a document from the "
+                "evidence set entirely, and never fabricate a finding just to make a "
+                "lightly-relevant document appear more substantial than the evidence supports. "
                 "If a finding is corroborated by more than one document, say so and cite all of "
                 "them; that kind of cross-document corroboration is the most valuable thing you "
                 "can produce.\n\n"
             )
             if source_count > 1
+            else ""
+        )
+        coverage_gap_requirement = (
+            (
+                "REPORT SCOPE NOTE (application-generated, not user-authored): the user "
+                "explicitly requested a report using every document in this workspace. The "
+                "following document(s) were in scope but could not contribute evidence — "
+                + "; ".join(
+                    f"{gap['filename']} ({gap['reason'].replace('_', ' ')})"
+                    for gap in coverage_gaps
+                )
+                + ". Do not silently omit them from your account of the evidence reviewed: "
+                "state plainly, once, that they were reviewed but contained no evidence "
+                "relevant to this report — do not invent findings from them to compensate.\n\n"
+            )
+            if coverage_gaps
             else ""
         )
         comparison_context = ""
@@ -419,6 +453,7 @@ class SpaReportGenerationService:
             "using only the evidence provided below.\n"
             f"{instructions_line}\n"
             f"{synthesis_requirement}"
+            f"{coverage_gap_requirement}"
             f"{calculated_metrics_requirement}"
             f"{growth_terminology_requirement}"
             f"{report_plan_requirement}"
@@ -570,6 +605,18 @@ class SpaReportGenerationService:
             period=period,
             instructions=instructions,
         )
+
+        source_coverage: dict[str, Any] = {}
+        if detect_all_documents_intent(instructions):
+            all_workspace_docs = list(project.get("documents") or [])
+            gaps = compute_coverage_gaps(sources, all_workspace_docs)
+            source_coverage = {
+                "all_documents_requested": True,
+                "documents_in_scope": len(all_workspace_docs),
+                "documents_covered": len(sources),
+                "gaps": gaps,
+            }
+
         metric_tables = extract_metric_tables(sources)
         report_plan = (
             build_report_plan(
@@ -593,6 +640,7 @@ class SpaReportGenerationService:
             previous_report=previous_report,
             metric_tables=metric_tables,
             report_plan=report_plan,
+            coverage_gaps=source_coverage.get("gaps"),
         )
         report = ReportData(
             report_type=template["name"],
@@ -615,6 +663,7 @@ class SpaReportGenerationService:
                     if dashboard_selection and not dashboard_selection.is_empty()
                     else {}
                 ),
+                **({"source_coverage": source_coverage} if source_coverage else {}),
             },
             metrics={"tables": metric_tables} if metric_tables else {},
             executive_summary={"text": _clip(markdown, 500)},
@@ -639,6 +688,7 @@ class SpaReportGenerationService:
             previous_report=previous_report,
             period_id=period_id,
             evidence="\n\n".join(f"{src['filename']}\n{src['excerpt']}" for src in sources),
+            source_coverage=source_coverage or None,
             llm_client=self._client,
         )
         if qc_report.issues:

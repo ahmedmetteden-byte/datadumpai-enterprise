@@ -138,7 +138,7 @@ def test_gather_sources_uses_retrieval_when_available(monkeypatch):
 
     monkeypatch.setattr(
         "services.spa_report_generation_service.retrieve_grouped_sources",
-        lambda workspace_id, queries: [
+        lambda workspace_id, queries, **kwargs: [
             {"filename": "retrieved.pdf", "excerpt": "Retrieved content"}
         ],
     )
@@ -162,7 +162,7 @@ def test_gather_sources_uses_retrieval_when_available(monkeypatch):
 def test_gather_sources_falls_back_when_retrieval_raises(monkeypatch):
     monkeypatch.setattr(
         "services.spa_report_generation_service.retrieve_grouped_sources",
-        lambda workspace_id, queries: (_ for _ in ()).throw(RuntimeError("Qdrant unreachable")),
+        lambda workspace_id, queries, **kwargs: (_ for _ in ()).throw(RuntimeError("Qdrant unreachable")),
     )
     svc = SpaReportGenerationService()
     sentinel = [{"filename": "legacy.pdf", "excerpt": "Legacy content"}]
@@ -181,7 +181,7 @@ def test_gather_sources_falls_back_when_retrieval_raises(monkeypatch):
 def test_gather_sources_falls_back_when_retrieval_returns_nothing(monkeypatch):
     monkeypatch.setattr(
         "services.spa_report_generation_service.retrieve_grouped_sources",
-        lambda workspace_id, queries: [],
+        lambda workspace_id, queries, **kwargs: [],
     )
     svc = SpaReportGenerationService()
     sentinel = [{"filename": "legacy.pdf", "excerpt": "Legacy content"}]
@@ -642,6 +642,80 @@ def test_generate_markdown_prohibits_cagr_mislabeling():
     assert "CAGR" in prompt and "compound annual growth rate" in prompt
     assert "never use either term for a single period-over-period change" in prompt
     assert "year-over-year change" in prompt
+
+
+def test_generate_markdown_names_every_source_document_regardless_of_relevance():
+    """Document Coverage fix: reinforces that every document in `sources`
+    (now guaranteed complete by the retrieval layer when the user asked
+    for all documents) must be referenced — and that a lightly-relevant
+    one must not be padded or have content invented for it just to
+    appear more substantial."""
+
+    svc = SpaReportGenerationService()
+    client, completions = _fake_openai_client()
+    svc._client = client
+    sources = [
+        {"filename": "a.pdf", "excerpt": "Rich evidence."},
+        {"filename": "b.pdf", "excerpt": "One thin point."},
+    ]
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_name="Executive Summary",
+        sources=sources,
+    )
+    prompt = completions.calls[0]["messages"][1]["content"]
+
+    assert "a.pdf" in prompt and "b.pdf" in prompt
+    assert "must be referenced by name at least once" in prompt
+    assert "does not mean forcing equal coverage" in prompt
+    assert "never fabricate a finding just to make a" in prompt
+
+
+def test_generate_markdown_includes_coverage_gap_note_when_a_document_could_not_be_covered():
+    """Document Coverage fix (item 12/18): when a document was in scope
+    but genuinely couldn't contribute evidence, the application — not the
+    user — tells the model to acknowledge it plainly rather than
+    silently omitting it or inventing content to compensate."""
+
+    svc = SpaReportGenerationService()
+    client, completions = _fake_openai_client()
+    svc._client = client
+    sources = [{"filename": "a.pdf", "excerpt": "Some evidence."}]
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_name="Executive Summary",
+        sources=sources,
+        coverage_gaps=[{"filename": "Minutes - 14th Meeting.pdf", "reason": "no_matching_evidence"}],
+    )
+    prompt = completions.calls[0]["messages"][1]["content"]
+
+    assert "REPORT SCOPE NOTE" in prompt
+    assert "Minutes - 14th Meeting.pdf" in prompt
+    assert "no matching evidence" in prompt
+    assert "Do not silently omit them" in prompt
+    assert "do not invent findings from them" in prompt
+
+
+def test_generate_markdown_omits_coverage_gap_note_when_no_gaps():
+    svc = SpaReportGenerationService()
+    client, completions = _fake_openai_client()
+    svc._client = client
+    sources = [{"filename": "a.pdf", "excerpt": "Some evidence."}]
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_name="Executive Summary",
+        sources=sources,
+        coverage_gaps=None,
+    )
+    prompt = completions.calls[0]["messages"][1]["content"]
+
+    assert "REPORT SCOPE NOTE" not in prompt
 
 
 def test_generate_markdown_instructs_restraint_against_unearned_adjectives():

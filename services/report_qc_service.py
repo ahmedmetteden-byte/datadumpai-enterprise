@@ -32,6 +32,8 @@ Checks (deterministic, always run when enabled):
   carry its own Action clause?
 - evidence leaks: does Basis/Confidence/Source start its own line, or
   did it run into the preceding prose?
+- document coverage: when the user explicitly requested every workspace
+  document, does the report's evidence set actually cover all of them?
 """
 
 from __future__ import annotations
@@ -405,6 +407,38 @@ def _check_duplicate_content(narrative: str) -> list[QCIssue]:
     return issues
 
 
+def _check_document_coverage(source_coverage: dict[str, Any] | None) -> list[QCIssue]:
+    """When the user explicitly requested every document in the workspace
+    (Document Coverage fix), verify the report's evidence set actually
+    covers all of them — a document silently missing despite an explicit
+    "use all documents" request is a trust violation the user must be
+    able to see, not something that passes unnoticed. High severity: this
+    is exactly the failure mode the fix exists to prevent."""
+
+    if not source_coverage or not source_coverage.get("all_documents_requested"):
+        return []
+
+    in_scope = int(source_coverage.get("documents_in_scope") or 0)
+    covered = int(source_coverage.get("documents_covered") or 0)
+
+    if covered >= in_scope:
+        return []
+
+    gaps = source_coverage.get("gaps") or []
+    gap_desc = "; ".join(f"{gap['filename']} ({gap['reason']})" for gap in gaps) or "unspecified"
+
+    return [
+        QCIssue(
+            severity="high",
+            category="document_coverage",
+            message=(
+                f"User requested all {in_scope} workspace documents, but only {covered} are "
+                f"represented in the report's evidence set. Missing: {gap_desc}."
+            ),
+        )
+    ]
+
+
 def _run_llm_qc_check(client: Any, narrative: str, evidence: str) -> list[QCIssue]:
     """LLM-assisted checks needing semantic judgment: does every
     non-obvious claim trace to the evidence, and does every recommendation
@@ -469,6 +503,7 @@ def run_qc_pass(
     previous_report: dict[str, Any] | None = None,
     period_id: str = "",
     evidence: str = "",
+    source_coverage: dict[str, Any] | None = None,
     llm_client: Any = None,
 ) -> QCReport:
     """Run every enabled QC check and return a QCReport. Never raises and
@@ -488,6 +523,7 @@ def run_qc_pass(
     issues.extend(_check_risk_opportunity_formatting(narrative))
     issues.extend(_check_recommendation_has_action(narrative))
     issues.extend(_check_evidence_leaks_into_narrative(narrative))
+    issues.extend(_check_document_coverage(source_coverage))
 
     if REPORT_QC_LLM_CHECKS_ENABLED and llm_client is not None:
         issues.extend(_run_llm_qc_check(llm_client, narrative, evidence))
