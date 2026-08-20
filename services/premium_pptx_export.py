@@ -4,6 +4,7 @@ Premium PowerPoint export for executive intelligence reports.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from io import BytesIO
@@ -15,9 +16,11 @@ from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Pt
 
 from config import APP_NAME
+from services.export_chart_blocks import get_export_chart_images
 from services.report_document_parser import (
     dashboard_metrics,
     first_ai_insight,
+    is_available,
     parse_intelligence_report,
     top_risks,
 )
@@ -90,6 +93,20 @@ class PremiumPresentationBuilder:
             paragraph.font.size = Pt(18)
             paragraph.font.color.rgb = SLATE
 
+    def _chart_slides(self, chart_data: dict) -> None:
+        chart_export = get_export_chart_images(chart_data)
+
+        for title, png_bytes in chart_export.images:
+            slide = self.presentation.slides.add_slide(self.presentation.slide_layouts[6])
+            heading = slide.shapes.add_textbox(Inches(0.7), Inches(0.5), Inches(12), Inches(0.7))
+            heading.text_frame.text = title
+            heading.text_frame.paragraphs[0].font.size = Pt(28)
+            heading.text_frame.paragraphs[0].font.bold = True
+            heading.text_frame.paragraphs[0].font.color.rgb = BLUE
+            slide.shapes.add_picture(
+                BytesIO(png_bytes), Inches(1.4), Inches(1.5), width=Inches(10.5)
+            )
+
     def build(self, report_text: str) -> bytes:
         parsed = parse_intelligence_report(
             report_text,
@@ -100,17 +117,22 @@ class PremiumPresentationBuilder:
 
         self._title_slide()
 
-        self._bullet_slide(
-            "Executive Dashboard",
-            [
-                f"Health Score: {metrics.get('health_score', '—')}/100",
-                f"Outlook: {metrics.get('outlook', '—')}",
-                f"Confidence: {metrics.get('confidence', '—')}",
-                f"Documents analyzed: {metrics.get('documents', '—')}",
-                f"Critical risks: {metrics.get('key_risks', '—')}",
-                f"Recommendations: {metrics.get('recommendations', '—')}",
-            ],
-        )
+        dashboard_bullets = [
+            f"{label}: {metrics[key]}{suffix}"
+            for label, key, suffix in [
+                ("Health Score", "health_score", "/100"),
+                ("Outlook", "outlook", ""),
+                ("Confidence", "confidence", ""),
+                ("Documents analyzed", "documents", ""),
+                ("Critical risks", "key_risks", ""),
+                ("Recommendations", "recommendations", ""),
+            ]
+            if is_available(metrics.get(key))
+        ]
+        if dashboard_bullets:
+            self._bullet_slide("Executive Dashboard", dashboard_bullets)
+
+        self._chart_slides(parsed.chart_data)
 
         risks = top_risks(parsed)
 
@@ -130,10 +152,14 @@ class PremiumPresentationBuilder:
         )
 
         if recommendations:
+            # Recommendations are numbered list items whose Action clause
+            # starts the line ("1. **Action:** ..."); Rationale/Measurement
+            # are indented continuation lines with no leading marker, so
+            # this pattern naturally picks up only the headline action.
             bullets = [
-                line.strip("- ").strip()
+                re.sub(r"^\s*(?:[-*]|\d+[.)])\s*", "", line).replace("**", "").strip()
                 for line in recommendations.body.splitlines()
-                if line.strip().startswith("-")
+                if re.match(r"^\s*(?:[-*]|\d+[.)])\s+", line)
             ]
             self._bullet_slide("💡 Recommendations", bullets or [recommendations.body[:300]])
 

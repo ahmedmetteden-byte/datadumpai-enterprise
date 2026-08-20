@@ -4,6 +4,7 @@ Report document operations — compose, parse, and convert ReportData views.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from models.report_data import ReportData
@@ -208,5 +209,35 @@ def prepare_report_view(report: ReportData):
     )
 
 
+# Kill switch: instant rollback to plain export routing via config, no
+# deploy needed, if the premium-renderer retrofit (Step G of the report
+# quality upgrade) is ever in question. Off by default until the visual
+# output has been signed off — flipping it on changes what real users see
+# in every PDF/DOCX/PPTX export for an eligible report.
+PREMIUM_EXPORT_ROUTING_ENABLED = os.getenv(
+    "PREMIUM_EXPORT_ROUTING_ENABLED", "false"
+).strip().lower() not in {"0", "false", "no"}
+
+
 def report_is_intelligence(report: ReportData) -> bool:
-    return is_intelligence_report(report.narrative)
+    """Whether a report is "premium-eligible" — routed to the consulting-
+    grade renderer (cover page, table of contents, KPI/chart pages, page
+    decorations) instead of the plain paragraph-by-paragraph exporter.
+
+    A report qualifies either by using the legacy "Executive Intelligence
+    Dashboard" heading format, or — once PREMIUM_EXPORT_ROUTING_ENABLED —
+    by carrying real structured data the premium renderer can build a
+    genuine dashboard from (computed quantitative metrics or built chart
+    visualizations). Gating the second condition behind its own flag
+    means SPA reports only start routing to the premium renderer once
+    that data path has been explicitly signed off, not the moment this
+    code merges.
+    """
+
+    if is_intelligence_report(report.narrative):
+        return True
+
+    if not PREMIUM_EXPORT_ROUTING_ENABLED:
+        return False
+
+    return bool(report.metrics.get("tables")) or bool(report.charts.get("visualizations"))

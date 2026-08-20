@@ -17,7 +17,7 @@ from services.report_markdown_renderer import remove_empty_sections, strip_inlin
 
 SECTION_SPLIT_PATTERN = re.compile(r"^(## .+)$", re.MULTILINE)
 TABLE_ROW_PATTERN = re.compile(r"^\|(.+)\|$")
-BULLET_PATTERN = re.compile(r"^[-*] (.+)$")
+BULLET_PATTERN = re.compile(r"^[-*] (.+)$", re.MULTILINE)
 FINDING_PATTERN = re.compile(
     r"#### (.+?)\n(.*?)(?=\n#### |\n### |\n## |\Z)",
     re.DOTALL,
@@ -134,15 +134,19 @@ def _risk_cards(text: str) -> list[dict[str, str]]:
             .strip()
         )
 
-        if "**" in cleaned:
-            name, _, rest = cleaned.partition("**")
-            title = cleaned.strip("*").split("**")[0] if "**" in cleaned else cleaned
-            parts = cleaned.split("**")
-            title = parts[1] if len(parts) > 1 else cleaned
-            detail = parts[2].strip(" —-") if len(parts) > 2 else ""
-        else:
+        # By this point strip_inline_markdown() (applied in
+        # _bullets_from_text()) has already removed any "**" markers, so
+        # the title/detail boundary is whichever separator survives: the
+        # legacy dashboard format uses an em-dash ("Title — detail"),
+        # Step B's Risks & Issues/Opportunities prompt uses a colon
+        # ("Title: detail"). Neither present just means no clean title.
+        if "—" in cleaned:
             title, _, detail = cleaned.partition("—")
-            title = title.strip(" -")
+        elif ":" in cleaned:
+            title, _, detail = cleaned.partition(":")
+        else:
+            title, detail = cleaned, ""
+        title = title.strip(" -")
 
         cards.append(
             {
@@ -224,6 +228,16 @@ def table_of_contents(sections: list[ReportSection], *, include_appendix: bool) 
     return entries
 
 
+def is_available(value: Any) -> bool:
+    """True when a dashboard_metrics() value is genuinely known, not the
+    "—" placeholder it falls back to for a report format that doesn't
+    carry that signal (e.g. an SPA-format report has no synthetic health
+    score). Export renderers use this to skip a row/line entirely rather
+    than showing a visibly broken placeholder like "🟢 —/100"."""
+
+    return bool(value) and str(value).strip() not in ("", "—")
+
+
 def estimated_reading_minutes(report_text: str) -> int:
     words = len(re.findall(r"\w+", report_text))
     return max(1, round(words / 200))
@@ -252,10 +266,18 @@ def top_risks(parsed: ParsedIntelligenceReport) -> list[dict[str, str]]:
         None,
     )
 
-    if not dashboard:
-        return []
+    if dashboard:
+        cards = _risk_cards(_extract_subsection(dashboard.body, "Top Risks"))
+        if cards:
+            return cards
 
-    return _risk_cards(_extract_subsection(dashboard.body, "Top Risks"))
+    # SPA-format reports have no "dashboard" section — risks live in
+    # their own top-level "Risks & Issues" section instead.
+    risks_section = next(
+        (section for section in parsed.sections if "risk" in section.title.lower()),
+        None,
+    )
+    return _risk_cards(risks_section.body) if risks_section else []
 
 
 def first_ai_insight(parsed: ParsedIntelligenceReport) -> str:
@@ -278,10 +300,18 @@ def top_opportunities(parsed: ParsedIntelligenceReport) -> list[str]:
         None,
     )
 
-    if not dashboard:
-        return []
+    if dashboard:
+        bullets = _bullets_from_text(_extract_subsection(dashboard.body, "Key Opportunities"))
+        if bullets:
+            return bullets
 
-    return _bullets_from_text(_extract_subsection(dashboard.body, "Key Opportunities"))
+    # SPA-format reports have no "dashboard" section — opportunities
+    # live in their own top-level "Opportunities" section instead.
+    opportunities_section = next(
+        (section for section in parsed.sections if "opportunit" in section.title.lower()),
+        None,
+    )
+    return _bullets_from_text(opportunities_section.body) if opportunities_section else []
 
 
 def strategic_recommendation(parsed: ParsedIntelligenceReport) -> str:

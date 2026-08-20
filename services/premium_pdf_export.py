@@ -38,6 +38,7 @@ from services.report_document_parser import (
     dashboard_metrics,
     estimated_reading_minutes,
     first_ai_insight,
+    is_available,
     parse_intelligence_report,
     strategic_recommendation,
     table_of_contents,
@@ -388,32 +389,38 @@ class PremiumPDFBuilder:
         outlook = metrics.get("outlook", "—")
         recommendation = strategic_recommendation(parsed) or metrics.get("priority", "—")
 
-        summary_rows = [
-            [
-                Paragraph("<b>Overall Health</b>", self.styles["label"]),
-                Paragraph(
-                    f"<font color='#059669' size='14'><b>🟢 {escape_xml(str(health_score))}/100</b></font>",
-                    self.styles["body"],
-                ),
-            ],
-            [
-                Paragraph("<b>Overall Outlook</b>", self.styles["label"]),
-                Paragraph(escape_xml(str(outlook)), self.styles["body"]),
-            ],
-        ]
-
-        summary_table = Table(summary_rows, colWidths=[1.8 * inch, 4.5 * inch])
-        summary_table.setStyle(
-            TableStyle(
+        summary_rows = []
+        if is_available(health_score):
+            summary_rows.append(
                 [
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
-                    ("TOPPADDING", (0, 0), (-1, -1), 6),
+                    Paragraph("<b>Overall Health</b>", self.styles["label"]),
+                    Paragraph(
+                        f"<font color='#059669' size='14'><b>🟢 {escape_xml(str(health_score))}/100</b></font>",
+                        self.styles["body"],
+                    ),
                 ]
             )
-        )
-        story.append(summary_table)
-        story.append(Spacer(1, 0.12 * inch))
+        if is_available(outlook):
+            summary_rows.append(
+                [
+                    Paragraph("<b>Overall Outlook</b>", self.styles["label"]),
+                    Paragraph(escape_xml(str(outlook)), self.styles["body"]),
+                ]
+            )
+
+        if summary_rows:
+            summary_table = Table(summary_rows, colWidths=[1.8 * inch, 4.5 * inch])
+            summary_table.setStyle(
+                TableStyle(
+                    [
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+                        ("TOPPADDING", (0, 0), (-1, -1), 6),
+                    ]
+                )
+            )
+            story.append(summary_table)
+            story.append(Spacer(1, 0.12 * inch))
         story.extend(self._chart_story_elements(parsed.chart_data))
 
         story.append(Paragraph("Top Risks", self.styles["subheading"]))
@@ -443,7 +450,7 @@ class PremiumPDFBuilder:
                     )
                 )
         else:
-            story.append(Paragraph("See Key Opportunities in the dashboard section.", self.styles["body"]))
+            story.append(Paragraph("No opportunities identified.", self.styles["body"]))
 
         story.append(Spacer(1, 0.1 * inch))
         story.append(Paragraph("Strategic Recommendation", self.styles["subheading"]))
@@ -483,16 +490,17 @@ class PremiumPDFBuilder:
         story.append(Paragraph("At a Glance", self.styles["section_heading"]))
         story.append(Spacer(1, 0.1 * inch))
 
-        glance_rows = [
-            ["Overall Status", metrics.get("outlook", "—")],
-            ["Health Score", f"{metrics.get('health_score', '—')}/100"],
-            ["Confidence", metrics.get("confidence", "—")],
-            ["Documents", metrics.get("documents", "—")],
-            ["Critical Risks", metrics.get("key_risks", "—")],
-            ["Top Recommendation", metrics.get("priority", "—")],
-            ["Estimated Reading Time", f"{estimated_reading_minutes(report_text)} minutes"],
-            ["AI Insight", first_ai_insight(parsed) or "See AI Insights section."],
+        candidate_rows = [
+            ("Overall Status", metrics.get("outlook", "—")),
+            ("Health Score", f"{metrics['health_score']}/100" if is_available(metrics.get("health_score")) else ""),
+            ("Confidence", metrics.get("confidence", "—")),
+            ("Documents", metrics.get("documents", "—")),
+            ("Critical Risks", metrics.get("key_risks", "—")),
+            ("Top Recommendation", metrics.get("priority", "—")),
+            ("Estimated Reading Time", f"{estimated_reading_minutes(report_text)} minutes"),
+            ("AI Insight", first_ai_insight(parsed)),
         ]
+        glance_rows = [[label, value] for label, value in candidate_rows if is_available(value)]
 
         table = Table(glance_rows, colWidths=[2.0 * inch, 4.3 * inch])
         table.setStyle(

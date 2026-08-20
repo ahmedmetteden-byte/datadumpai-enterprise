@@ -25,6 +25,7 @@ from services.report_document_parser import (
     dashboard_metrics,
     estimated_reading_minutes,
     first_ai_insight,
+    is_available,
     parse_intelligence_report,
     strategic_recommendation,
     table_of_contents,
@@ -295,25 +296,35 @@ def _executive_summary_page(document: Document, parsed) -> None:
     metrics = dashboard_metrics(parsed)
     _add_heading(document, "Executive Summary", 1)
 
-    health = document.add_paragraph()
-    health.add_run("Overall Health\n").bold = True
-    health_value = health.add_run(f"🟢 {metrics.get('health_score', '—')}/100")
-    health_value.bold = True
-    health_value.font.color.rgb = COLOR_GREEN
-    _set_paragraph_spacing(health)
+    if is_available(metrics.get("health_score")):
+        health = document.add_paragraph()
+        health.add_run("Overall Health\n").bold = True
+        health_value = health.add_run(f"🟢 {metrics['health_score']}/100")
+        health_value.bold = True
+        health_value.font.color.rgb = COLOR_GREEN
+        _set_paragraph_spacing(health)
 
-    outlook = document.add_paragraph()
-    outlook.add_run("Overall Outlook\n").bold = True
-    outlook.add_run(str(metrics.get("outlook", "—")))
-    _set_paragraph_spacing(outlook)
+    if is_available(metrics.get("outlook")):
+        outlook = document.add_paragraph()
+        outlook.add_run("Overall Outlook\n").bold = True
+        outlook.add_run(str(metrics["outlook"]))
+        _set_paragraph_spacing(outlook)
 
     _add_heading(document, "Top Risks", 2)
-    for card in top_risks(parsed)[:5]:
-        _add_bullet(document, card["title"])
+    risks = top_risks(parsed)[:5]
+    if risks:
+        for card in risks:
+            _add_bullet(document, card["title"])
+    else:
+        _add_body_paragraph(document, "No critical risks identified.")
 
     _add_heading(document, "Top Opportunities", 2)
-    for item in top_opportunities(parsed)[:5]:
-        _add_bullet(document, item)
+    opportunities = top_opportunities(parsed)[:5]
+    if opportunities:
+        for item in opportunities:
+            _add_bullet(document, item)
+    else:
+        _add_body_paragraph(document, "No opportunities identified.")
 
     _add_heading(document, "Strategic Recommendation", 2)
     _add_body_paragraph(document, strategic_recommendation(parsed) or metrics.get("priority", "—"))
@@ -325,16 +336,17 @@ def _at_a_glance_page(document: Document, parsed, report_text: str) -> None:
     metrics = dashboard_metrics(parsed)
     _add_heading(document, "At a Glance", 1)
 
-    rows = [
-        ["Overall Status", metrics.get("outlook", "—")],
-        ["Health Score", f"{metrics.get('health_score', '—')}/100"],
-        ["Confidence", metrics.get("confidence", "—")],
-        ["Documents", metrics.get("documents", "—")],
-        ["Critical Risks", metrics.get("key_risks", "—")],
-        ["Top Recommendation", metrics.get("priority", "—")],
-        ["Estimated Reading Time", f"{estimated_reading_minutes(report_text)} minutes"],
-        ["AI Insight", first_ai_insight(parsed) or "See AI Insights section."],
+    candidate_rows = [
+        ("Overall Status", metrics.get("outlook", "—")),
+        ("Health Score", f"{metrics['health_score']}/100" if is_available(metrics.get("health_score")) else ""),
+        ("Confidence", metrics.get("confidence", "—")),
+        ("Documents", metrics.get("documents", "—")),
+        ("Critical Risks", metrics.get("key_risks", "—")),
+        ("Top Recommendation", metrics.get("priority", "—")),
+        ("Estimated Reading Time", f"{estimated_reading_minutes(report_text)} minutes"),
+        ("AI Insight", first_ai_insight(parsed)),
     ]
+    rows = [[label, value] for label, value in candidate_rows if is_available(value)]
     _add_table(document, rows)
     document.add_page_break()
 
