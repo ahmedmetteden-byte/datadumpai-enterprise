@@ -118,6 +118,89 @@ Momentum should be sustained.
 """
 
 
+EVIDENCE_REPORT = """
+## Executive Summary
+Gross premiums increased 97.4% from 2022 to 2024.
+
+## Key Findings
+
+### Gross Premium increased 97.4%
+Detail text about the finding.
+**Basis:** Calculated result
+**Confidence:** High — verified calculations.
+**Source:** Annual-Statistical-Market-Report-Updated-01-2023.pdf, Annual-Statistical-Market-Report-2024.pdf
+
+## Conclusion
+Momentum should be sustained.
+"""
+
+
+def test_build_premium_pdf_renders_evidence_caption_and_humanized_source_filenames():
+    """Report Output Quality Upgrade Step A: Basis/Confidence/Source must
+    render as a visually subordinate "Evidence" block with human-readable
+    source titles in the Key Finding itself. The real filename is still
+    expected to appear verbatim in the separate Source References appendix
+    (report_document_parser.py always lists real source_documents there) —
+    only the inline evidence tag is humanized, nothing is fabricated or
+    hidden."""
+
+    import io
+
+    from PyPDF2 import PdfReader
+
+    pdf_bytes = build_premium_pdf(
+        report_text=EVIDENCE_REPORT,
+        metadata=PremiumExportMetadata(
+            project_name="Q4 Revenue Review",
+            report_name="Q4 Revenue Report",
+            reporting_period="Custom / Ad hoc",
+            source_documents=[
+                "Annual-Statistical-Market-Report-Updated-01-2023.pdf",
+                "Annual-Statistical-Market-Report-2024.pdf",
+            ],
+            pack_type="executive",
+        ),
+    )
+    pdf_text = "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(pdf_bytes)).pages)
+
+    assert "EVIDENCE" in pdf_text
+    assert "Annual Statistical Market Report 2023" in pdf_text
+    assert "Annual Statistical Market Report 2024" in pdf_text
+
+    finding_section = pdf_text.split("Gross Premium increased 97.4%", 1)[1].split("Conclusion", 1)[0]
+    assert "Annual-Statistical-Market-Report-Updated-01-2023.pdf" not in finding_section
+
+
+def test_build_premium_docx_renders_evidence_caption_and_humanized_source_filenames():
+    docx_bytes = build_premium_docx(
+        report_text=EVIDENCE_REPORT,
+        metadata=DocxExportMetadata(
+            project_name="Q4 Revenue Review",
+            report_name="Q4 Revenue Report",
+            reporting_period="Custom / Ad hoc",
+            source_documents=[
+                "Annual-Statistical-Market-Report-Updated-01-2023.pdf",
+                "Annual-Statistical-Market-Report-2024.pdf",
+            ],
+            pack_type="executive",
+        ),
+    )
+
+    from io import BytesIO
+
+    from docx import Document as DocxDocument
+
+    document = DocxDocument(BytesIO(docx_bytes))
+    docx_text = "\n".join(p.text for p in document.paragraphs)
+
+    assert "EVIDENCE" in docx_text
+    assert "Annual Statistical Market Report 2023" in docx_text
+    assert "Annual Statistical Market Report 2024" in docx_text
+
+    finding_section = docx_text.split("Gross Premium increased 97.4%", 1)[1].split("Conclusion", 1)[0]
+    assert "Annual-Statistical-Market-Report-Updated-01-2023.pdf" not in finding_section
+
+
 def test_build_premium_pdf_handles_real_spa_format_report_without_crashing():
     pdf_bytes = build_premium_pdf(
         report_text=SPA_REPORT,

@@ -184,6 +184,58 @@ def inline_to_reportlab_html(text: str) -> str:
     return safe
 
 
+_FILENAME_NOISE_WORDS = {"updated", "update", "final", "draft", "copy", "revised"}
+_VERSION_TOKEN = re.compile(r"^v\d+$", re.IGNORECASE)
+_SHORT_NUMBER = re.compile(r"^0?\d{1,2}$")
+_FOUR_DIGIT_YEAR = re.compile(r"^(19|20)\d{2}$")
+
+
+def humanize_filename(filename: str) -> str:
+    """Turn a real uploaded filename into a readable display title, e.g.
+    'Annual-Statistical-Market-Report-Updated-01-2023.pdf' ->
+    'Annual Statistical Market Report 2023'. Never fabricates a title not
+    derivable from the filename itself — the real filename is preserved
+    everywhere else (QC checks, internal source_documents) and this is
+    purely a display transform, applied at render time only."""
+
+    if not filename or not filename.strip():
+        return filename
+
+    stem = re.sub(r"\.[A-Za-z0-9]{1,5}$", "", filename.strip())
+    words = [w for w in re.split(r"[_\-]+", stem) if w]
+
+    kept: list[str] = []
+    for i, word in enumerate(words):
+        if word.lower() in _FILENAME_NOISE_WORDS or _VERSION_TOKEN.match(word):
+            continue
+
+        # Drop a standalone 1-2 digit token (a month/revision number)
+        # immediately preceding a 4-digit year, keeping just the year.
+        if (
+            _SHORT_NUMBER.match(word)
+            and i + 1 < len(words)
+            and _FOUR_DIGIT_YEAR.match(words[i + 1])
+        ):
+            continue
+
+        kept.append(word)
+
+    result = re.sub(r"\s+", " ", " ".join(kept)).strip()
+    return result or filename
+
+
+def humanize_source_value(value: str) -> str:
+    """Apply humanize_filename() to each comma-separated filename in a
+    **Source:** value, preserving the original separator style."""
+
+    if not value or "." not in value:
+        return value
+
+    parts = [part.strip() for part in value.split(",")]
+    humanized = [humanize_filename(part) if part else part for part in parts]
+    return ", ".join(humanized)
+
+
 def classify_label_value(label: str, value: str) -> tuple[str, str, str]:
     """Return (clean_label, clean_value, hex_color) for a label/value pair,
     applying the same semantic-coloring rules (confidence/priority/severity)
@@ -192,6 +244,9 @@ def classify_label_value(label: str, value: str) -> tuple[str, str, str]:
     label_clean = strip_inline_markdown(label)
     value_clean = strip_inline_markdown(value)
     label_lower = label_clean.lower()
+
+    if label_lower == "source":
+        value_clean = humanize_source_value(value_clean)
 
     color = "#0F172A"
 
@@ -217,7 +272,11 @@ def classify_label_value(label: str, value: str) -> tuple[str, str, str]:
 
 
 def highlight_value_html(label: str, value: str) -> str:
-    """Build ReportLab markup for label/value pairs with semantic coloring."""
+    """Build ReportLab markup for a label/value pair on a single line, with
+    semantic coloring on the value. Font size is left to the caller's
+    paragraph style — this only supplies bold/color markup — so the same
+    call site can render at dashboard-card size or at the smaller,
+    subordinate size used for evidence metadata."""
 
     label_clean, value_clean, color = classify_label_value(label, value)
 
@@ -225,8 +284,8 @@ def highlight_value_html(label: str, value: str) -> str:
         return f"<b>{escape_xml(label_clean)}</b>"
 
     return (
-        f"<b>{escape_xml(label_clean)}:</b><br/>"
-        f"<font color='{color}' size='11'><b>{escape_xml(value_clean)}</b></font>"
+        f"<b>{escape_xml(label_clean)}:</b> "
+        f"<font color='{color}'><b>{escape_xml(value_clean)}</b></font>"
     )
 
 

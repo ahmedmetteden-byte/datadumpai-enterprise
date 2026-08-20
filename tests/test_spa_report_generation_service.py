@@ -595,6 +595,30 @@ def test_generate_markdown_requires_fact_analysis_implication_and_basis_tag():
     assert "never present an inference as if it were a stated fact" in prompt
 
 
+def test_generate_markdown_requires_evidence_tags_on_their_own_separate_lines():
+    """Report Output Quality Upgrade Step A: Basis/Confidence/Source must
+    each be required on their own line, never appended to the finding's
+    prose — this is what a real generated report was found to violate,
+    causing evidence metadata to run together with the narrative text."""
+
+    svc = SpaReportGenerationService()
+    client, completions = _fake_openai_client()
+    svc._client = client
+    sources = [{"filename": "a.pdf", "excerpt": "Some evidence."}]
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_name="Executive Summary",
+        sources=sources,
+    )
+    prompt = completions.calls[0]["messages"][1]["content"]
+
+    assert "on their OWN separate lines" in prompt
+    assert "on its own line" in prompt
+    assert "never fold them into the same sentence or line" in prompt
+
+
 def test_generate_markdown_instructs_restraint_against_unearned_adjectives():
     svc = SpaReportGenerationService()
     client, completions = _fake_openai_client()

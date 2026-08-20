@@ -5,8 +5,12 @@ from __future__ import annotations
 from services.premium_docx_export import DocxExportMetadata, build_premium_docx
 from services.premium_pdf_export import PremiumExportMetadata, build_premium_pdf
 from services.report_markdown_renderer import (
+    classify_label_value,
     drop_duplicate_leading_heading,
     format_bullet_item,
+    highlight_value_html,
+    humanize_filename,
+    humanize_source_value,
     is_duplicate_title,
     parse_markdown_blocks,
     remove_empty_sections,
@@ -224,6 +228,61 @@ def test_drop_duplicate_leading_heading_removes_only_matching_first_block():
     unrelated_blocks = parse_markdown_blocks("## Key Findings\n\nMore text.")
     unchanged = drop_duplicate_leading_heading(unrelated_blocks, title)
     assert unchanged == unrelated_blocks
+
+
+def test_humanize_filename_drops_update_token_and_revision_number():
+    # Real filename from a production workspace, confirmed by the Report
+    # Output Quality audit to render raw ("Documents: 0" / generic-chart
+    # sibling bug) in the sample the user reviewed.
+    assert (
+        humanize_filename("Annual-Statistical-Market-Report-Updated-01-2023.pdf")
+        == "Annual Statistical Market Report 2023"
+    )
+
+
+def test_humanize_filename_leaves_a_clean_filename_mostly_intact():
+    assert (
+        humanize_filename("Annual-Statistical-Market-Report-2024.pdf")
+        == "Annual Statistical Market Report 2024"
+    )
+
+
+def test_humanize_filename_never_fabricates_when_nothing_to_clean():
+    assert humanize_filename("q4_revenue.xlsx") == "q4 revenue"
+    assert humanize_filename("") == ""
+
+
+def test_humanize_source_value_handles_multiple_comma_separated_filenames():
+    value = (
+        "Annual-Statistical-Market-Report-2024.pdf, "
+        "Annual-Statistical-Market-Report-Updated-01-2023.pdf, "
+        "Annual-Statistical-Market-Report-2022.pdf"
+    )
+
+    assert humanize_source_value(value) == (
+        "Annual Statistical Market Report 2024, "
+        "Annual Statistical Market Report 2023, "
+        "Annual Statistical Market Report 2022"
+    )
+
+
+def test_classify_label_value_humanizes_source_but_not_other_labels():
+    _, source_value, _ = classify_label_value(
+        "Source", "Annual-Statistical-Market-Report-2024.pdf"
+    )
+    assert source_value == "Annual Statistical Market Report 2024"
+
+    _, basis_value, _ = classify_label_value("Basis", "Source fact")
+    assert basis_value == "Source fact"
+
+
+def test_highlight_value_html_renders_label_and_value_on_one_line():
+    html = highlight_value_html("Basis", "Source fact")
+
+    assert "<br/>" not in html
+    assert "size='11'" not in html
+    assert "<b>Basis:</b>" in html
+    assert "Source fact" in html
 
 
 def test_build_premium_docx_returns_docx_bytes():

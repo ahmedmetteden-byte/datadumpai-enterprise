@@ -34,6 +34,7 @@ from services.report_document_parser import (
 )
 from services.report_markdown_renderer import (
     MarkdownBlock,
+    classify_label_value,
     format_bullet_item,
     group_blocks_for_keep_together,
     parse_markdown_blocks,
@@ -43,9 +44,7 @@ from services.report_markdown_renderer import (
 COLOR_BLUE = RGBColor(0x1D, 0x4E, 0xD8)
 COLOR_SLATE = RGBColor(0x0F, 0x17, 0x2A)
 COLOR_MUTED = RGBColor(0x64, 0x74, 0x8B)
-COLOR_RED = RGBColor(0xDC, 0x26, 0x26)
 COLOR_GREEN = RGBColor(0x05, 0x96, 0x69)
-COLOR_AMBER = RGBColor(0xD9, 0x77, 0x06)
 
 
 @dataclass
@@ -100,43 +99,47 @@ def _add_body_paragraph(document: Document, text: str, *, justify: bool = True) 
     _set_paragraph_spacing(paragraph)
 
 
-def _value_color(label: str, value: str) -> RGBColor:
-    label_lower = label.lower()
-    value_lower = value.lower()
-
-    if "confidence" in label_lower and "%" in value:
-        return COLOR_BLUE
-
-    if label_lower == "priority" or value_lower in {"critical", "high", "medium", "low"}:
-        if value_lower == "critical":
-            return COLOR_RED
-        if value_lower == "high":
-            return COLOR_AMBER
-        if value_lower == "medium":
-            return COLOR_AMBER
-        if value_lower == "low":
-            return COLOR_GREEN
-
-    return COLOR_SLATE
+def _rgb_from_hex(hex_color: str) -> RGBColor:
+    hex_color = hex_color.lstrip("#")
+    return RGBColor(int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16))
 
 
 def _add_label_value(document: Document, label: str, value: str) -> None:
+    """Render a label/value metadata pair (evidence tags, recommendation
+    Rationale/Measurement) at a smaller, visually subordinate size than
+    body paragraphs — this is metadata about a finding, not the finding
+    itself. Uses classify_label_value() as the single source of truth for
+    semantic coloring and Source-filename humanization, shared with the
+    PDF renderer."""
+
+    label_clean, value_clean, color_hex = classify_label_value(label, value)
+
+    if label_clean.lower() == "basis":
+        caption = document.add_paragraph()
+        caption_run = caption.add_run("EVIDENCE")
+        caption_run.bold = True
+        caption_run.font.name = "Calibri"
+        caption_run.font.size = Pt(8)
+        caption_run.font.color.rgb = COLOR_MUTED
+        _set_paragraph_spacing(caption, before=8, after=1)
+
     label_paragraph = document.add_paragraph()
-    label_run = label_paragraph.add_run(f"{strip_inline_markdown(label)}:")
+    label_run = label_paragraph.add_run(f"{label_clean}:")
     label_run.bold = True
     label_run.font.name = "Calibri"
-    label_run.font.size = Pt(11)
-    label_run.font.color.rgb = COLOR_SLATE
-    _set_paragraph_spacing(label_paragraph, before=8, after=4)
+    label_run.font.size = Pt(9)
+    label_run.font.color.rgb = COLOR_MUTED
+    _set_paragraph_spacing(label_paragraph, before=2, after=1)
 
-    if value:
-        value_paragraph = document.add_paragraph(strip_inline_markdown(value))
+    if value_clean:
+        value_paragraph = document.add_paragraph(value_clean)
         value_paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
         value_run = value_paragraph.runs[0]
         value_run.bold = True
         value_run.font.name = "Calibri"
-        value_run.font.size = Pt(11)
-        value_run.font.color.rgb = _value_color(label, value)
+        value_run.font.size = Pt(9)
+        value_run.font.color.rgb = _rgb_from_hex(color_hex)
+        _set_paragraph_spacing(value_paragraph, before=0, after=4)
         _set_paragraph_spacing(value_paragraph, before=0, after=10)
 
 

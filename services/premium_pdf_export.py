@@ -297,6 +297,28 @@ class PremiumPDFBuilder:
                 alignment=TA_JUSTIFY,
                 spaceAfter=6,
             ),
+            "evidence_caption": ParagraphStyle(
+                "EvidenceCaption",
+                parent=base["Normal"],
+                fontName=HEADING_FONT,
+                fontSize=8.5,
+                leading=11,
+                textColor=COLOR_MUTED,
+                leftIndent=10,
+                spaceBefore=6,
+                spaceAfter=1,
+            ),
+            "evidence": ParagraphStyle(
+                "Evidence",
+                parent=base["Normal"],
+                fontName=BODY_FONT,
+                fontSize=9,
+                leading=12,
+                textColor=COLOR_MUTED,
+                leftIndent=10,
+                spaceBefore=0,
+                spaceAfter=2,
+            ),
         }
 
     def _logo_path(self) -> Path | None:
@@ -587,10 +609,12 @@ class PremiumPDFBuilder:
             return story
 
         if block.block_type == "label_value":
+            if block.label.strip().lower() == "basis":
+                story.append(Paragraph("EVIDENCE", self.styles["evidence_caption"]))
             story.append(
                 Paragraph(
                     highlight_value_html(block.label, block.value),
-                    self.styles["body"],
+                    self.styles["evidence"],
                 )
             )
             return story
