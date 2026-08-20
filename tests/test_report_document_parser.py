@@ -154,6 +154,30 @@ Momentum should be sustained.
     assert top_risks(parsed) == []
 
 
+def test_top_risks_prose_fallback_keeps_genuine_content_after_a_negative_opening():
+    """Report Output Quality Upgrade Step H: a mixed paragraph that opens
+    with a 'none found' sentence but goes on to state a genuine risk must
+    not be discarded wholesale — only the negative-lead sentence itself
+    should be dropped, not the real content that follows it."""
+
+    report = """
+## Executive Summary
+Gross premiums increased 97.4% from 2022 to 2024.
+
+## Risks & Issues
+No major new risks were identified in the evidence reviewed. However, the recent
+surge in claims costs remains a concern that warrants continued monitoring.
+
+## Conclusion
+Momentum should be sustained.
+"""
+    parsed = parse_intelligence_report(report)
+    risks = top_risks(parsed)
+
+    assert len(risks) == 1
+    assert "surge in claims costs" in risks[0]["title"] or "surge in claims costs" in risks[0]["detail"]
+
+
 def test_is_available_rejects_placeholder_values():
     assert is_available("—") is False
     assert is_available("") is False

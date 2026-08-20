@@ -11,9 +11,12 @@ from services.report_qc_service import (
     _check_chart_consistency,
     _check_citation_consistency,
     _check_duplicate_content,
+    _check_evidence_leaks_into_narrative,
     _check_growth_terminology,
     _check_numerical_consistency,
     _check_period_correctness,
+    _check_recommendation_has_action,
+    _check_risk_opportunity_formatting,
     _split_sections,
     run_qc_pass,
 )
@@ -166,6 +169,78 @@ def test_growth_terminology_flags_bare_cagr_acronym():
 def test_growth_terminology_passes_for_correct_yoy_wording():
     narrative = "Premiums grew 49.4% year-over-year in 2024, following 32.1% growth in 2023."
     assert _check_growth_terminology(narrative) == []
+
+
+def test_risk_opportunity_formatting_passes_for_bulleted_content():
+    narrative = (
+        "## Risks & Issues\n"
+        "- **Rising Claims Costs:** The increase poses a risk to profitability.\n"
+    )
+    assert _check_risk_opportunity_formatting(narrative) == []
+
+
+def test_risk_opportunity_formatting_passes_for_clean_negative_statement():
+    narrative = "## Opportunities\nNo opportunities were identified in the evidence reviewed.\n"
+    assert _check_risk_opportunity_formatting(narrative) == []
+
+
+def test_risk_opportunity_formatting_flags_unstructured_prose():
+    narrative = (
+        "## Opportunities\n"
+        "There are several opportunities for the business including product expansion "
+        "and better claims handling and improved customer service overall.\n"
+    )
+    issues = _check_risk_opportunity_formatting(narrative)
+    assert len(issues) == 1
+    assert issues[0].category == "risk_opportunity_formatting"
+    assert issues[0].severity == "low"
+
+
+def test_recommendation_has_action_passes_when_every_item_has_one():
+    narrative = (
+        "## Strategic Recommendations\n"
+        "1. **Action:** Review claims processing.\n"
+        "   **Rationale:** Claims rose 51.3%.\n"
+        "   **Measurement:** Track claims ratio.\n"
+        "2. **Action:** Expand into adjacent markets.\n"
+        "   **Rationale:** Premium growth outpaces claims.\n"
+        "   **Measurement:** Track new segment revenue.\n"
+    )
+    assert _check_recommendation_has_action(narrative) == []
+
+
+def test_recommendation_has_action_flags_missing_action_clause():
+    narrative = (
+        "## Strategic Recommendations\n"
+        "1. **Rationale:** Claims rose 51.3%.\n"
+        "   **Measurement:** Track claims ratio.\n"
+    )
+    issues = _check_recommendation_has_action(narrative)
+    assert len(issues) == 1
+    assert issues[0].category == "recommendation_structure"
+    assert "Recommendation #1" in issues[0].message
+
+
+def test_evidence_leak_passes_for_correctly_separated_tags():
+    narrative = (
+        "### Gross Premium increased 97.4%\n"
+        "Detail text about the finding.\n"
+        "**Basis:** Source fact\n"
+        "**Confidence:** High\n"
+        "**Source:** report.xlsx\n"
+    )
+    assert _check_evidence_leaks_into_narrative(narrative) == []
+
+
+def test_evidence_leak_flags_tag_run_into_preceding_prose():
+    narrative = (
+        "### Gross Premium increased 97.4%\n"
+        "Detail text about the finding. **Basis:** Source fact\n"
+    )
+    issues = _check_evidence_leaks_into_narrative(narrative)
+    assert len(issues) == 1
+    assert issues[0].category == "evidence_leak"
+    assert issues[0].location == "Basis"
 
 
 def test_run_qc_pass_kill_switch_short_circuits(monkeypatch):

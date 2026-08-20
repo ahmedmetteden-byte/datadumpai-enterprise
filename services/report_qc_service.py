@@ -25,6 +25,13 @@ Checks (deterministic, always run when enabled):
   or does a recommendation repeat another recommendation's Action?
 - growth terminology: does the narrative say "CAGR"/"compound annual
   growth rate" even though this system never computes one?
+- risk/opportunity formatting: is Risks & Issues / Opportunities either
+  bulleted or a clean "none identified" statement, matching what the
+  prompt asked for?
+- recommendation structure: does every numbered Strategic Recommendation
+  carry its own Action clause?
+- evidence leaks: does Basis/Confidence/Source start its own line, or
+  did it run into the preceding prose?
 """
 
 from __future__ import annotations
@@ -176,6 +183,115 @@ def _check_chart_consistency(
                     location=title,
                 )
             )
+
+    return issues
+
+
+_RISK_OR_OPPORTUNITY_HEADING = re.compile(r"risk|opportunit", re.IGNORECASE)
+_BULLET_LINE = re.compile(r"^[-*]\s+", re.MULTILINE)
+_WHOLE_SECTION_NEGATIVE = re.compile(
+    r"^(no|none|not\s+applicable|n/a)\b.*$", re.IGNORECASE | re.DOTALL
+)
+
+
+def _check_risk_opportunity_formatting(narrative: str) -> list[QCIssue]:
+    """Risks & Issues / Opportunities are prompted to be either bulleted
+    items or a single 'No ... were identified in the evidence reviewed'
+    sentence. Unstructured prose with real content still gets picked up
+    by report_document_parser.py's prose fallback at export time, but is
+    flagged here as a quality regression worth a second look — it means
+    the model didn't follow the requested format."""
+
+    issues: list[QCIssue] = []
+    sections = _split_sections(narrative)
+
+    for title, body in sections.items():
+        if not _RISK_OR_OPPORTUNITY_HEADING.search(title):
+            continue
+
+        stripped = body.strip()
+        if not stripped or _BULLET_LINE.search(stripped) or _WHOLE_SECTION_NEGATIVE.match(stripped):
+            continue
+
+        issues.append(
+            QCIssue(
+                severity="low",
+                category="risk_opportunity_formatting",
+                message=(
+                    f"{title!r} is neither bulleted nor a clean 'none identified' "
+                    "statement — the model didn't follow the requested format."
+                ),
+                location=title,
+            )
+        )
+
+    return issues
+
+
+_NUMBERED_ITEM = re.compile(r"^\d{1,2}[.)]\s+.*?(?=^\d{1,2}[.)]\s+|\Z)", re.MULTILINE | re.DOTALL)
+
+
+def _check_recommendation_has_action(narrative: str) -> list[QCIssue]:
+    """Every numbered Strategic Recommendation must carry its own
+    **Action:** clause — premium_pdf_export.py's "numbered" block
+    rendering (Step C) depends on it being present to show anything
+    other than Rationale/Measurement with no visible title."""
+
+    sections = _split_sections(narrative)
+    body = sections.get("Strategic Recommendations", "")
+    if not body.strip():
+        return []
+
+    issues: list[QCIssue] = []
+    for index, match in enumerate(_NUMBERED_ITEM.finditer(body), start=1):
+        if "**Action:**" not in match.group(0):
+            issues.append(
+                QCIssue(
+                    severity="medium",
+                    category="recommendation_structure",
+                    message=f"Strategic Recommendation #{index} has no Action clause.",
+                    location=f"Recommendation {index}",
+                )
+            )
+
+    return issues
+
+
+_EVIDENCE_LABELS = ("Basis", "Confidence", "Source")
+
+
+def _check_evidence_leaks_into_narrative(narrative: str) -> list[QCIssue]:
+    """Basis/Confidence/Source must each start their own line — if the
+    model runs one onto the end of the finding's prose instead (despite
+    the prompt explicitly forbidding this, Step A), the parser can't
+    isolate it and it renders as plain, unstyled text inside the
+    paragraph rather than the subordinate Evidence block."""
+
+    issues: list[QCIssue] = []
+
+    for line in narrative.splitlines():
+        stripped = line.strip()
+
+        for label in _EVIDENCE_LABELS:
+            marker = f"{label}:"
+            idx = stripped.find(marker)
+            if idx <= 0:
+                continue
+
+            prefix = stripped[:idx].strip().strip("*").strip()
+            if prefix:
+                issues.append(
+                    QCIssue(
+                        severity="medium",
+                        category="evidence_leak",
+                        message=(
+                            f"{label!r} tag appears to run into preceding text instead of "
+                            f"starting its own line: {stripped[:80]!r}"
+                        ),
+                        location=label,
+                    )
+                )
+                break
 
     return issues
 
@@ -369,6 +485,9 @@ def run_qc_pass(
     issues.extend(_check_period_correctness(narrative, previous_report, period_id))
     issues.extend(_check_duplicate_content(narrative))
     issues.extend(_check_growth_terminology(narrative))
+    issues.extend(_check_risk_opportunity_formatting(narrative))
+    issues.extend(_check_recommendation_has_action(narrative))
+    issues.extend(_check_evidence_leaks_into_narrative(narrative))
 
     if REPORT_QC_LLM_CHECKS_ENABLED and llm_client is not None:
         issues.extend(_run_llm_qc_check(llm_client, narrative, evidence))

@@ -117,10 +117,13 @@ def _prose_fallback_items(text: str) -> list[str]:
     prose instead of markdown bullets even when real content is present —
     without this fallback, dashboard extraction (which only recognizes
     "- "/"* " bullets) silently returns nothing and the dashboard claims
-    "none identified" while the report body genuinely discusses items. A
-    paragraph that itself states there's nothing to report (e.g. "No
-    material risks were identified in the evidence provided") is left
-    alone — it must not be turned into a fake single item."""
+    "none identified" while the report body genuinely discusses items.
+    Each sentence is checked independently for a "none found" opening
+    (e.g. "No material risks were identified in the evidence provided")
+    and dropped only if it is itself such a statement — a mixed
+    paragraph ("No major new risks. However, rising claims costs remain
+    a concern.") still surfaces its genuine second sentence rather than
+    being discarded wholesale just because it opens with a negative."""
 
     lines = [
         line.strip()
@@ -129,10 +132,11 @@ def _prose_fallback_items(text: str) -> list[str]:
     ]
     joined = strip_inline_markdown(" ".join(lines))
 
-    if not joined or _NEGATIVE_LEAD.match(joined):
+    if not joined:
         return []
 
-    return [sentence.strip() for sentence in _SENTENCE_SPLIT.split(joined) if sentence.strip()]
+    sentences = [s.strip() for s in _SENTENCE_SPLIT.split(joined) if s.strip()]
+    return [s for s in sentences if not _NEGATIVE_LEAD.match(s)]
 
 
 def _bullets_from_text(text: str) -> list[str]:
