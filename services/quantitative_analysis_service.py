@@ -173,6 +173,17 @@ def _extract_from_table(rows: list[list[str]], *, source_document: str) -> list[
     if len(header) < 2:
         return []
 
+    # A genuine header's non-label columns are metric names ("Gross
+    # Premium"), never pure numbers. If every one of them parses as a
+    # number, this "header" is almost certainly a data row — most likely
+    # a real table whose actual header row was separated from its data by
+    # a chunk/retrieval boundary upstream, leaving the first surviving row
+    # mistaken for the header. Parsing it anyway produces a chart/finding
+    # titled with a raw figure (e.g. "420.0") instead of a metric name, so
+    # this table is skipped entirely rather than mislabeled.
+    if all(_parse_numeric_cell(cell) is not None for cell in header[1:]):
+        return []
+
     labels = [_normalize_temporal_label(row[0].strip()) for row in data_rows if row]
     temporal = labels and sum(1 for label in labels if _looks_temporal(label)) >= max(
         2, len(labels) - 1

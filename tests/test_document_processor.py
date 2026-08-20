@@ -85,6 +85,143 @@ def test_pdf_ocr_fallback_used_when_text_layer_empty(monkeypatch):
     assert "OCR market revenue" in text
 
 
+def test_pdf_table_extraction_runs_even_on_pages_with_a_text_layer(monkeypatch):
+    """Report Output Quality Upgrade Step D: real PDFs (e.g. a NAICOM-style
+    financial report) commonly have both a text layer AND genuine embedded
+    tables on the same page. Before this fix, extract_tables() only ran on
+    pages with NO text layer at all, so real tabular data in text-layered
+    PDFs never reached quantitative_analysis_service.extract_metric_tables()
+    and the dashboard fell back to generic, unlabeled charts."""
+
+    import pdfplumber
+
+    class _FakePage:
+        def extract_text(self):
+            return "Gross premium grew steadily across the reporting period."
+
+        def extract_tables(self):
+            return [
+                [
+                    ["Year", "Gross Premium"],
+                    ["2022", "789.6"],
+                    ["2023", "1043.1"],
+                    ["2024", "1558.7"],
+                ]
+            ]
+
+    class _FakeDocument:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        @property
+        def pages(self):
+            return [_FakePage()]
+
+    monkeypatch.setattr(pdfplumber, "open", lambda *_args, **_kwargs: _FakeDocument())
+
+    text = DocumentProcessor._extract_pdf_with_pdfplumber(b"fake-pdf-bytes")
+
+    assert "Gross premium grew steadily" in text
+    assert "| Year | Gross Premium |" in text
+    assert "| 2023 | 1043.1 |" in text
+
+    blocks = parse_markdown_blocks(text)
+    tables = [block for block in blocks if block.block_type == "table"]
+    assert len(tables) == 1
+    assert tables[0].rows[0] == ["Year", "Gross Premium"]
+
+    from services.quantitative_analysis_service import extract_metric_tables
+
+    metric_tables = extract_metric_tables([{"filename": "report.pdf", "excerpt": text}])
+    assert len(metric_tables) == 1
+    assert metric_tables[0]["title"] == "Gross Premium"
+
+
+def test_extract_pdf_text_includes_pdfplumber_tables_even_when_pypdf2_wins(monkeypatch):
+    """The critical integration point: _extract_pdf_text() is what
+    extract_text()/upload processing actually calls. Before this fix,
+    pdfplumber's table-aware extractor was only ever reached as a
+    plain-text fallback candidate — pypdf2 almost always wins the
+    "first extractor to produce >=200 chars" race for a real PDF with a
+    text layer, so pdfplumber (and its table detection) never ran at
+    all. The table supplement must run regardless of which extractor
+    won the narrative-text race."""
+
+    import pdfplumber
+
+    monkeypatch.setattr(
+        DocumentProcessor,
+        "_extract_pdf_with_pypdf2",
+        staticmethod(
+            lambda *_a, **_kw: "Gross premium grew steadily across the reporting period. " * 5
+        ),
+    )
+    monkeypatch.setattr(
+        DocumentProcessor, "_extract_pdf_with_pymupdf", staticmethod(lambda *_a, **_kw: "")
+    )
+
+    class _FakePage:
+        def extract_text(self):
+            return "Gross premium grew steadily across the reporting period."
+
+        def extract_tables(self):
+            return [[["Year", "Gross Premium"], ["2022", "789.6"], ["2023", "1043.1"]]]
+
+    class _FakeDocument:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        @property
+        def pages(self):
+            return [_FakePage()]
+
+    monkeypatch.setattr(pdfplumber, "open", lambda *_args, **_kwargs: _FakeDocument())
+
+    text = DocumentProcessor._extract_pdf_text(b"fake-pdf-bytes")
+
+    assert "Gross premium grew steadily" in text
+    assert "| Year | Gross Premium |" in text
+    assert "| 2023 | 1043.1 |" in text
+
+
+def test_pdf_table_extraction_skips_a_single_row_table_fragment(monkeypatch):
+    """A one-row detection (no real data rows) shouldn't be emitted as a
+    table block — it can't support any calculation and would just be
+    prose-like noise in the retrieved text."""
+
+    import pdfplumber
+
+    class _FakePage:
+        def extract_text(self):
+            return ""
+
+        def extract_tables(self):
+            return [[["Just one row"]]]
+
+    class _FakeDocument:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        @property
+        def pages(self):
+            return [_FakePage()]
+
+    monkeypatch.setattr(pdfplumber, "open", lambda *_args, **_kwargs: _FakeDocument())
+
+    text = DocumentProcessor._extract_pdf_with_pdfplumber(b"fake-pdf-bytes")
+
+    assert "Just one row" not in text
+
+
 def test_extract_csv_includes_verified_summary_statistics():
     df = pd.DataFrame({"Region": ["West", "East", "North"], "Sales": [1100000, 900000, 500000]})
     text = DocumentProcessor.extract_text(_csv_upload(df))

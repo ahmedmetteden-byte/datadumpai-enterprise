@@ -347,6 +347,20 @@ class DocumentProcessor:
             if len(ocr_text.strip()) > len(best_text.strip()):
                 best_text = ocr_text
 
+        # Genuine embedded tables are recovered separately from whichever
+        # engine won the plain-text race above — pypdf2 typically wins
+        # first (real financial-report PDFs almost always have a usable
+        # text layer, hitting the 200-char break before pdfplumber's
+        # table-aware extractor is ever tried), but pypdf2 flattens a
+        # table into unstructured prose with no way to recover the
+        # numbers structurally. This always runs regardless of which
+        # extractor won, so real tables reach extract_metric_tables()
+        # even when the report's narrative text came from a different
+        # engine.
+        table_blocks = DocumentProcessor._extract_pdf_table_blocks(data, max_pdf_pages=max_pdf_pages)
+        if table_blocks:
+            best_text = "\n\n".join([best_text, *table_blocks]) if best_text.strip() else "\n\n".join(table_blocks)
+
         if best_text.strip():
             return DocumentProcessor._append_pdf_truncation_note(
                 best_text,
@@ -568,6 +582,54 @@ class DocumentProcessor:
         return joined + "\n\n[… text extracted with OCR …]"
 
     @staticmethod
+    def _extract_pdf_table_blocks(
+        data: bytes,
+        *,
+        max_pdf_pages: int | None = None,
+    ) -> list[str]:
+        """Pull genuine embedded tables (ruling-line/whitespace-detected
+        structure, not just prose) out of a PDF via pdfplumber, formatted
+        as GFM-style pipe rows so downstream table parsing
+        (report_markdown_renderer.py's TABLE_ROW_PATTERN, consumed by
+        quantitative_analysis_service.extract_metric_tables()) can find
+        them — the same wrapped "| ... |" format document_processor.py
+        already produces for XLSX/CSV sources. Independent of which
+        engine wins the plain-text race in _extract_pdf_text(): a real
+        financial-report PDF commonly has a usable text layer (so pypdf2
+        alone already wins with plenty of prose well before pdfplumber's
+        table-aware extractor would ever be tried) AND genuine embedded
+        tables that flatten into unstructured prose no plain-text engine
+        can recover numbers from."""
+
+        try:
+            import pdfplumber
+        except ImportError:
+            return []
+
+        blocks: list[str] = []
+
+        try:
+            with pdfplumber.open(BytesIO(data)) as document:
+                pages = document.pages
+                if max_pdf_pages is not None:
+                    pages = pages[:max_pdf_pages]
+
+                for page in pages:
+                    for table in page.extract_tables() or []:
+                        table_lines = [
+                            "| " + " | ".join(str(cell or "").strip() for cell in row) + " |"
+                            for row in table
+                            if any(str(cell or "").strip() for cell in row)
+                        ]
+                        if len(table_lines) >= 2:
+                            blocks.append("\n".join(table_lines))
+        except Exception:
+            logger.exception("pdfplumber table extraction failed data_size=%s", len(data))
+            return []
+
+        return blocks
+
+    @staticmethod
     def _extract_pdf_with_pdfplumber(
         data: bytes,
         *,
@@ -589,12 +651,9 @@ class DocumentProcessor:
                 page_text = page.extract_text() or ""
                 if page_text.strip():
                     parts.append(page_text)
-                    continue
 
-                for table in page.extract_tables() or []:
-                    for row in table:
-                        cells = [str(cell or "").strip() for cell in row]
-                        if any(cells):
-                            parts.append(" | ".join(cells))
+        parts.extend(
+            DocumentProcessor._extract_pdf_table_blocks(data, max_pdf_pages=max_pdf_pages)
+        )
 
-        return "\n".join(parts)
+        return "\n\n".join(parts)

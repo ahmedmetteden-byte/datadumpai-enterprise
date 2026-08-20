@@ -9,12 +9,73 @@ from dataclasses import dataclass
 
 from services.report_source_text import SOURCE_SECTION_PATTERN
 
+
+# [ \t]+ (not \s+) between the marker and the heading text in the first two
+# alternatives — \s+ also matches newlines, so a bare "#" or a lone number
+# at the end of one line followed by ordinary text starting the next line
+# (a common PDF-extraction artifact: page.extract_text() puts one number
+# per line) could otherwise match as a single heading spanning both lines,
+# incorrectly carving real body content (including a table's header row,
+# if it happened to be the next line) out into a heading label instead of
+# leaving it in the section body.
 HEADING_LINE = re.compile(
-    r"^(#{1,6}\s+.+|(?:\d+(?:\.\d+)*)\s+.+|[A-Z][A-Z0-9 &/-]{3,})$",
+    r"^(#{1,6}[ \t]+.+|(?:\d+(?:\.\d+)*)[ \t]+.+|[A-Z][A-Z0-9 &/-]{3,})$",
     re.MULTILINE,
 )
 
 SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
+
+_TABLE_ROW_LINE = re.compile(r"^\s*\|.+\|\s*$", re.MULTILINE)
+
+
+def _table_spans(text: str) -> list[tuple[int, int]]:
+    """Character-offset (start, end) spans of contiguous GFM table-row
+    runs in text — a chunk boundary must never fall strictly inside one.
+    Splitting a table's header row from its data rows (or a data row from
+    its neighbours) leaves downstream table parsing
+    (quantitative_analysis_service.extract_metric_tables()) to mistake a
+    data row for the header, mislabeling a chart/finding with a raw
+    figure instead of a metric name. Blank lines inside/around a run
+    don't break it, so a table separated from surrounding prose by a
+    blank line (document_processor.py's PDF table extraction) is still
+    treated as one contiguous span."""
+
+    spans: list[tuple[int, int]] = []
+    offset = 0
+    span_start: int | None = None
+    span_end = 0
+
+    for line in text.splitlines(keepends=True):
+        stripped = line.strip()
+
+        if _TABLE_ROW_LINE.match(stripped):
+            if span_start is None:
+                span_start = offset
+            span_end = offset + len(line.rstrip("\n"))
+        elif stripped:
+            if span_start is not None:
+                spans.append((span_start, span_end))
+                span_start = None
+
+        offset += len(line)
+
+    if span_start is not None:
+        spans.append((span_start, span_end))
+
+    return spans
+
+
+def _snap_outside_table_spans(cut_offset: int, spans: list[tuple[int, int]]) -> int:
+    """Push a computed chunk-boundary offset outside any table span it
+    falls strictly inside — to the span's start (deferring the whole
+    table to the next chunk) when that's not degenerate, otherwise to the
+    span's end (the table is bigger than one window; best effort)."""
+
+    for start, end in spans:
+        if start < cut_offset < end:
+            return start if start > 0 else end
+
+    return cut_offset
 
 
 @dataclass(frozen=True)
@@ -81,19 +142,22 @@ def _split_fixed_size(text: str, *, chunk_size: int, heading: str) -> list[tuple
                 consumed += next_len
                 cut += 1
 
-            if cut:
-                chunk = " ".join(sentences[:cut]).strip()
-                remaining = remaining[len(chunk) :].lstrip()
-            else:
-                chunk = window.strip()
-                remaining = remaining[chunk_size:].lstrip()
+            cut_len = len(" ".join(sentences[:cut])) if cut else chunk_size
         else:
-            chunk = window[:split_at].strip()
-            remaining = remaining[split_at:].lstrip()
+            cut_len = split_at
 
-        label = heading if part_number == 1 else f"{heading} (part {part_number})"
-        parts.append((label, chunk))
-        part_number += 1
+        # Never let the computed boundary fall inside a detected GFM
+        # table — that would split a table's header from its data rows.
+        cut_len = _snap_outside_table_spans(cut_len, _table_spans(remaining[:chunk_size]))
+        cut_len = max(cut_len, 1)
+
+        chunk = remaining[:cut_len].strip()
+        remaining = remaining[cut_len:].lstrip()
+
+        if chunk:
+            label = heading if part_number == 1 else f"{heading} (part {part_number})"
+            parts.append((label, chunk))
+            part_number += 1
 
     return parts
 

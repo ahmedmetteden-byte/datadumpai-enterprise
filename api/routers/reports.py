@@ -270,6 +270,7 @@ def export_report(
         content,
         report_type=str(report.get("reportType") or report.get("name") or "Report"),
         title=str(report.get("name") or "Report"),
+        source_documents=list(report.get("sourceDocuments") or []),
     )
 
     context = ReportExportContext(

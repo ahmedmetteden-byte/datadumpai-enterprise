@@ -115,6 +115,29 @@ def test_non_temporal_labels_produce_rows_without_fabricated_period_deltas():
     assert [row["value"] for row in tables[0]["rows"]] == [32.0, 68.0]
 
 
+def test_skips_a_table_whose_header_row_is_actually_a_data_row():
+    """Report Output Quality Upgrade Step D: a real-world failure mode
+    discovered when PDF-sourced tables started reaching this function —
+    a chunk/retrieval boundary can split a table's real header row from
+    its data rows, leaving the first surviving data row ("| 2022 | 789.6
+    | 420.0 |") mistaken for the header. Parsing it as-is would title a
+    metric "789.6" instead of "Gross Premium". A genuine header's
+    non-label columns are metric names, never pure numbers — if every one
+    of them parses as a number, the table must be skipped, not
+    mislabeled."""
+
+    source = {
+        "filename": "report.pdf",
+        "excerpt": (
+            "| 2022 | 789.6 | 420.0 |\n"
+            "| 2023 | 1,043.1 | 421.0 |\n"
+            "| 2024 | 1,558.7 | 635.5 |\n"
+        ),
+    }
+    tables = extract_metric_tables([source])
+    assert tables == []
+
+
 def test_no_numeric_table_produces_no_tables_and_no_evidence_block():
     source = {
         "filename": "notes.pdf",
