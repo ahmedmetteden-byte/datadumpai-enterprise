@@ -348,6 +348,12 @@ class SpaReportGenerationService:
             if report_plan_context
             else ""
         )
+        recommendations_plan_clause = (
+            " Every recommendation must trace back to one of the ranked findings in the Report "
+            "Plan above — do not introduce a recommendation with no corresponding finding."
+            if report_plan_context
+            else ""
+        )
         synthesis_requirement = (
             (
                 f"This workspace contains {source_count} documents ({source_filenames}). "
@@ -455,7 +461,13 @@ class SpaReportGenerationService:
             "A markdown numbered list of specific, actionable next steps, ordered by priority — not "
             "generic advice, but recommendations that follow directly from the findings above. Each "
             "recommendation MUST start a new line with '1. ', '2. ', etc. — never run multiple "
-            "recommendations together in one paragraph.\n\n"
+            "recommendations together in one paragraph. Within each numbered item, structure it as "
+            "three clauses: `**Action:**` (what should be done, specific enough to act on — never a "
+            "bare instruction like 'invest in technology'), `**Rationale:**` (why — must cite a "
+            "specific finding, metric, or figure from the evidence above, not a generic "
+            "justification), and `**Measurement:**` (how success would be assessed — reference a "
+            "metric from the Verified Calculations or Report Plan above where one exists, rather "
+            f"than inventing a target the evidence doesn't support).{recommendations_plan_clause}\n\n"
             f"{comparison_requirement}"
             "## Conclusion\n"
             "2-3 sentences closing the report and restating what should happen next.\n\n"

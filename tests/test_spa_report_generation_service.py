@@ -598,6 +598,73 @@ def test_generate_markdown_forbids_padding_in_detailed_analysis_and_risks():
     assert "state that plainly rather than manufacturing a generic one" in prompt
 
 
+def test_generate_markdown_recommendations_require_action_rationale_measurement():
+    svc = SpaReportGenerationService()
+    client, completions = _fake_openai_client()
+    svc._client = client
+    sources = [{"filename": "a.pdf", "excerpt": "Some evidence."}]
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_name="Executive Summary",
+        sources=sources,
+    )
+    prompt = completions.calls[0]["messages"][1]["content"]
+
+    recommendations_section = prompt.split("## Strategic Recommendations")[1].split("## Conclusion")[0]
+    assert "`**Action:**`" in recommendations_section
+    assert "`**Rationale:**`" in recommendations_section
+    assert "`**Measurement:**`" in recommendations_section
+    assert "never a bare instruction like 'invest in technology'" in recommendations_section
+    assert "must cite a specific finding, metric, or figure" in recommendations_section
+
+
+def test_generate_markdown_recommendations_trace_to_plan_when_present():
+    svc = SpaReportGenerationService()
+    client, completions = _fake_openai_client()
+    svc._client = client
+    sources = [{"filename": "a.pdf", "excerpt": "Some evidence."}]
+    plan = ReportPlan(
+        ranked_findings=[
+            RankedFinding(label="Gross Premium", materiality_score=97.4, direction="increase")
+        ]
+    )
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_name="Executive Summary",
+        sources=sources,
+        report_plan=plan,
+    )
+    prompt = completions.calls[0]["messages"][1]["content"]
+    recommendations_section = prompt.split("## Strategic Recommendations")[1].split("## Conclusion")[0]
+
+    assert "Every recommendation must trace back to one of the ranked findings" in recommendations_section
+
+
+def test_generate_markdown_recommendations_omit_plan_trace_clause_when_no_plan():
+    svc = SpaReportGenerationService()
+    client, completions = _fake_openai_client()
+    svc._client = client
+    sources = [{"filename": "a.pdf", "excerpt": "Some evidence."}]
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_name="Executive Summary",
+        sources=sources,
+        report_plan=None,
+    )
+    prompt = completions.calls[0]["messages"][1]["content"]
+    recommendations_section = prompt.split("## Strategic Recommendations")[1].split("## Conclusion")[0]
+
+    assert "Every recommendation must trace back to one of the ranked findings" not in recommendations_section
+    # Action/Rationale/Measurement structure still applies without a plan.
+    assert "`**Action:**`" in recommendations_section
+
+
 def test_generate_markdown_executive_summary_anchors_to_report_plan_when_present():
     svc = SpaReportGenerationService()
     client, completions = _fake_openai_client()
