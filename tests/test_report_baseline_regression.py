@@ -145,3 +145,20 @@ def test_baseline_report_plan_kill_switch_restores_prior_prompt(
     assert "### Verified Calculations" in prompt
     assert report is not None
     assert "report_plan" not in report.metadata
+    assert "dashboard_selection" not in report.metadata
+
+
+def test_baseline_dashboard_selection_is_computed_and_stored(
+    isolated_env, project_service: ProjectService, monkeypatch
+):
+    project = project_service.create_project("Baseline Dashboard Project")
+
+    _record, _prompt, report = _generate_with_fake_llm(project, monkeypatch=monkeypatch)
+
+    assert report is not None
+    selection = report.metadata.get("dashboard_selection")
+    assert selection is not None
+    assert selection["kpis"][0]["label"] == "Gross Premium"
+    assert selection["kpis"][0]["total_change_percent"] == 97.4
+    assert len(selection["kpis"]) <= 4
+    assert selection["chart_requirements"] == report.metadata["report_plan"]["chart_requirements"]

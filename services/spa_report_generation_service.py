@@ -24,6 +24,7 @@ from services.report_plan_service import (
     ReportPlan,
     build_report_plan,
     render_plan_for_prompt,
+    select_dashboard_items,
 )
 from services.report_retrieval_service import build_facet_queries, retrieve_grouped_sources
 from services.report_service import ReportService
@@ -341,6 +342,12 @@ class SpaReportGenerationService:
             if report_plan_context
             else ""
         )
+        executive_summary_requirement = (
+            "Build it from the 3-5 highest-materiality items in the Report Plan above and its key "
+            "relationships — do not independently re-derive what matters most. "
+            if report_plan_context
+            else ""
+        )
         synthesis_requirement = (
             (
                 f"This workspace contains {source_count} documents ({source_filenames}). "
@@ -406,8 +413,12 @@ class SpaReportGenerationService:
             "Do not include a top-level title heading — start directly at the first section below; "
             "the document title is rendered separately by the export layer.\n\n"
             "## Executive Summary\n"
+            f"{executive_summary_requirement}"
             "3-5 sentences a board member could read alone and understand the whole picture: "
-            "the overall situation, the most important finding, and the headline recommendation.\n\n"
+            "the overall situation, the most important finding, and the headline recommendation. "
+            "Do not restate sentences that will also appear in Key Findings — compress and reframe "
+            "at a higher altitude instead; a reader who reads only this section and skips the rest "
+            "should still walk away informed.\n\n"
             "## Key Findings\n"
             "4-8 findings as sub-headings, drawing across the full set of documents (not "
             "clustered from just one). For each: a bolded one-line finding, then 2-4 sentences "
@@ -528,6 +539,9 @@ class SpaReportGenerationService:
             if REPORT_PLAN_ENABLED
             else None
         )
+        dashboard_selection = (
+            select_dashboard_items(report_plan, metric_tables) if report_plan else None
+        )
         markdown = self._generate_markdown(
             title=report_title,
             period_name=period["name"],
@@ -552,6 +566,11 @@ class SpaReportGenerationService:
                 **(
                     {"report_plan": report_plan.to_dict()}
                     if report_plan and not report_plan.is_empty()
+                    else {}
+                ),
+                **(
+                    {"dashboard_selection": dashboard_selection.to_dict()}
+                    if dashboard_selection and not dashboard_selection.is_empty()
                     else {}
                 ),
             },

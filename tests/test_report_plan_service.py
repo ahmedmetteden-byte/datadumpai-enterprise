@@ -9,11 +9,13 @@ from __future__ import annotations
 
 from services.report_plan_service import (
     ChartRequirement,
+    DashboardKPI,
     RankedFinding,
     ReportPlan,
     _chart_requirements,
     build_report_plan,
     render_plan_for_prompt,
+    select_dashboard_items,
 )
 
 PREMIUM_TABLE = {
@@ -182,3 +184,69 @@ def test_report_plan_to_dict_round_trips_all_fields():
     }
     assert payload["ranked_findings"][0]["label"] == "Gross Premium"
     assert payload["chart_requirements"][0]["strategy"] == "LINE_CHART"
+
+
+def test_select_dashboard_items_prioritizes_ranked_temporal_findings():
+    plan = build_report_plan(metric_tables=[CLAIMS_TABLE, PREMIUM_TABLE])
+    selection = select_dashboard_items(plan, [CLAIMS_TABLE, PREMIUM_TABLE])
+
+    labels = [kpi.label for kpi in selection.kpis]
+    assert labels == ["Gross Premium", "Gross Claims"]
+    assert selection.kpis[0].value == 1558.7
+    assert selection.kpis[0].unit == "₦ billion"
+    assert selection.kpis[0].total_change_percent == 97.4
+    assert selection.kpis[0].direction == "increase"
+
+
+def test_select_dashboard_items_fills_remaining_slots_with_categorical_metrics():
+    plan = build_report_plan(metric_tables=[PREMIUM_TABLE, MARKET_SHARE_TABLE])
+    selection = select_dashboard_items(plan, [PREMIUM_TABLE, MARKET_SHARE_TABLE])
+
+    labels = [kpi.label for kpi in selection.kpis]
+    assert labels == ["Gross Premium", "Segment Market Share"]
+    share_kpi = selection.kpis[1]
+    assert share_kpi.value == 68.0  # last row (Non-Life)
+    assert share_kpi.total_change_percent is None
+    assert share_kpi.direction == "flat"
+
+
+def test_select_dashboard_items_caps_at_max_kpis():
+    tables = [
+        {**PREMIUM_TABLE, "title": f"Metric {i}",
+         "calculations": {
+             "period_over_period": [{"percent": float(i)}],
+             "total_change": {"percent": float(100 - i)},
+         }}
+        for i in range(1, 8)
+    ]
+    plan = build_report_plan(metric_tables=tables)
+    selection = select_dashboard_items(plan, tables)
+
+    assert len(selection.kpis) == 4
+
+
+def test_select_dashboard_items_reuses_plans_chart_requirements_unchanged():
+    plan = build_report_plan(metric_tables=[PREMIUM_TABLE, CLAIMS_TABLE])
+    selection = select_dashboard_items(plan, [PREMIUM_TABLE, CLAIMS_TABLE])
+
+    assert selection.chart_requirements == plan.chart_requirements
+
+
+def test_select_dashboard_items_empty_for_no_tables():
+    plan = build_report_plan(metric_tables=[])
+    selection = select_dashboard_items(plan, [])
+    assert selection.is_empty()
+
+
+def test_dashboard_kpi_to_dict_round_trips():
+    kpi = DashboardKPI(
+        label="Gross Premium", value=1558.7, unit="₦ billion",
+        total_change_percent=97.4, direction="increase",
+    )
+    assert kpi.to_dict() == {
+        "label": "Gross Premium",
+        "value": 1558.7,
+        "unit": "₦ billion",
+        "total_change_percent": 97.4,
+        "direction": "increase",
+    }

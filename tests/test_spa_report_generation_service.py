@@ -5,6 +5,7 @@ Tests for free-text instructions threading through SpaReportGenerationService.
 from __future__ import annotations
 
 from services.project_service import ProjectService
+from services.report_plan_service import RankedFinding, ReportPlan
 from services.report_service import ReportService
 from services.spa_report_generation_service import (
     SpaReportGenerationService,
@@ -595,6 +596,52 @@ def test_generate_markdown_forbids_padding_in_detailed_analysis_and_risks():
 
     assert "Do not restate findings from Key Findings to lengthen this section" in prompt
     assert "state that plainly rather than manufacturing a generic one" in prompt
+
+
+def test_generate_markdown_executive_summary_anchors_to_report_plan_when_present():
+    svc = SpaReportGenerationService()
+    client, completions = _fake_openai_client()
+    svc._client = client
+    sources = [{"filename": "a.pdf", "excerpt": "Some evidence."}]
+    plan = ReportPlan(
+        ranked_findings=[
+            RankedFinding(label="Gross Premium", materiality_score=97.4, direction="increase")
+        ]
+    )
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_name="Executive Summary",
+        sources=sources,
+        report_plan=plan,
+    )
+    prompt = completions.calls[0]["messages"][1]["content"]
+
+    exec_summary_section = prompt.split("## Executive Summary")[1].split("## Key Findings")[0]
+    assert "Build it from the 3-5 highest-materiality items in the Report Plan above" in exec_summary_section
+    assert "Do not restate sentences that will also appear in Key Findings" in prompt
+
+
+def test_generate_markdown_executive_summary_omits_plan_reference_when_no_plan():
+    svc = SpaReportGenerationService()
+    client, completions = _fake_openai_client()
+    svc._client = client
+    sources = [{"filename": "a.pdf", "excerpt": "Some evidence."}]
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_name="Executive Summary",
+        sources=sources,
+        report_plan=None,
+    )
+    prompt = completions.calls[0]["messages"][1]["content"]
+
+    exec_summary_section = prompt.split("## Executive Summary")[1].split("## Key Findings")[0]
+    assert "Report Plan above" not in exec_summary_section
+    # The "no sentence reuse" rule still applies even without a plan.
+    assert "Do not restate sentences that will also appear in Key Findings" in prompt
 
 
 def test_generate_markdown_includes_changes_section_when_previous_report_present():

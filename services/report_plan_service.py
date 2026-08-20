@@ -217,6 +217,109 @@ def build_report_plan(
     )
 
 
+MAX_DASHBOARD_KPIS = 4
+
+
+@dataclass
+class DashboardKPI:
+    label: str
+    value: float
+    unit: str
+    total_change_percent: float | None = None
+    direction: str = "flat"  # "increase" | "decrease" | "flat"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "label": self.label,
+            "value": self.value,
+            "unit": self.unit,
+            "total_change_percent": self.total_change_percent,
+            "direction": self.direction,
+        }
+
+
+@dataclass
+class DashboardSelection:
+    kpis: list[DashboardKPI] = field(default_factory=list)
+    chart_requirements: list[ChartRequirement] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kpis": [kpi.to_dict() for kpi in self.kpis],
+            "chart_requirements": [c.to_dict() for c in self.chart_requirements],
+        }
+
+    def is_empty(self) -> bool:
+        return not (self.kpis or self.chart_requirements)
+
+
+def _latest_row_value(table: dict[str, Any]) -> float | None:
+    rows = table.get("rows") or []
+    if not rows:
+        return None
+    try:
+        return float(rows[-1]["value"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def select_dashboard_items(
+    plan: ReportPlan, metric_tables: list[dict[str, Any]]
+) -> DashboardSelection:
+    """Deterministically choose which metrics belong on the executive
+    dashboard: the materiality-ranked temporal findings first (already
+    computed by build_report_plan, in ranked order), then any remaining
+    categorical (non-temporal) metrics to round out the picture — e.g. a
+    market-share breakdown alongside growth KPIs — up to
+    MAX_DASHBOARD_KPIS total. Chart selection reuses the plan's
+    already-capped chart_requirements unchanged; this only adds KPI-card
+    selection on top, for a real Step D chart-rendering pipeline to
+    consume — see the Premium Report Generation Upgrade plan's Step D."""
+
+    tables = metric_tables or []
+    by_title = {str(table.get("title") or ""): table for table in tables}
+    kpis: list[DashboardKPI] = []
+    used_titles: set[str] = set()
+
+    for finding in plan.ranked_findings:
+        if len(kpis) >= MAX_DASHBOARD_KPIS:
+            break
+        table = by_title.get(finding.label)
+        if not table:
+            continue
+        value = _latest_row_value(table)
+        if value is None:
+            continue
+        total = (table.get("calculations") or {}).get("total_change") or {}
+        kpis.append(
+            DashboardKPI(
+                label=finding.label,
+                value=value,
+                unit=str(table.get("unit") or ""),
+                total_change_percent=total.get("percent"),
+                direction=finding.direction,
+            )
+        )
+        used_titles.add(finding.label)
+
+    for table in tables:
+        if len(kpis) >= MAX_DASHBOARD_KPIS:
+            break
+        title = str(table.get("title") or "")
+        if not title or title in used_titles or table.get("calculations"):
+            continue  # temporal metrics are only added via ranked_findings above
+
+        value = _latest_row_value(table)
+        if value is None:
+            continue
+        kpis.append(
+            DashboardKPI(label=title, value=value, unit=str(table.get("unit") or ""))
+        )
+        used_titles.add(title)
+
+    return DashboardSelection(kpis=kpis, chart_requirements=list(plan.chart_requirements))
+
+
 def render_plan_for_prompt(plan: ReportPlan) -> str:
     """Render the plan as a short internal evidence block for the report-
     writing prompt — same pattern as quantitative_analysis_service's
