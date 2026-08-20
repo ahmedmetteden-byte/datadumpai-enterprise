@@ -128,6 +128,9 @@ class VisualizationBlock:
     data: dict[str, Any]
     priority: int = 1
     decision_question: str = ""
+    unit: str = ""
+    x_label: str = ""
+    y_label: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -137,6 +140,9 @@ class VisualizationBlock:
             "data": self.data,
             "priority": self.priority,
             "decision_question": self.decision_question,
+            "unit": self.unit,
+            "x_label": self.x_label,
+            "y_label": self.y_label,
         }
 
 
@@ -873,14 +879,41 @@ def build_visualization_blocks(
     *,
     document_text: str = "",
 ) -> list[VisualizationBlock]:
-    """Build structured visualization blocks for export renderers."""
+    """Build structured visualization blocks for export renderers.
+
+    Metric-table-derived blocks (built from quantitative_analysis_service's
+    calculated MetricSeries via services.quantitative_chart_bridge) come
+    first and take priority over the generic per-strategy blocks below,
+    which stay as the fallback for reports without usable metric tables.
+    Once any metric-table-derived block exists, the generic BAR_CHART/
+    LINE_CHART strategies are skipped entirely (not just a matching
+    strategy type) — both draw from the same underlying financial-series
+    text, so leaving the generic one enabled would show the reader a
+    second, vaguer chart of the same data the metric-derived chart(s)
+    already cover accurately (spec: "fewer excellent charts, not many
+    mediocre ones").
+    """
+
+    from services.quantitative_chart_bridge import select_chart_candidates
 
     text = document_text or report_data.narrative
-    blocks: list[VisualizationBlock] = []
-    priority = 1
+    metric_tables = report_data.metrics.get("tables") or []
+    chart_requirements = (
+        (report_data.metadata.get("report_plan") or {}).get("chart_requirements") or []
+    )
+    metric_blocks = select_chart_candidates(metric_tables, chart_requirements)
+
+    blocks: list[VisualizationBlock] = list(metric_blocks)
+    priority = len(metric_blocks) + 1
 
     for strategy in strategies:
         if strategy == VisualizationStrategy.NONE:
+            continue
+
+        if metric_blocks and strategy in (
+            VisualizationStrategy.BAR_CHART,
+            VisualizationStrategy.LINE_CHART,
+        ):
             continue
 
         if strategy == VisualizationStrategy.TIMELINE:

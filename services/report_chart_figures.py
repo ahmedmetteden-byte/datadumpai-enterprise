@@ -65,10 +65,12 @@ def _figure_from_visualization_block(block: dict[str, Any]) -> tuple[str, go.Fig
             return None
         labels = [item.get("label", "") for item in series]
         values = [float(item.get("value", 0)) for item in series]
+        x_label = str(block.get("x_label") or "Category")
+        y_label = str(block.get("y_label") or title)
         figure = px.bar(
             x=labels,
             y=values,
-            labels={"x": "Metric", "y": "Value"},
+            labels={"x": x_label, "y": y_label},
             title=title,
             color_discrete_sequence=CHART_COLORS,
         )
@@ -103,7 +105,11 @@ def _figure_from_visualization_block(block: dict[str, Any]) -> tuple[str, go.Fig
             )
         )
         figure.update_layout(
-            **chart_layout(title=title),
+            **chart_layout(
+                title=title,
+                xaxis_title=str(block.get("x_label") or "Period"),
+                yaxis_title=str(block.get("y_label") or title),
+            ),
             legend={"orientation": "h", "yanchor": "bottom", "y": 1.02},
         )
         return title, figure
@@ -130,9 +136,12 @@ def _figure_from_visualization_block(block: dict[str, Any]) -> tuple[str, go.Fig
             return None
         labels = [item.get("label", "") for item in items]
         values = [float(item.get("value", 0) or 0) for item in items]
+        x_label = str(block.get("x_label") or "Metric")
+        y_label = str(block.get("y_label") or title)
         figure = px.bar(
             x=labels,
             y=values,
+            labels={"x": x_label, "y": y_label},
             title=title,
             color_discrete_sequence=CHART_COLORS,
         )
@@ -174,6 +183,7 @@ def _figure_from_visualization_block(block: dict[str, Any]) -> tuple[str, go.Fig
         figure = px.bar(
             x=labels,
             y=severity,
+            labels={"x": "Risk", "y": "Severity"},
             title=title,
             color_discrete_sequence=RISK_COLORS,
         )
@@ -189,6 +199,7 @@ def _figure_from_visualization_block(block: dict[str, Any]) -> tuple[str, go.Fig
         figure = px.bar(
             x=labels,
             y=values,
+            labels={"x": "Party"},
             title=title,
             color_discrete_sequence=CHART_COLORS,
         )
@@ -204,6 +215,7 @@ def _figure_from_visualization_block(block: dict[str, Any]) -> tuple[str, go.Fig
         figure = px.bar(
             x=labels,
             y=[1.0] * len(labels),
+            labels={"x": "Stakeholder"},
             title=title,
             color_discrete_sequence=CHART_COLORS,
         )

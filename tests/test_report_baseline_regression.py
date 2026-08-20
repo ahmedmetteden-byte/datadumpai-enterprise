@@ -162,3 +162,41 @@ def test_baseline_dashboard_selection_is_computed_and_stored(
     assert selection["kpis"][0]["total_change_percent"] == 97.4
     assert len(selection["kpis"]) <= 4
     assert selection["chart_requirements"] == report.metadata["report_plan"]["chart_requirements"]
+
+
+def test_baseline_metric_derived_chart_survives_markdown_round_trip_and_exports(
+    isolated_env, project_service: ProjectService, monkeypatch
+):
+    """Step D: a chart built from quantitative_analysis_service's
+    calculated MetricSeries must round-trip through to_markdown() ->
+    saved content -> report_data_from_markdown() with correct, non-generic
+    axis labels intact, and produce a real chart image on export - proving
+    the fix reaches actual saved/exported reports, not just apply_
+    visualizations()'s in-memory return value."""
+
+    from services.export_chart_blocks import get_export_chart_images
+    from services.report_chart_export import is_chart_export_available
+    from services.report_document import report_data_from_markdown
+
+    project = project_service.create_project("Baseline Chart Round Trip Project")
+
+    record, _prompt, _report = _generate_with_fake_llm(project, monkeypatch=monkeypatch)
+
+    reconstructed = report_data_from_markdown(
+        record["content"], report_type="Executive Summary", title=record["name"]
+    )
+    visualizations = reconstructed.charts.get("visualizations") or []
+    premium_blocks = [v for v in visualizations if v.get("title") == "Gross Premium"]
+
+    assert premium_blocks, f"no Gross Premium chart block in {visualizations}"
+    block = premium_blocks[0]
+    assert block["type"] == "LINE_CHART"
+    assert block["x_label"] == "Period"
+    assert block["y_label"] not in ("Value", "y", "")
+    assert block["data"]["trends"][-1]["current"] == 1558.7
+
+    is_chart_export_available.cache_clear()
+    if is_chart_export_available():
+        chart_export = get_export_chart_images(reconstructed.charts)
+        assert chart_export.images
+        assert chart_export.images[0][1].startswith(b"\x89PNG")

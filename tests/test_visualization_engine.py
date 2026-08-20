@@ -12,6 +12,7 @@ from services.visualization_engine import (
     VisualizationStrategy,
     apply_visualizations,
     build_data_profile,
+    build_visualization_blocks,
     classify_report_intent,
     classify_report_type,
     decide_visualization_strategies,
@@ -395,3 +396,136 @@ def test_executive_dashboard_metadata_is_attached():
     dashboard = enriched.charts["executive_dashboard"]
     assert dashboard["sections"]
     assert any(section["title"] == "Action Items" for section in dashboard["sections"])
+
+
+_PREMIUM_METRIC_TABLE = {
+    "title": "Gross Premium",
+    "unit": "₦ billion",
+    "rows": [{"label": "2023", "value": 1043.1}, {"label": "2024", "value": 1558.7}],
+    "calculations": {
+        "period_over_period": [{"from": "2023", "to": "2024", "absolute": 515.6, "percent": 49.4}],
+        "total_change": {"from": "2023", "to": "2024", "absolute": 515.6, "percent": 49.4},
+    },
+}
+
+
+def test_build_visualization_blocks_prioritizes_metric_derived_chart_over_generic_duplicate():
+    """Step D: when a metric table backs a chart requirement, the
+    evidence-grounded block must win over visualization_engine's own
+    generic text-regex-derived block of the same strategy — never both,
+    which would show the reader two charts for the same underlying data."""
+
+    report_data = ReportData(
+        narrative="Some narrative.",
+        metrics={"tables": [_PREMIUM_METRIC_TABLE]},
+        metadata={
+            "report_plan": {
+                "chart_requirements": [
+                    {"strategy": "LINE_CHART", "metric_title": "Gross Premium", "reason": "materiality"}
+                ]
+            }
+        },
+        charts={"trends": [{"label": "Revenue", "prior": 1043.1, "current": 1558.7}]},
+    )
+    data_profile = build_data_profile(report_data, document_text=report_data.narrative)
+
+    blocks = build_visualization_blocks(
+        ReportType.FINANCIAL,
+        data_profile,
+        [VisualizationStrategy.LINE_CHART],
+        report_data,
+        document_text=report_data.narrative,
+    )
+
+    assert len(blocks) == 1
+    assert blocks[0].title == "Gross Premium"
+    assert blocks[0].x_label == "Period"
+    assert blocks[0].y_label == "Gross Premium (₦ billion)"
+    assert blocks[0].priority == 1
+
+
+def test_build_visualization_blocks_skips_generic_bar_chart_too_when_metric_blocks_exist():
+    """Regression test for a real bug found during Step D verification: a
+    metric-derived LINE_CHART block existed, but the generic BAR_CHART
+    strategy still fired independently (via the text-regex fallback),
+    producing a redundant third "Financial Performance" chart covering
+    the same underlying data. Once any metric-table-derived chart exists,
+    ALL generic BAR_CHART/LINE_CHART strategies must be skipped, not just
+    a strategy-type match."""
+
+    report_data = ReportData(
+        narrative=(
+            "| Year | Gross Premium |\n|------|---------------:|\n"
+            "| 2023 | 1043.1 |\n| 2024 | 1558.7 |\n"
+        ),
+        metrics={"tables": [_PREMIUM_METRIC_TABLE]},
+        metadata={
+            "report_plan": {
+                "chart_requirements": [
+                    {"strategy": "LINE_CHART", "metric_title": "Gross Premium", "reason": "materiality"}
+                ]
+            }
+        },
+    )
+    data_profile = build_data_profile(report_data, document_text=report_data.narrative)
+
+    blocks = build_visualization_blocks(
+        ReportType.FINANCIAL,
+        data_profile,
+        [VisualizationStrategy.LINE_CHART, VisualizationStrategy.BAR_CHART],
+        report_data,
+        document_text=report_data.narrative,
+    )
+
+    assert len(blocks) == 1
+    assert blocks[0].title == "Gross Premium"
+    assert not any(b.title == "Financial Performance" for b in blocks)
+
+
+def test_build_visualization_blocks_falls_back_to_generic_when_no_metric_tables():
+    report_data = ReportData(
+        narrative="Some narrative.",
+        charts={"trends": [{"label": "Revenue", "prior": 1043.1, "current": 1558.7}]},
+    )
+    data_profile = build_data_profile(report_data, document_text=report_data.narrative)
+
+    blocks = build_visualization_blocks(
+        ReportType.FINANCIAL,
+        data_profile,
+        [VisualizationStrategy.LINE_CHART],
+        report_data,
+        document_text=report_data.narrative,
+    )
+
+    assert len(blocks) == 1
+    assert blocks[0].title == "Performance Trend"  # legacy fallback, unchanged
+
+
+def test_build_visualization_blocks_metric_bridge_kill_switch(monkeypatch):
+    monkeypatch.setattr(
+        "services.quantitative_chart_bridge.REPORT_CHART_METRIC_BRIDGE_ENABLED", False
+    )
+    report_data = ReportData(
+        narrative="Some narrative.",
+        metrics={"tables": [_PREMIUM_METRIC_TABLE]},
+        metadata={
+            "report_plan": {
+                "chart_requirements": [
+                    {"strategy": "LINE_CHART", "metric_title": "Gross Premium", "reason": "materiality"}
+                ]
+            }
+        },
+        charts={"trends": [{"label": "Revenue", "prior": 1043.1, "current": 1558.7}]},
+    )
+    data_profile = build_data_profile(report_data, document_text=report_data.narrative)
+
+    blocks = build_visualization_blocks(
+        ReportType.FINANCIAL,
+        data_profile,
+        [VisualizationStrategy.LINE_CHART],
+        report_data,
+        document_text=report_data.narrative,
+    )
+
+    assert len(blocks) == 1
+    assert blocks[0].title == "Performance Trend"  # falls back to legacy path when bridge disabled
