@@ -272,6 +272,67 @@ def test_executive_summary_reports_get_kpi_cards_from_findings():
     assert figures
 
 
+def test_kpi_cards_use_real_dashboard_selection_data_when_available():
+    """Report Output Quality Upgrade Step G: KPI_CARDS previously only
+    ever came from report_data.kpis (never populated by the SPA pipeline)
+    or a regex re-parse of the narrative — real, deterministic KPI data
+    already computed by report_plan_service.select_dashboard_items() in
+    Step A was never wired in at all. It must now take priority."""
+
+    report_data = ReportData(
+        report_type="Executive Summary",
+        title="Executive Summary — Custom / Ad hoc",
+        narrative=EXECUTIVE_SUMMARY_FINDINGS_DOCUMENT,
+        metadata={
+            "dashboard_selection": {
+                "kpis": [
+                    {
+                        "label": "Gross Premium",
+                        "value": 1558.7,
+                        "unit": "₦ billion",
+                        "total_change_percent": 97.4,
+                        "direction": "increase",
+                    },
+                    {
+                        "label": "Gross Claims",
+                        "value": 635.5,
+                        "unit": "₦ billion",
+                        "total_change_percent": 51.3,
+                        "direction": "increase",
+                    },
+                ],
+                "chart_requirements": [],
+            }
+        },
+    )
+    enriched = apply_visualizations(
+        report_data,
+        user_report_type="Executive Summary",
+        document_text=EXECUTIVE_SUMMARY_FINDINGS_DOCUMENT,
+        include_charts=True,
+        force_generate=True,
+    )
+
+    kpi_blocks = [
+        block for block in enriched.charts["visualizations"]
+        if block["type"] == VisualizationStrategy.KPI_CARDS.value
+    ]
+    assert kpi_blocks, "expected a KPI_CARDS block"
+
+    items = kpi_blocks[0]["data"]["items"]
+    labels = {item["label"] for item in items}
+    # The real dashboard_selection data must win over the narrative-regex
+    # fallback — real metric names, not finding titles like "Consistent
+    # Growth in Gross Premiums".
+    assert labels == {"Gross Premium", "Gross Claims"}
+    assert {item["label"]: item["value"] for item in items} == {
+        "Gross Premium": 1558.7,
+        "Gross Claims": 635.5,
+    }
+    assert kpi_blocks[0]["x_label"] == "Metric"
+    assert kpi_blocks[0]["y_label"] == "Latest Reported Value"
+
+
 def test_currency_pattern_does_not_match_across_word_boundaries():
     """"Microsoft 365" (digits immediately followed by a word starting
     with "m") must not be treated as a "365 million"-style currency

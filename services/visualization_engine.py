@@ -781,6 +781,31 @@ def _extract_finding_kpis(text: str) -> dict[str, float]:
 
 
 def _kpi_items(report_data: ReportData, text: str = "") -> list[dict[str, Any]]:
+    # Real, deterministic KPI data — Step A's report_plan_service.py
+    # already computed the latest value + direction for the metrics that
+    # matter most (report_plan_service.select_dashboard_items). Preferred
+    # over every fallback below, which either re-parses the narrative via
+    # regex or reads a field (report_data.kpis) nothing in the SPA
+    # pipeline ever actually populates.
+    dashboard_kpis = (report_data.metadata.get("dashboard_selection") or {}).get("kpis") or []
+    real_items: list[dict[str, Any]] = []
+    for kpi in dashboard_kpis:
+        label = str(kpi.get("label") or "")
+        value = kpi.get("value")
+        if not label or value is None:
+            continue
+        real_items.append(
+            {
+                "label": label,
+                "value": value,
+                "unit": str(kpi.get("unit") or ""),
+                "total_change_percent": kpi.get("total_change_percent"),
+                "direction": kpi.get("direction") or "flat",
+            }
+        )
+    if real_items:
+        return real_items[:6]
+
     items: list[dict[str, Any]] = []
 
     for key, value in report_data.kpis.items():
@@ -976,6 +1001,8 @@ def build_visualization_blocks(
                     data={"items": items},
                     priority=priority,
                     decision_question="Are we on track against key targets?",
+                    x_label="Metric",
+                    y_label="Latest Reported Value",
                 )
             )
             priority += 1
