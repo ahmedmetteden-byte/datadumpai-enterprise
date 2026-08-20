@@ -457,7 +457,7 @@ class PremiumPDFBuilder:
                     )
                 )
         else:
-            story.append(Paragraph("No critical risks identified.", self.styles["body"]))
+            story.append(Paragraph("No risks were identified in the evidence reviewed.", self.styles["body"]))
 
         story.append(Spacer(1, 0.1 * inch))
         story.append(Paragraph("Top Opportunities", self.styles["subheading"]))
@@ -472,7 +472,7 @@ class PremiumPDFBuilder:
                     )
                 )
         else:
-            story.append(Paragraph("No opportunities identified.", self.styles["body"]))
+            story.append(Paragraph("No opportunities were identified in the evidence reviewed.", self.styles["body"]))
 
         story.append(Spacer(1, 0.1 * inch))
         story.append(Paragraph("Strategic Recommendation", self.styles["subheading"]))

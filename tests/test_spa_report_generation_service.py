@@ -638,6 +638,36 @@ def test_generate_markdown_instructs_restraint_against_unearned_adjectives():
     assert "does not by itself mean profitability improved" in prompt
 
 
+def test_generate_markdown_requires_bulleted_risks_and_opportunities():
+    """Report Output Quality Upgrade Step B: Risks & Issues / Opportunities
+    items must be formatted as markdown bullets so dashboard extraction can
+    find them, and the 'none found' wording must distinguish 'not in the
+    evidence' from the stronger, unsupported claim 'none exist'."""
+
+    svc = SpaReportGenerationService()
+    client, completions = _fake_openai_client()
+    svc._client = client
+    sources = [{"filename": "a.pdf", "excerpt": "Some evidence."}]
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_name="Executive Summary",
+        sources=sources,
+    )
+    prompt = completions.calls[0]["messages"][1]["content"]
+
+    risks_section = prompt.split("## Risks & Issues")[1].split("## Opportunities")[0]
+    opportunities_section = prompt.split("## Opportunities")[1].split("## Strategic Recommendations")[0]
+
+    assert "its own markdown bullet" in risks_section
+    assert "No risks were identified in the evidence reviewed" in risks_section
+    assert "not 'no risks exist'" in risks_section
+
+    assert "its own markdown bullet" in opportunities_section
+    assert "No opportunities were identified in the evidence reviewed" in opportunities_section
+
+
 def test_generate_markdown_forbids_padding_in_detailed_analysis_and_risks():
     svc = SpaReportGenerationService()
     client, completions = _fake_openai_client()
@@ -653,7 +683,7 @@ def test_generate_markdown_forbids_padding_in_detailed_analysis_and_risks():
     prompt = completions.calls[0]["messages"][1]["content"]
 
     assert "Do not restate findings from Key Findings to lengthen this section" in prompt
-    assert "state that plainly rather than manufacturing a generic one" in prompt
+    assert "rather than manufacturing a generic risk" in prompt
 
 
 def test_generate_markdown_recommendations_require_action_rationale_measurement():

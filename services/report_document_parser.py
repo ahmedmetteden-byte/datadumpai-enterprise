@@ -106,11 +106,42 @@ def _split_sections(report_text: str) -> list[ReportSection]:
     return sections
 
 
+_NEGATIVE_LEAD = re.compile(r"^(no|none|not\s+applicable|n/a)\b", re.IGNORECASE)
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z(])")
+
+
+def _prose_fallback_items(text: str) -> list[str]:
+    """Split a non-bulleted prose paragraph into sentence-level items.
+
+    The LLM sometimes writes Risks/Opportunities/AI Insights as flowing
+    prose instead of markdown bullets even when real content is present —
+    without this fallback, dashboard extraction (which only recognizes
+    "- "/"* " bullets) silently returns nothing and the dashboard claims
+    "none identified" while the report body genuinely discusses items. A
+    paragraph that itself states there's nothing to report (e.g. "No
+    material risks were identified in the evidence provided") is left
+    alone — it must not be turned into a fake single item."""
+
+    lines = [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    joined = strip_inline_markdown(" ".join(lines))
+
+    if not joined or _NEGATIVE_LEAD.match(joined):
+        return []
+
+    return [sentence.strip() for sentence in _SENTENCE_SPLIT.split(joined) if sentence.strip()]
+
+
 def _bullets_from_text(text: str) -> list[str]:
-    return [
+    bullets = [
         strip_inline_markdown(match.group(1).strip())
         for match in BULLET_PATTERN.finditer(text)
     ]
+
+    return bullets if bullets else _prose_fallback_items(text)
 
 
 def _risk_cards(text: str) -> list[dict[str, str]]:

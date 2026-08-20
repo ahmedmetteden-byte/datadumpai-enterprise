@@ -319,7 +319,7 @@ def _executive_summary_page(document: Document, parsed) -> None:
         for card in risks:
             _add_bullet(document, card["title"])
     else:
-        _add_body_paragraph(document, "No critical risks identified.")
+        _add_body_paragraph(document, "No risks were identified in the evidence reviewed.")
 
     _add_heading(document, "Top Opportunities", 2)
     opportunities = top_opportunities(parsed)[:5]
@@ -327,7 +327,7 @@ def _executive_summary_page(document: Document, parsed) -> None:
         for item in opportunities:
             _add_bullet(document, item)
     else:
-        _add_body_paragraph(document, "No opportunities identified.")
+        _add_body_paragraph(document, "No opportunities were identified in the evidence reviewed.")
 
     _add_heading(document, "Strategic Recommendation", 2)
     _add_body_paragraph(document, strategic_recommendation(parsed) or metrics.get("priority", "—"))

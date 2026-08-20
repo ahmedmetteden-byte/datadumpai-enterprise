@@ -201,6 +201,72 @@ def test_build_premium_docx_renders_evidence_caption_and_humanized_source_filena
     assert "Annual-Statistical-Market-Report-Updated-01-2023.pdf" not in finding_section
 
 
+NO_RISKS_OR_OPPORTUNITIES_REPORT = """
+## Executive Summary
+Gross premiums increased 97.4% from 2022 to 2024.
+
+## Risks & Issues
+No risks were identified in the evidence reviewed.
+
+## Opportunities
+No opportunities were identified in the evidence reviewed.
+
+## Conclusion
+Momentum should be sustained.
+"""
+
+
+def test_build_premium_pdf_softens_no_risks_no_opportunities_wording():
+    """Report Output Quality Upgrade Step B: 'No critical risks identified.'
+    overstates the claim — it reads as 'none exist' when the honest claim
+    is 'none were found in the evidence reviewed'."""
+
+    import io
+
+    from PyPDF2 import PdfReader
+
+    pdf_bytes = build_premium_pdf(
+        report_text=NO_RISKS_OR_OPPORTUNITIES_REPORT,
+        metadata=PremiumExportMetadata(
+            project_name="Q4 Revenue Review",
+            report_name="Q4 Revenue Report",
+            reporting_period="Custom / Ad hoc",
+            source_documents=["report.xlsx"],
+            pack_type="executive",
+        ),
+    )
+    pdf_text = "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(pdf_bytes)).pages)
+
+    assert "No risks were identified in the evidence reviewed." in pdf_text
+    assert "No opportunities were identified in the evidence reviewed." in pdf_text
+    assert "No critical risks identified." not in pdf_text
+    assert "No opportunities identified." not in pdf_text
+
+
+def test_build_premium_docx_softens_no_risks_no_opportunities_wording():
+    docx_bytes = build_premium_docx(
+        report_text=NO_RISKS_OR_OPPORTUNITIES_REPORT,
+        metadata=DocxExportMetadata(
+            project_name="Q4 Revenue Review",
+            report_name="Q4 Revenue Report",
+            reporting_period="Custom / Ad hoc",
+            source_documents=["report.xlsx"],
+            pack_type="executive",
+        ),
+    )
+
+    from io import BytesIO
+
+    from docx import Document as DocxDocument
+
+    docx_text = "\n".join(p.text for p in DocxDocument(BytesIO(docx_bytes)).paragraphs)
+
+    assert "No risks were identified in the evidence reviewed." in docx_text
+    assert "No opportunities were identified in the evidence reviewed." in docx_text
+    assert "No critical risks identified." not in docx_text
+    assert "No opportunities identified." not in docx_text
+
+
 def test_build_premium_pdf_handles_real_spa_format_report_without_crashing():
     pdf_bytes = build_premium_pdf(
         report_text=SPA_REPORT,

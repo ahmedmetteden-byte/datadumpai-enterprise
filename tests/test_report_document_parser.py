@@ -106,6 +106,54 @@ def test_dashboard_nested_risks_still_take_priority_over_spa_fallback():
     assert risks[0]["title"] == "Claims"
 
 
+def test_top_opportunities_falls_back_to_prose_sentences_when_not_bulleted():
+    """Report Output Quality Upgrade Step B: the LLM sometimes writes
+    Opportunities as flowing prose instead of markdown bullets. Before this
+    fix, top_opportunities() found zero bullets and the dashboard claimed
+    'no opportunities identified' while the body genuinely discussed real
+    ones — the exact contradiction seen in a real reviewed report."""
+
+    report = """
+## Executive Summary
+Gross premiums increased 97.4% from 2022 to 2024.
+
+## Opportunities
+The sustained growth in premiums and claims presents opportunities for insurers to
+enhance their product offerings and expand market reach. Additionally, the
+integration of technology can further streamline operations and improve customer
+engagement.
+
+## Conclusion
+Momentum should be sustained.
+"""
+    parsed = parse_intelligence_report(report)
+    opportunities = top_opportunities(parsed)
+
+    assert len(opportunities) == 2
+    assert "enhance their product offerings" in opportunities[0]
+    assert "integration of technology" in opportunities[1]
+
+
+def test_top_risks_prose_fallback_does_not_fabricate_a_risk_from_a_negative_statement():
+    """A genuine 'no risks found' prose sentence must not be turned into a
+    fake single risk item — the fallback only kicks in for real content."""
+
+    report = """
+## Executive Summary
+Gross premiums increased 97.4% from 2022 to 2024.
+
+## Risks & Issues
+No material risks or open problems were identified in the evidence provided, though
+continued monitoring of claims trends is advised.
+
+## Conclusion
+Momentum should be sustained.
+"""
+    parsed = parse_intelligence_report(report)
+
+    assert top_risks(parsed) == []
+
+
 def test_is_available_rejects_placeholder_values():
     assert is_available("—") is False
     assert is_available("") is False
