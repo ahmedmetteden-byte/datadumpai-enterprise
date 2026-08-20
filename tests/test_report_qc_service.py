@@ -11,6 +11,7 @@ from services.report_qc_service import (
     _check_chart_consistency,
     _check_citation_consistency,
     _check_duplicate_content,
+    _check_growth_terminology,
     _check_numerical_consistency,
     _check_period_correctness,
     _split_sections,
@@ -141,6 +142,30 @@ def test_duplicate_content_passes_for_distinct_content():
         "2. **Action:** Expand into adjacent markets.\n"
     )
     assert _check_duplicate_content(narrative) == []
+
+
+def test_growth_terminology_flags_cagr_mention():
+    """Report Output Quality Upgrade Step E: a real generated report
+    called a single-period 2023-to-2024 year-over-year growth figure a
+    'compounded annual growth rate' — this system never computes a CAGR
+    (quantitative_analysis_service.py only computes period-over-period
+    and total-change deltas), so any mention of it is unverified."""
+
+    narrative = "Premiums grew, reflecting a compounded annual growth rate of approximately 49.4%."
+    issues = _check_growth_terminology(narrative)
+    assert len(issues) == 1
+    assert issues[0].category == "growth_terminology"
+    assert issues[0].severity == "medium"
+
+
+def test_growth_terminology_flags_bare_cagr_acronym():
+    issues = _check_growth_terminology("The CAGR over the period was strong.")
+    assert len(issues) == 1
+
+
+def test_growth_terminology_passes_for_correct_yoy_wording():
+    narrative = "Premiums grew 49.4% year-over-year in 2024, following 32.1% growth in 2023."
+    assert _check_growth_terminology(narrative) == []
 
 
 def test_run_qc_pass_kill_switch_short_circuits(monkeypatch):

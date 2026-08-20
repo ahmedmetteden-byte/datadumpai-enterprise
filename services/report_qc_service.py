@@ -23,6 +23,8 @@ Checks (deterministic, always run when enabled):
   report()'s own period_id filter)?
 - duplicate content: does Executive Summary repeat Key Findings verbatim,
   or does a recommendation repeat another recommendation's Action?
+- growth terminology: does the narrative say "CAGR"/"compound annual
+  growth rate" even though this system never computes one?
 """
 
 from __future__ import annotations
@@ -174,6 +176,36 @@ def _check_chart_consistency(
                     location=title,
                 )
             )
+
+    return issues
+
+
+_CAGR_TERM = re.compile(r"\bCAGR\b|compound(?:ed)? annual growth rate", re.IGNORECASE)
+
+
+def _check_growth_terminology(narrative: str) -> list[QCIssue]:
+    """The system has no CAGR-computation capability today —
+    quantitative_analysis_service.py only ever computes period-over-
+    period and total-change deltas, never a rate compounded across
+    multiple periods — so any 'CAGR' / 'compound annual growth rate' in
+    the narrative is always an unverified LLM word choice, not a cited
+    calculation, regardless of how many periods the evidence spans."""
+
+    issues: list[QCIssue] = []
+    match = _CAGR_TERM.search(narrative)
+    if match:
+        issues.append(
+            QCIssue(
+                severity="medium",
+                category="growth_terminology",
+                message=(
+                    f"Narrative uses {match.group(0)!r}, but no compound annual growth rate is "
+                    "ever computed by this system — likely mislabeling a year-over-year or "
+                    "total-period change as a compounded rate."
+                ),
+                location=match.group(0),
+            )
+        )
 
     return issues
 
@@ -336,6 +368,7 @@ def run_qc_pass(
     issues.extend(_check_chart_consistency(chart_requirements or [], visualizations or []))
     issues.extend(_check_period_correctness(narrative, previous_report, period_id))
     issues.extend(_check_duplicate_content(narrative))
+    issues.extend(_check_growth_terminology(narrative))
 
     if REPORT_QC_LLM_CHECKS_ENABLED and llm_client is not None:
         issues.extend(_run_llm_qc_check(llm_client, narrative, evidence))

@@ -340,6 +340,15 @@ class SpaReportGenerationService:
             if calculated_metrics_context
             else ""
         )
+        growth_terminology_requirement = (
+            "Growth-rate terminology must be precise, not just the number: 'CAGR' and 'compound "
+            "annual growth rate' describe a rate compounded across three or more periods — never "
+            "use either term for a single period-over-period change or a two-point total change, "
+            "even when the percentage itself is correct. If the evidence only supports a "
+            "year-over-year change or a total change across the period, call it exactly that "
+            "('X% year-over-year growth', 'a total increase of X% over the period') rather than "
+            "labeling it a compound annual growth rate.\n\n"
+        )
         report_plan_context = render_plan_for_prompt(report_plan) if report_plan else ""
         report_plan_requirement = (
             "A Report Plan is included in the evidence below, ranking findings by materiality "
@@ -411,6 +420,7 @@ class SpaReportGenerationService:
             f"{instructions_line}\n"
             f"{synthesis_requirement}"
             f"{calculated_metrics_requirement}"
+            f"{growth_terminology_requirement}"
             f"{report_plan_requirement}"
             "Go beyond summarizing — synthesize. For every major point, explain not just what "
             "happened but why it matters, what pattern or trend it fits into, what changed since "

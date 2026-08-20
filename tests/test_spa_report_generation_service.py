@@ -619,6 +619,31 @@ def test_generate_markdown_requires_evidence_tags_on_their_own_separate_lines():
     assert "never fold them into the same sentence or line" in prompt
 
 
+def test_generate_markdown_prohibits_cagr_mislabeling():
+    """Report Output Quality Upgrade Step E: a real generated report
+    called a single-period 2023-to-2024 year-over-year growth figure a
+    'compounded annual growth rate' — nothing in the pipeline computes a
+    true CAGR, so the prompt must explicitly forbid the term for
+    anything but a genuinely multi-period compounded rate."""
+
+    svc = SpaReportGenerationService()
+    client, completions = _fake_openai_client()
+    svc._client = client
+    sources = [{"filename": "a.pdf", "excerpt": "Some evidence."}]
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_name="Executive Summary",
+        sources=sources,
+    )
+    prompt = completions.calls[0]["messages"][1]["content"]
+
+    assert "CAGR" in prompt and "compound annual growth rate" in prompt
+    assert "never use either term for a single period-over-period change" in prompt
+    assert "year-over-year change" in prompt
+
+
 def test_generate_markdown_instructs_restraint_against_unearned_adjectives():
     svc = SpaReportGenerationService()
     client, completions = _fake_openai_client()
