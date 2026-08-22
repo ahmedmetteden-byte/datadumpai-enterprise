@@ -219,6 +219,52 @@ def _identity_column_kind(header: str) -> str:
     return "dimension"
 
 
+def _select_identity_column(
+    candidates: list[int], header: list[str], data_rows: list[list[str]]
+) -> int | None:
+    """When multiple columns could each serve as the identity/category
+    axis, pick the one that actually identifies WHAT is being measured —
+    not simply whichever comes first by position (Phase 3 incident fix).
+
+    Confirmed via the real "Executive Risk Summary" sheet (Year | Owner |
+    Indicator | Score | Assessment | Interpretation): "Owner" (constant
+    "Risk Committee" on every row) and "Indicator" (three genuinely
+    different metric names) both qualify as identity columns, but only
+    "Indicator" is the semantically correct one. Picking the first by
+    position selected "Owner" — constant, so it never triggers the
+    per-category split at all — which is exactly how three unrelated
+    metrics ("Overall risk score", "Operational resilience score",
+    "Customer confidence indicator") ended up treated as one 3-point
+    "Risk Committee Score" time series.
+
+    Preference order: a metric_identity-kind column (its values ARE
+    distinct metric identities) beats a dimension-kind column, since a
+    metric-identity column is the more specific, narrower signal, and
+    picking the "wrong kind" is what caused the incident. Within the same
+    kind, more distinct values wins as a tiebreaker — a constant column
+    provides no grouping/labeling value at all. Ties beyond that resolve
+    to whichever candidate appears first (Python's max() is stable),
+    matching the previous, simpler behavior for the common case where
+    only one real candidate exists.
+    """
+
+    if not candidates:
+        return None
+
+    def _score(col_index: int) -> tuple[int, int]:
+        kind = _identity_column_kind(header[col_index].strip())
+        values = [
+            row[col_index].strip()
+            for row in data_rows
+            if len(row) > col_index and row[col_index].strip()
+        ]
+        distinct = len(set(values))
+        kind_rank = 1 if kind == "metric_identity" else 0
+        return (kind_rank, distinct)
+
+    return max(candidates, key=_score)
+
+
 def _is_derived_rate_column(header: str, raw_cells: list[str]) -> bool:
     """A numeric-parseable column that describes another column's change
     rather than being an independent metric — detected by header keyword,
@@ -400,8 +446,30 @@ def _classify_column(column_header: str, raw_cells: list[str]) -> str:
     # recognizing quarter/month-year columns as temporal at all.
     normalized = [_normalize_temporal_label(cell.strip()) for cell in raw_cells]
     temporal_count = sum(1 for label in normalized if _looks_temporal(label))
-    if normalized and temporal_count >= max(2, len(normalized) - 1):
-        return "temporal"
+    looks_temporal_enough = bool(normalized) and temporal_count >= max(2, len(normalized) - 1)
+    if looks_temporal_enough:
+        # A period column must actually vary to be a real time axis
+        # (Phase 3 incident fix): a real workbook's "Executive Risk
+        # Summary" sheet has Year=2025 for every row — every cell matches
+        # the temporal regex, but there is no second period to compare
+        # against. Without this check, that column was still treated as
+        # a valid 3-point time series, and _compute_calculations()
+        # computed a "period-over-period" change between two rows that
+        # share the IDENTICAL period label — confirmed to produce exactly
+        # the reported "Risk Committee Score decreased by 12.5%"
+        # fabrication. A genuine 2+-period series (even a single
+        # Previous-vs-Current transition) always has at least 2 distinct
+        # labels, so this never affects a real time series.
+        if len(set(normalized)) >= 2:
+            return "temporal"
+        # Every cell looks like a period/date but never actually varies.
+        # It is still fundamentally a period-shaped column, not a real
+        # measurement — it must NOT fall through to the numeric/"value"
+        # check below just because "2025" happens to parse as a number,
+        # or its constant year gets charted as if it were a measured
+        # metric (confirmed: this exact fallthrough produced a spurious
+        # "Overall risk score = 2025" series during the incident fix).
+        return "narrative"
 
     if all(_parse_numeric_cell(cell) is not None for cell in raw_cells):
         if _is_derived_rate_column(column_header, raw_cells):
@@ -447,10 +515,10 @@ def _extract_from_table(rows: list[list[str]], *, source_document: str) -> list[
         col_roles[col_index] = _classify_column(column_header, raw_cells)
 
     time_col = next((i for i in range(len(header)) if col_roles.get(i) == "temporal"), None)
-    identity_col = next(
-        (i for i in range(len(header)) if col_roles.get(i) == "identity" and i != time_col),
-        None,
-    )
+    identity_candidates = [
+        i for i in range(len(header)) if col_roles.get(i) == "identity" and i != time_col
+    ]
+    identity_col = _select_identity_column(identity_candidates, header, data_rows)
     # Whichever column carries the row's "what period/category is this"
     # label — the time column when one exists (wherever it sits), else
     # the identity column, else column 0 as a safe default for tables
