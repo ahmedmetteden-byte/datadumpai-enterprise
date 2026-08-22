@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/Button';
+import { Spinner } from '@/components/ui/Spinner';
 import { useRequestFeedback } from '@/context/RequestFeedbackContext';
 import { UI_COPY } from '@/constants/ui';
 import { cn } from '@/lib/cn';
@@ -36,11 +37,14 @@ export function RequestFeedbackHost() {
           )}
         >
           <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-caption font-semibold uppercase tracking-wide opacity-80">
-                {kindLabel[item.kind]}
-              </p>
-              <p className="mt-1 text-small">{item.message}</p>
+            <div className="flex min-w-0 items-start gap-2.5">
+              {item.kind === 'loading' ? <Spinner size={16} className="mt-0.5 shrink-0" /> : null}
+              <div className="min-w-0">
+                <p className="text-caption font-semibold uppercase tracking-wide opacity-80">
+                  {kindLabel[item.kind]}
+                </p>
+                <p className="mt-1 text-small">{item.message}</p>
+              </div>
             </div>
             <button
               type="button"

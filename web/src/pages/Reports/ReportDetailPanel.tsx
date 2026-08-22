@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { CopyButton } from '@/components/ui/CopyButton';
 import { ReportCharts } from '@/components/ui/ReportCharts';
 import { ReportMarkdown } from '@/components/ui/ReportMarkdown';
+import { Spinner } from '@/components/ui/Spinner';
 import { ExportFilenameDialog } from '@/pages/Reports/ExportFilenameDialog';
 import { ExportUpgradeDialog } from '@/pages/Reports/ExportUpgradeDialog';
 import { services } from '@/api/services';
@@ -127,7 +128,7 @@ export function ReportDetailPanel({
           return services.report.save(workspaceId, draft.id, 'ready', auth);
         },
         {
-          loading: UI_COPY.reportsRegenerating,
+          loading: `${UI_COPY.reportsRegenerating} ${UI_COPY.reportsGeneratingEstimate}`,
           success: UI_COPY.reportsRegenerated,
           // No static `error` override — feedback.run() falls back to
           // err.message, which is the backend's actual detail (e.g. a
@@ -242,6 +243,7 @@ export function ReportDetailPanel({
           variant="ghost"
           disabled={regenerating}
           onClick={() => void handleRegenerate()}
+          leftIcon={regenerating ? <Spinner size={14} /> : undefined}
         >
           {regenerating ? UI_COPY.reportsRegenerating : UI_COPY.reportsRegenerate}
         </Button>

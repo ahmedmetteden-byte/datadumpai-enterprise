@@ -58,6 +58,7 @@ export const UI_COPY = {
   reportsBack: 'Back',
   reportsGenerating: 'Generating report…',
   reportsGenerateAction: 'Generate',
+  reportsGeneratingEstimate: 'This usually takes 30–60 seconds.',
   reportsSaveAction: 'Save report',
   reportsSaving: 'Saving…',
   reportsSaved: 'Report saved',

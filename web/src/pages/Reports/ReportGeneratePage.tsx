@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/Input';
 import { ReportCharts } from '@/components/ui/ReportCharts';
 import { ReportMarkdown } from '@/components/ui/ReportMarkdown';
 import { SectionHeader } from '@/components/ui/SectionHeader';
+import { Spinner } from '@/components/ui/Spinner';
 import { services } from '@/api/services';
 import { useAuth } from '@/context/AuthContext';
 import { useWorkspace } from '@/context/WorkspaceContext';
@@ -276,7 +277,7 @@ export function ReportGeneratePage() {
             statusKind === 'error'
               ? error
               : statusKind === 'loading'
-                ? UI_COPY.requestLoading
+                ? UI_COPY.reportsGeneratingEstimate
                 : UI_COPY.requestSuccess
           }
           onRetry={
@@ -414,7 +415,11 @@ export function ReportGeneratePage() {
                 </dd>
               </div>
             </dl>
-            <Button onClick={() => void handleGenerate()} disabled={busy}>
+            <Button
+              onClick={() => void handleGenerate()}
+              disabled={busy}
+              leftIcon={busy ? <Spinner size={16} /> : undefined}
+            >
               {busy ? UI_COPY.reportsGenerating : UI_COPY.reportsGenerateAction}
             </Button>
           </div>

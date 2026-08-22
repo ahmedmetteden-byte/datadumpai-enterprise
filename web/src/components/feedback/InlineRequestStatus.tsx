@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/Button';
+import { Spinner } from '@/components/ui/Spinner';
 import { UI_COPY } from '@/constants/ui';
 import { cn } from '@/lib/cn';
 
@@ -41,15 +42,18 @@ export function InlineRequestStatus({
       )}
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="text-caption font-semibold uppercase tracking-wide opacity-80">
-            {kind === 'loading'
-              ? UI_COPY.requestLoading
-              : kind === 'success'
-                ? UI_COPY.requestSuccess
-                : UI_COPY.requestErrorLabel}
-          </p>
-          <p className="mt-0.5">{resolved}</p>
+        <div className="flex items-start gap-2.5">
+          {kind === 'loading' ? <Spinner size={16} className="mt-0.5 shrink-0" /> : null}
+          <div>
+            <p className="text-caption font-semibold uppercase tracking-wide opacity-80">
+              {kind === 'loading'
+                ? UI_COPY.requestLoading
+                : kind === 'success'
+                  ? UI_COPY.requestSuccess
+                  : UI_COPY.requestErrorLabel}
+            </p>
+            <p className="mt-0.5">{resolved}</p>
+          </div>
         </div>
         {kind === 'error' && onRetry ? (
           <Button size="sm" variant="secondary" onClick={onRetry}>

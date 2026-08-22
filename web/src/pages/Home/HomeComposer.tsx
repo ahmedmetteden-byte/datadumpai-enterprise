@@ -21,6 +21,7 @@ import { UI_COPY } from '@/constants/ui';
 import { cn } from '@/lib/cn';
 import { EyebrowBadge } from '@/components/ui/EyebrowBadge';
 import { ProgressRing } from '@/components/ui/ProgressRing';
+import { Spinner } from '@/components/ui/Spinner';
 import { ConversationList } from '@/pages/IntelligenceStudio/ConversationList';
 import { ConversationMessage } from '@/pages/IntelligenceStudio/ConversationMessage';
 import { NameWorkspacePrompt } from '@/pages/Home/NameWorkspacePrompt';
@@ -572,7 +573,16 @@ export function HomeComposer() {
                 : UI_COPY.homeComposerNeedTextOrFile}
             </p>
           ) : null}
-          <Button onClick={() => void handleSubmit()} disabled={!canSubmit}>
+          {submitting && mode === 'report' ? (
+            <p className="text-caption text-ink-faint" role="status">
+              {UI_COPY.reportsGeneratingEstimate}
+            </p>
+          ) : null}
+          <Button
+            onClick={() => void handleSubmit()}
+            disabled={!canSubmit}
+            leftIcon={submitting && mode === 'report' ? <Spinner size={16} /> : undefined}
+          >
             {mode === 'ask'
               ? UI_COPY.homeComposerAsk
               : submitting
