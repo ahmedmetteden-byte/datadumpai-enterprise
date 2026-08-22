@@ -138,6 +138,68 @@ def _check_numerical_consistency(
     return issues
 
 
+_NARRATIVE_PERCENT = re.compile(r"(-?\d+(?:\.\d+)?)\s*%")
+_IMPLAUSIBLE_PERCENT_THRESHOLD = 200.0
+
+
+def _check_no_implausible_ungrounded_percentages(
+    narrative: str, metric_tables: list[dict[str, Any]]
+) -> list[QCIssue]:
+    """Safety net for Phase 3's structured-data fixes: an implausibly
+    large percentage (>200%) that doesn't match any deterministically
+    computed or as-reported figure is exactly the failure signature of the
+    414.3%-style bug this phase fixed at the extraction layer (a
+    change/rate column mistakenly recomputed on top of itself). Only
+    flags large, unmatched figures — small everyday percentages are left
+    alone, since ordinary prose cites plenty of legitimate ones this
+    system never tries to model."""
+
+    known: set[str] = set()
+    for table in metric_tables:
+        calculations = table.get("calculations") or {}
+        total = calculations.get("total_change") or {}
+        if total.get("percent") is not None:
+            known.add(f"{abs(float(total['percent'])):.1f}")
+        for change in calculations.get("period_over_period") or []:
+            if change.get("percent") is not None:
+                known.add(f"{abs(float(change['percent'])):.1f}")
+        for item in table.get("reported_change") or []:
+            match = _NARRATIVE_PERCENT.search(str(item.get("reported") or ""))
+            if match:
+                known.add(f"{abs(float(match.group(1))):.1f}")
+
+    if not known:
+        # No structured metrics in this report at all — nothing to
+        # cross-check narrative percentages against; skip rather than
+        # flag every percentage as "ungrounded".
+        return []
+
+    issues: list[QCIssue] = []
+    seen: set[str] = set()
+    for match in _NARRATIVE_PERCENT.finditer(narrative):
+        value = abs(float(match.group(1)))
+        if value <= _IMPLAUSIBLE_PERCENT_THRESHOLD:
+            continue
+        formatted = f"{value:.1f}"
+        if formatted in known or formatted in seen:
+            continue
+        seen.add(formatted)
+        issues.append(
+            QCIssue(
+                severity="high",
+                category="implausible_percentage",
+                message=(
+                    f"Narrative cites {match.group(0).strip()}, an implausibly large change "
+                    "that does not match any Verified Calculation or as-reported figure — "
+                    "likely a fabricated or miscomputed percentage."
+                ),
+                location=match.group(0).strip(),
+            )
+        )
+
+    return issues
+
+
 _SOURCE_LINE = re.compile(r"\*\*Source:\*\*\s*(.+)")
 
 
@@ -515,6 +577,7 @@ def run_qc_pass(
 
     issues: list[QCIssue] = []
     issues.extend(_check_numerical_consistency(narrative, metric_tables or []))
+    issues.extend(_check_no_implausible_ungrounded_percentages(narrative, metric_tables or []))
     issues.extend(_check_citation_consistency(narrative, source_documents))
     issues.extend(_check_chart_consistency(chart_requirements or [], visualizations or []))
     issues.extend(_check_period_correctness(narrative, previous_report, period_id))

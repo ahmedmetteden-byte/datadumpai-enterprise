@@ -6,6 +6,7 @@ Document Processing Service
 from __future__ import annotations
 
 import logging
+import re
 import time
 from io import BytesIO
 from pathlib import Path
@@ -18,6 +19,18 @@ from docx import Document
 import config
 
 logger = logging.getLogger(__name__)
+
+# Mirrors quantitative_analysis_service.py's temporal-label detection
+# (kept local rather than imported to avoid a cross-service dependency for
+# a single narrow check): used only to decide whether a column's rows are
+# time-indexed, in which case summing across them is misleading (see
+# _dataframe_stats_block).
+_TEMPORAL_YEAR = re.compile(r"^(19|20)\d{2}$")
+_TEMPORAL_QUARTER = re.compile(r"^q[1-4]\s*'?\d{2,4}$", re.IGNORECASE)
+_TEMPORAL_MONTH_YEAR = re.compile(
+    r"^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{2,4}$",
+    re.IGNORECASE,
+)
 
 
 class DocumentProcessor:
@@ -180,16 +193,51 @@ class DocumentProcessor:
         return text.replace("|", "/").strip()
 
     @staticmethod
+    def _row_labels_look_temporal(df: pd.DataFrame) -> bool:
+        """True when the sheet's first column reads as a period label (a
+        year, quarter, or month) for most rows — the same signal
+        quantitative_analysis_service.py uses to gate period-over-period
+        math. When rows represent time periods, summing a column across
+        them is essentially always misleading (three years of annual
+        premium summed is not a meaningful figure); when rows represent
+        categories (products, regions...), a sum can be a genuine total."""
+
+        if df.shape[1] < 1 or df.empty:
+            return False
+        labels = [DocumentProcessor._format_cell_value(v).strip() for v in df.iloc[:, 0]]
+        labels = [label for label in labels if label]
+        if not labels:
+            return False
+        matches = sum(
+            1
+            for label in labels
+            if _TEMPORAL_YEAR.match(label.replace(",", ""))
+            or _TEMPORAL_QUARTER.match(label)
+            or _TEMPORAL_MONTH_YEAR.match(label)
+        )
+        return matches >= max(2, len(labels) - 1)
+
+    @staticmethod
     def _dataframe_stats_block(df: pd.DataFrame) -> str:
         """Verified, computed-by-pandas summary statistics per numeric
         column — the primary numeric payload for the LLM to cite, since it
         should never be left to eyeball totals/averages off a rendered
-        table itself."""
+        table itself.
+
+        A sum is omitted when the sheet's rows are time-indexed (e.g. one
+        row per year) — summing a time series is not a reported total and
+        was confirmed to produce fabricated multi-year aggregate figures
+        (e.g. "sum=4,134" from three years of annual premium) that an LLM
+        can mistake for a genuine total. Where a sum IS emitted, it is
+        explicitly labeled as an auto-computed statistic so it is never
+        mistaken for a value stated in the source document."""
 
         numeric_columns = [col for col in df.columns if pd.api.types.is_numeric_dtype(df[col])]
 
         if not numeric_columns:
             return "No numeric columns detected in this data."
+
+        suppress_sum = DocumentProcessor._row_labels_look_temporal(df)
 
         lines = ["Summary statistics (computed across all rows):"]
         for column in numeric_columns:
@@ -197,13 +245,23 @@ class DocumentProcessor:
             if series.empty:
                 lines.append(f"- {column}: no non-null values.")
                 continue
-            lines.append(
-                f"- {column}: count={len(series)}, "
-                f"sum={DocumentProcessor._format_cell_value(series.sum())}, "
-                f"mean={DocumentProcessor._format_cell_value(series.mean())}, "
-                f"min={DocumentProcessor._format_cell_value(series.min())}, "
-                f"max={DocumentProcessor._format_cell_value(series.max())}"
-            )
+            stats = [
+                f"count={len(series)}",
+            ]
+            if suppress_sum:
+                stats.append(
+                    "sum=omitted (rows are time periods; a cross-period sum is not "
+                    "a reported total — cite the table's own row values instead)"
+                )
+            else:
+                stats.append(
+                    f"sum={DocumentProcessor._format_cell_value(series.sum())} "
+                    "[auto-computed statistic, not a value stated in the source]"
+                )
+            stats.append(f"mean={DocumentProcessor._format_cell_value(series.mean())}")
+            stats.append(f"min={DocumentProcessor._format_cell_value(series.min())}")
+            stats.append(f"max={DocumentProcessor._format_cell_value(series.max())}")
+            lines.append(f"- {column}: " + ", ".join(stats))
         return "\n".join(lines)
 
     @staticmethod

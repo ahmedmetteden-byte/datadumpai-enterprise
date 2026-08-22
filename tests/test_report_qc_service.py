@@ -14,6 +14,7 @@ from services.report_qc_service import (
     _check_duplicate_content,
     _check_evidence_leaks_into_narrative,
     _check_growth_terminology,
+    _check_no_implausible_ungrounded_percentages,
     _check_numerical_consistency,
     _check_period_correctness,
     _check_recommendation_has_action,
@@ -52,6 +53,64 @@ def test_numerical_consistency_flags_missing_figure():
     assert len(issues) == 3  # total_change + 2 period_over_period figures, all missing
     assert all(issue.category == "numerical_consistency" for issue in issues)
     assert all(issue.severity == "medium" for issue in issues)
+
+
+# --- Phase 3: safety net for the 414.3%-style bug ---
+
+
+def test_implausible_percentage_passes_when_it_matches_a_verified_calculation():
+    narrative = "Claims backlog rose sharply, a 121.4% increase over the period."
+    table = {
+        "title": "Claims Backlog",
+        "calculations": {"total_change": {"from": "Q1 2025", "to": "Q4 2025", "percent": 121.4}},
+    }
+    issues = _check_no_implausible_ungrounded_percentages(narrative, [table])
+    assert issues == []
+
+
+def test_implausible_percentage_flags_an_unmatched_large_figure():
+    """Regression test for the reported 414.3% bug: a large percentage
+    that doesn't match any computed or as-reported figure must be flagged
+    as high severity — this is exactly the failure signature Phase 3
+    fixed at the extraction layer, and this check is the safety net."""
+
+    narrative = "Claims backlog rose 414.3% over the period, a sharp deterioration."
+    table = {
+        "title": "Claims Backlog",
+        "calculations": {"total_change": {"from": "Q1 2025", "to": "Q4 2025", "percent": 121.4}},
+    }
+    issues = _check_no_implausible_ungrounded_percentages(narrative, [table])
+    assert len(issues) == 1
+    assert issues[0].severity == "high"
+    assert issues[0].category == "implausible_percentage"
+    assert "414.3" in issues[0].message
+
+
+def test_implausible_percentage_ignores_small_ordinary_figures():
+    narrative = "Retention held steady at 92.4%, while complaints rose 8%."
+    table = {
+        "title": "Claims Backlog",
+        "calculations": {"total_change": {"from": "Q1 2025", "to": "Q4 2025", "percent": 121.4}},
+    }
+    issues = _check_no_implausible_ungrounded_percentages(narrative, [table])
+    assert issues == []
+
+
+def test_implausible_percentage_passes_when_matching_a_reported_change_value():
+    narrative = "The final quarter showed a reported change of +240.1%, consistent with source data."
+    table = {
+        "title": "Claims Backlog",
+        "calculations": {},
+        "reported_change": [{"label": "Q4 2025", "reported": "+240.1%"}],
+    }
+    issues = _check_no_implausible_ungrounded_percentages(narrative, [table])
+    assert issues == []
+
+
+def test_implausible_percentage_skips_reports_with_no_structured_metrics():
+    narrative = "Some unrelated document cites a 900% figure with no structured backing."
+    issues = _check_no_implausible_ungrounded_percentages(narrative, [])
+    assert issues == []
 
 
 def test_citation_consistency_passes_for_known_sources():

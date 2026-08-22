@@ -49,6 +49,45 @@ _TEMPORAL_MONTH_YEAR = re.compile(
     re.IGNORECASE,
 )
 
+# A column whose header names a grouping dimension (an "Indicator" a row
+# describes, a "Region", a "Product") identifies WHAT a row's value is
+# about — it is never itself a metric, and should instead become the title
+# of the metric derived from a sibling value column.
+_IDENTITY_COLUMN_KEYWORDS = (
+    "indicator",
+    "category",
+    "segment",
+    "product",
+    "region",
+    "type",
+    "name",
+    "label",
+    "group",
+    "metric",
+    "class",
+    "line",
+)
+
+# A column whose header names a change/delta ("Change/Rate", "YoY Delta")
+# describes the MOVEMENT of another column's value — it is not an
+# independent metric, and must never have period-over-period/total-change
+# computed on top of it (that would be a percent-change-of-a-percent).
+# Deliberately excludes the bare word "rate" — "Retention Rate (%)" or
+# "Growth Rate" are themselves independently-measured metrics, not a
+# derived description of another column.
+_DERIVED_RATE_COLUMN_KEYWORDS = (
+    "change",
+    "delta",
+    "variance",
+    "yoy",
+    "mom",
+    "qoq",
+    "vs prior",
+    "vs previous",
+)
+
+_SIGNED_CELL = re.compile(r"^[+-]\s*[\d.,]")
+
 
 def _parse_numeric_cell(cell: str) -> float | None:
     cleaned = re.sub(r"[₦$€£,%\s]", "", cell)
@@ -107,6 +146,54 @@ def _normalize_temporal_label(label: str) -> str:
     return without_commas if _looks_temporal(without_commas) else stripped
 
 
+def _is_identity_column(header: str, raw_cells: list[str]) -> bool:
+    """A non-numeric column that names what each row is about (an
+    "Indicator", "Region", "Product"...). Detected by header keyword, and
+    generalized beyond a fixed keyword list via a cardinality heuristic:
+    a grouping dimension's values commonly repeat across rows (unlike free
+    narrative/notes text, where every row tends to differ)."""
+
+    if any(keyword in header.lower() for keyword in _IDENTITY_COLUMN_KEYWORDS):
+        return True
+    values = [cell.strip() for cell in raw_cells if cell.strip()]
+    if len(values) < 2:
+        return False
+    return len(set(values)) < len(values)
+
+
+def _is_derived_rate_column(header: str, raw_cells: list[str]) -> bool:
+    """A numeric-parseable column that describes another column's change
+    rather than being an independent metric — detected by header keyword,
+    or structurally: change/delta values are conventionally written with
+    an explicit sign ("+35.7%"), which a first-class measured value
+    (a price, a count, a rate) essentially never is."""
+
+    if any(keyword in header.lower() for keyword in _DERIVED_RATE_COLUMN_KEYWORDS):
+        return True
+    values = [cell.strip() for cell in raw_cells if cell.strip()]
+    if not values:
+        return False
+    signed = sum(1 for cell in values if _SIGNED_CELL.match(cell))
+    return signed > len(values) / 2
+
+
+def _infer_granularity(rows: list[dict[str, Any]]) -> str:
+    """Coarse time granularity of a series' row labels, used to keep
+    same-titled series at different granularities (e.g. an annual summary
+    vs. a quarterly detail sheet) from being silently substituted for one
+    another during dedup — "more rows" means "finer-grained," not
+    "more authoritative."""
+
+    labels = [row["label"] for row in rows]
+    if labels and all(_TEMPORAL_QUARTER.match(label) for label in labels):
+        return "quarterly"
+    if labels and all(_TEMPORAL_MONTH_YEAR.match(label) for label in labels):
+        return "monthly"
+    if labels and all(_TEMPORAL_YEAR.match(label) for label in labels):
+        return "annual"
+    return "other"
+
+
 @dataclass
 class MetricSeries:
     title: str
@@ -114,6 +201,7 @@ class MetricSeries:
     unit: str
     rows: list[dict[str, Any]] = field(default_factory=list)
     calculations: dict[str, Any] = field(default_factory=dict)
+    reported_change: list[dict[str, str]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -122,6 +210,7 @@ class MetricSeries:
             "unit": self.unit,
             "rows": self.rows,
             "calculations": self.calculations,
+            "reported_change": self.reported_change,
         }
 
 
@@ -189,15 +278,46 @@ def _extract_from_table(rows: list[list[str]], *, source_document: str) -> list[
         2, len(labels) - 1
     )
 
-    series_list: list[MetricSeries] = []
+    # Pass 1: classify each non-label column. An identity column (e.g.
+    # "Indicator") names what a row's value is about and becomes a title
+    # source, never a metric itself. A derived-rate column (e.g.
+    # "Change/Rate") describes another column's movement and must never
+    # become an independent metric with its own period-over-period math
+    # computed on top of already-computed percentages.
+    identity_col: int | None = None
+    value_cols: list[int] = []
+    derived_rate_cols: list[int] = []
 
     for col_index in range(1, len(header)):
         column_header = header[col_index].strip()
         if not column_header:
             continue
+        raw_cells = [row[col_index] for row in data_rows if len(row) > col_index]
+        if len(raw_cells) != len(data_rows):
+            continue
+
+        if all(_parse_numeric_cell(cell) is not None for cell in raw_cells):
+            if _is_derived_rate_column(column_header, raw_cells):
+                derived_rate_cols.append(col_index)
+            else:
+                value_cols.append(col_index)
+        elif identity_col is None and _is_identity_column(column_header, raw_cells):
+            identity_col = col_index
+
+    row_identities: list[str] = []
+    if identity_col is not None:
+        row_identities = [
+            row[identity_col].strip() if len(row) > identity_col else "" for row in data_rows
+        ]
+
+    series_list: list[MetricSeries] = []
+
+    for col_index in value_cols:
+        column_header = header[col_index].strip()
 
         parsed_rows: list[dict[str, Any]] = []
-        for row in data_rows:
+        aligned_identities: list[str] = []
+        for row_i, row in enumerate(data_rows):
             if len(row) <= col_index:
                 continue
             label = _normalize_temporal_label(row[0].strip())
@@ -205,6 +325,7 @@ def _extract_from_table(rows: list[list[str]], *, source_document: str) -> list[
             if not label or value is None:
                 continue
             parsed_rows.append({"label": label, "value": value})
+            aligned_identities.append(row_identities[row_i] if row_identities else "")
 
         # Require every data row to have parsed as numeric in this column —
         # a partially-numeric column is more likely a label/notes column
@@ -214,20 +335,80 @@ def _extract_from_table(rows: list[list[str]], *, source_document: str) -> list[
         if len(parsed_rows) < 2 or len(parsed_rows) != len(data_rows):
             continue
 
-        unit = _infer_unit(column_header, [row[col_index] for row in data_rows if len(row) > col_index])
-        calculations = _compute_calculations(parsed_rows) if temporal else {}
+        raw_value_cells = [row[col_index] for row in data_rows if len(row) > col_index]
+        unit = _infer_unit(column_header, raw_value_cells)
 
-        series_list.append(
-            MetricSeries(
-                title=column_header,
-                source_document=source_document,
-                unit=unit,
-                rows=parsed_rows,
-                calculations=calculations,
-            )
+        reported_change_by_group = _reported_change_by_identity(
+            data_rows=data_rows,
+            derived_rate_cols=derived_rate_cols,
+            row_identities=row_identities,
         )
 
+        if row_identities and len(set(aligned_identities)) > 1:
+            # Multiple distinct indicators share this column — split into
+            # one series per indicator rather than one misleadingly-merged
+            # series spanning unrelated things under a generic title.
+            groups: dict[str, list[dict[str, Any]]] = {}
+            for identity, prow in zip(aligned_identities, parsed_rows):
+                groups.setdefault(identity, []).append(prow)
+            for identity, group_rows in groups.items():
+                if len(group_rows) < 2:
+                    continue
+                group_temporal = temporal and all(_looks_temporal(r["label"]) for r in group_rows)
+                series_list.append(
+                    MetricSeries(
+                        title=identity or column_header,
+                        source_document=source_document,
+                        unit=unit,
+                        rows=group_rows,
+                        calculations=_compute_calculations(group_rows) if group_temporal else {},
+                        reported_change=reported_change_by_group.get(identity, []),
+                    )
+                )
+        else:
+            # No identity column, or a single constant indicator value
+            # across the whole table — use that value as the series title
+            # instead of a generic column header like "Value".
+            title = aligned_identities[0] if aligned_identities and aligned_identities[0] else column_header
+            series_list.append(
+                MetricSeries(
+                    title=title,
+                    source_document=source_document,
+                    unit=unit,
+                    rows=parsed_rows,
+                    calculations=_compute_calculations(parsed_rows) if temporal else {},
+                    reported_change=reported_change_by_group.get(
+                        aligned_identities[0] if aligned_identities else "", []
+                    ),
+                )
+            )
+
     return series_list
+
+
+def _reported_change_by_identity(
+    *,
+    data_rows: list[list[str]],
+    derived_rate_cols: list[int],
+    row_identities: list[str],
+) -> dict[str, list[dict[str, str]]]:
+    """Group each derived-rate column's raw (as-reported) values by the
+    identity value of the row they belong to, so a value series can cite
+    its reported change without any of it being recomputed."""
+
+    by_group: dict[str, list[dict[str, str]]] = {}
+    for rate_col in derived_rate_cols:
+        for row_i, row in enumerate(data_rows):
+            if len(row) <= rate_col:
+                continue
+            raw = row[rate_col].strip()
+            if not raw:
+                continue
+            group_key = row_identities[row_i] if row_identities else ""
+            by_group.setdefault(group_key, []).append(
+                {"label": _normalize_temporal_label(row[0].strip()), "reported": raw}
+            )
+    return by_group
 
 
 def extract_metric_tables(
@@ -237,10 +418,12 @@ def extract_metric_tables(
     deterministic period-over-period / total-change metrics for each.
 
     Returns a list of MetricSeries dicts, deduplicated by normalized title
-    + unit (keeping whichever candidate has the most rows — the most
-    complete time series — since the same table often appears, with
-    overlapping years, across multiple source documents), capped to
-    max_tables to bound prompt size.
+    + unit + granularity (keeping whichever candidate has the most rows —
+    the most complete time series — since the same table often appears,
+    with overlapping years, across multiple source documents), capped to
+    max_tables by materiality (largest total-change first) to bound prompt
+    size without letting an early-encountered, low-significance table
+    crowd out a more materially important one from a later source.
     """
 
     candidates: list[MetricSeries] = []
@@ -254,25 +437,55 @@ def extract_metric_tables(
                 continue
             candidates.extend(_extract_from_table(block.rows, source_document=filename))
 
-    best_by_key: dict[tuple[str, str], MetricSeries] = {}
+    best_by_key: dict[tuple[str, str, str], MetricSeries] = {}
     for series in candidates:
-        key = (series.title.strip().lower(), series.unit)
+        # Granularity is part of the key: a same-titled annual series and
+        # quarterly series describe the same metric at different
+        # resolutions and must never silently substitute for one another
+        # (a 12-row quarterly series is not "more complete" than a 3-row
+        # annual one — it's a different question).
+        key = (series.title.strip().lower(), series.unit, _infer_granularity(series.rows))
         existing = best_by_key.get(key)
         if existing is None or len(series.rows) > len(existing.rows):
             best_by_key[key] = series
 
-    deduped = list(best_by_key.values())[:max_tables]
+    ranked = sorted(best_by_key.values(), key=_materiality_score, reverse=True)
+    deduped = ranked[:max_tables]
     return [series.to_dict() for series in deduped]
+
+
+def _materiality_score(series: MetricSeries) -> float:
+    """How significant a series' computed total change is, used to rank
+    which candidates survive the max_tables cap. A series with no
+    calculable change (e.g. a non-temporal category breakdown) ranks
+    lowest, rather than crowding out a genuinely significant metric purely
+    by virtue of having been encountered first."""
+
+    total = series.calculations.get("total_change") if series.calculations else None
+    percent = total.get("percent") if total else None
+    return abs(percent) if percent is not None else -1.0
 
 
 def format_metrics_for_evidence(tables: list[dict[str, Any]]) -> str:
     """Render extracted metric tables as a clearly-labeled evidence block
     for the report-writing prompt — the same "here is a distinct,
     trustworthy block of extra context" pattern already used for the
-    previous-report comparison block."""
+    previous-report comparison block.
+
+    When the same metric title appears more than once — e.g. an annual
+    summary and a quarterly detail sheet both kept as distinct series (see
+    extract_metric_tables' granularity-aware dedup) — each occurrence is
+    disambiguated with its granularity so the report writer can tell them
+    apart, rather than being left to guess which same-titled figure a
+    given period phrasing ("2023 to 2025") should actually cite."""
 
     if not tables:
         return ""
+
+    title_counts: dict[str, int] = {}
+    for table in tables:
+        key = str(table.get("title") or "").strip().lower()
+        title_counts[key] = title_counts.get(key, 0) + 1
 
     lines = [
         "\n\n### Verified Calculations (computed programmatically — do not "
@@ -281,7 +494,13 @@ def format_metrics_for_evidence(tables: list[dict[str, Any]]) -> str:
 
     for table in tables:
         unit_suffix = f" ({table['unit']})" if table.get("unit") else ""
-        lines.append(f"**{table['title']}{unit_suffix}** — source: {table['source_document']}")
+        display_title = str(table.get("title") or "")
+        key = display_title.strip().lower()
+        if title_counts.get(key, 0) > 1:
+            granularity = _infer_granularity(table.get("rows") or [])
+            if granularity != "other":
+                display_title = f"{display_title} — {granularity.capitalize()}"
+        lines.append(f"**{display_title}{unit_suffix}** — source: {table['source_document']}")
         for row in table["rows"]:
             lines.append(f"- {row['label']}: {row['value']:,}")
 
@@ -304,6 +523,11 @@ def format_metrics_for_evidence(tables: list[dict[str, Any]]) -> str:
                 f"{abs(total['percent'])}% {direction} "
                 f"({total['absolute']:+,})"
             )
+
+        reported_change = table.get("reported_change") or []
+        if reported_change:
+            cited = "; ".join(f"{item['label']}: {item['reported']}" for item in reported_change)
+            lines.append(f"- As-reported change/rate (already a change — do not recompute): {cited}")
 
         lines.append("")
 

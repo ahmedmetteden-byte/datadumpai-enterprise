@@ -378,3 +378,33 @@ def test_extract_docx_unaffected():
     text = DocumentProcessor.extract_text(buffer)
 
     assert "Board meeting minutes for Q3." in text
+
+
+# --- Phase 3: stats-block sum guard for time-indexed rows ---
+
+
+def test_sum_is_omitted_for_a_time_indexed_column():
+    """Regression test for the reported $4,134m bug: summing an
+    annual-summary column (Year rows) produced a fabricated multi-year
+    aggregate ("sum=4,134" from 1200+1367+1567) that an LLM mistook for a
+    reported total. A time-indexed column's sum must never be emitted."""
+
+    df = pd.DataFrame({"Year": [2023, 2024, 2025], "Gross Premium ($m)": [1200, 1367, 1567]})
+    text = DocumentProcessor.extract_text(_xlsx_upload({"Annual Summary": df}))
+
+    assert "4,134" not in text
+    assert "sum=omitted" in text
+    assert "mean=1,378" in text  # mean/min/max remain — only sum is suppressed
+
+
+def test_sum_is_still_emitted_for_a_category_indexed_column():
+    """A non-time-indexed breakdown (e.g. by product line) can have a
+    genuinely meaningful sum — the guard must not suppress it."""
+
+    df = pd.DataFrame(
+        {"Product Line": ["Life", "Non-Life", "Health"], "Gross Premium ($m)": [400, 500, 300]}
+    )
+    text = DocumentProcessor.extract_text(_xlsx_upload({"By Product": df}))
+
+    assert "sum=1,200" in text
+    assert "[auto-computed statistic, not a value stated in the source]" in text
