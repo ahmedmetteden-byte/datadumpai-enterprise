@@ -79,40 +79,49 @@ def _figure_from_visualization_block(block: dict[str, Any]) -> tuple[str, go.Fig
         return title, figure
 
     if block_type == "LINE_CHART":
-        trends = data.get("trends") or []
-        if not trends:
+        points = data.get("points")
+        if points is None:
+            # Legacy shape (chart data persisted before Phase 3 Step 3):
+            # a list of {label, prior, current} pairs whose `label` only
+            # ever captured the SECOND row of each pair — the first
+            # period's own label was never stored at all, which was the
+            # bug (a 3+-period series silently lost its first x-axis
+            # position). Best-effort recovery for already-saved reports:
+            # the first point's VALUE is still present
+            # (trends[0]["prior"]) even though its label was never
+            # captured — left blank rather than guessed, which is still
+            # strictly better than the old behavior of silently plotting
+            # it under the WRONG (second period's) label.
+            trends = data.get("trends") or []
+            if not trends:
+                return None
+            points = [{"label": "", "value": trends[0].get("prior")}] + [
+                {"label": item.get("label", ""), "value": item.get("current")} for item in trends
+            ]
+        if not points:
             return None
-        labels = [item.get("label", "") for item in trends]
-        # Defensive guard (Phase 3 Step 2): a single trend point (one
-        # Previous-vs-Current pair) legitimately has exactly one label —
-        # that's not the bug. The bug is MULTIPLE points collapsing onto
-        # the SAME x-axis position — e.g. a categorical series that was
-        # ever mis-classified as temporal upstream, every row tagged with
-        # the same period — where Plotly would stack every point at one
-        # x tick and still connect them with a line, reading as a real
-        # trend where none exists. Per "a bad chart is worse than no
-        # chart," omit rather than render that specific case.
-        if len(trends) >= 2 and len(set(labels)) < 2:
+        labels = [p.get("label", "") for p in points]
+        values = [float(p.get("value", 0) or 0) for p in points]
+        # Defensive guard (Phase 3 Step 2, still applies to the new
+        # shape): if 2+ points collapse onto the same x-axis label (e.g.
+        # a categorical series ever mis-classified as temporal
+        # upstream), a connected line would read as a real trend where
+        # none exists. Per "a bad chart is worse than no chart," omit
+        # rather than render that. Blank labels (the legacy-shape
+        # recovered first point above) are excluded from this check —
+        # they're a single, deliberate placeholder, not a collapse.
+        real_labels = [l for l in labels if l]
+        if len(real_labels) >= 2 and len(set(real_labels)) < 2:
             return None
-        prior = [float(item.get("prior", 0)) for item in trends]
-        current = [float(item.get("current", 0)) for item in trends]
         figure = go.Figure()
         figure.add_trace(
             go.Scatter(
                 x=labels,
-                y=prior,
+                y=values,
                 mode="lines+markers",
-                name="Previous",
-                line={"color": "#94A3B8", "width": 2},
-            )
-        )
-        figure.add_trace(
-            go.Scatter(
-                x=labels,
-                y=current,
-                mode="lines+markers",
-                name="Current",
+                name=title,
                 line={"color": "#2563EB", "width": 3},
+                marker={"color": "#2563EB"},
             )
         )
         figure.update_layout(
@@ -121,7 +130,6 @@ def _figure_from_visualization_block(block: dict[str, Any]) -> tuple[str, go.Fig
                 xaxis_title=str(block.get("x_label") or "Period"),
                 yaxis_title=str(block.get("y_label") or title),
             ),
-            legend={"orientation": "h", "yanchor": "bottom", "y": 1.02},
         )
         return title, figure
 

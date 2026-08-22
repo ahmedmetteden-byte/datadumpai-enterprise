@@ -98,6 +98,54 @@ def test_numerical_consistency_passes_when_cross_sectional_gap_cited():
     assert _check_numerical_consistency(narrative, [table]) == []
 
 
+# --- Phase 3 Step 3: proximity check — right number, wrong claim ---
+
+
+def test_numerical_consistency_flags_a_figure_cited_for_the_wrong_metric():
+    """Regression test motivated by the Risk Committee Score bug: the
+    figure being present SOMEWHERE in the narrative isn't enough — if it
+    never appears near any word distinctive to the metric it's supposed
+    to belong to, it may have been cited for an entirely different
+    metric that happens to round to the same value."""
+
+    table = {
+        "title": "Operational Resilience Score",
+        "calculations": {"total_change": {"from": "2024", "to": "2025", "percent": 11.1}},
+    }
+    narrative = "The Overall Risk Score improved by 11.1%, a positive development."
+    issues = _check_numerical_consistency(narrative, [table])
+    assert len(issues) == 1
+    assert "may be cited for a different metric" in issues[0].message
+
+
+def test_numerical_consistency_passes_when_figure_cited_near_a_synonym_of_the_title():
+    """Real narrative prose rarely repeats a metric's exact multi-word
+    title verbatim ("Premiums grew 97.4%" rather than "Gross Premium grew
+    97.4%") — the proximity check must tolerate this, matching on any
+    single distinctive word from the title, not the full title string."""
+
+    table = {
+        "title": "Gross Premium",
+        "calculations": {"total_change": {"from": "2023", "to": "2025", "percent": 97.4}},
+    }
+    narrative = "Premiums grew 97.4% overall, reflecting strong demand."
+    assert _check_numerical_consistency(narrative, [table]) == []
+
+
+def test_numerical_consistency_skips_proximity_check_for_an_all_generic_title():
+    """A title made up entirely of generic/stopword terms (e.g. "Total
+    Score") has no distinctive word to check against — skip rather than
+    risk a false positive; the generic title itself is separately flagged
+    by _check_no_generic_metric_titles."""
+
+    table = {
+        "title": "Total Score",
+        "calculations": {"total_change": {"from": "2024", "to": "2025", "percent": 11.1}},
+    }
+    narrative = "Overall performance was 11.1% higher this period."
+    assert _check_numerical_consistency(narrative, [table]) == []
+
+
 # --- Phase 3: safety net for the 414.3%-style bug ---
 
 

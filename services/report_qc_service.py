@@ -103,6 +103,28 @@ def _split_sections(narrative: str) -> dict[str, str]:
     return sections
 
 
+# Words too short, common, or generic to distinguish one metric's title
+# from a DIFFERENT metric's — "score", "rate", "value", "total"... appear
+# across many unrelated metrics (the same underlying concern
+# _check_no_generic_metric_titles below addresses for a whole title).
+_TITLE_STOPWORDS = {
+    "the", "of", "and", "or", "a", "an", "in", "on", "at", "for", "to", "is",
+    "are", "was", "were", "by", "vs", "per",
+    "score", "rate", "rating", "value", "total", "amount", "sum", "count",
+    "figure", "number", "index", "level",
+}
+
+_TITLE_WORD = re.compile(r"[a-zA-Z]{4,}")
+
+
+def _distinctive_title_words(title: str) -> list[str]:
+    """Words from a metric title specific enough to distinguish it from a
+    DIFFERENT metric — short/common/generic words excluded, since they'd
+    make the proximity check below pass for almost any nearby text."""
+
+    return [w for w in _TITLE_WORD.findall(title.lower()) if w not in _TITLE_STOPWORDS]
+
+
 def _check_numerical_consistency(
     narrative: str, metric_tables: list[dict[str, Any]]
 ) -> list[QCIssue]:
@@ -128,6 +150,8 @@ def _check_numerical_consistency(
             # magnitude instead of the deterministically computed one.
             percents.append(float(cross_sectional["gap_percent"]))
 
+        distinctive_words = _distinctive_title_words(title)
+
         for percent in percents:
             formatted = f"{abs(percent):.1f}%"
             if formatted not in narrative:
@@ -142,8 +166,40 @@ def _check_numerical_consistency(
                         location=title,
                     )
                 )
+            elif distinctive_words and not _has_nearby_word(narrative, formatted, distinctive_words):
+                # Phase 3 Step 3: the figure IS present somewhere, but
+                # never near any word distinctive to THIS metric's title
+                # — it may be a coincidental match to a different
+                # metric's figure that happens to round to the same
+                # value (the "right number, wrong claim" case a pure
+                # substring search can't catch). Skipped entirely when a
+                # title has no distinctive word at all (e.g. an
+                # already-generic title, flagged separately by
+                # _check_no_generic_metric_titles) rather than risk a
+                # false positive against a title too short to check.
+                issues.append(
+                    QCIssue(
+                        severity="medium",
+                        category="numerical_consistency",
+                        message=(
+                            f"The figure {formatted} appears in the narrative, but not near any "
+                            f"mention of {title!r} — it may be cited for a different metric."
+                        ),
+                        location=title,
+                    )
+                )
 
     return issues
+
+
+def _has_nearby_word(narrative: str, needle: str, words: list[str], window: int = 300) -> bool:
+    for match in re.finditer(re.escape(needle), narrative):
+        start = max(0, match.start() - window)
+        end = min(len(narrative), match.end() + window)
+        context = narrative[start:end].lower()
+        if any(word in context for word in words):
+            return True
+    return False
 
 
 _NARRATIVE_PERCENT = re.compile(r"(-?\d+(?:\.\d+)?)\s*%")

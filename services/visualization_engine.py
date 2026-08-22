@@ -804,7 +804,22 @@ def _kpi_items(report_data: ReportData, text: str = "") -> list[dict[str, Any]]:
             }
         )
     if real_items:
-        return real_items[:6]
+        # Unit-consistency gate (Phase 3 Step 3): report_plan_service.py's
+        # materiality ranking selects these purely by percent-change
+        # magnitude, with no unit awareness — a $-denominated metric and
+        # a %-denominated metric can both legitimately rank in the top
+        # slots. Without this gate they'd land on one shared-axis KPI
+        # chart together (e.g. "Total Gross Premium" at $1,567m next to
+        # "Total Loss Ratio" at 77.9%). Reuses the exact same
+        # group-by-unit-keep-the-largest-group safeguard
+        # _extract_finding_kpis() above already applies to its own
+        # (legacy, regex-parsed) candidates — this is the one place that
+        # safeguard was missing from the preferred, deterministic path.
+        unit_groups: dict[str, list[dict[str, Any]]] = {}
+        for item in real_items:
+            unit_groups.setdefault(item["unit"], []).append(item)
+        winning_unit_items = max(unit_groups.values(), key=len)
+        return winning_unit_items[:6]
 
     items: list[dict[str, Any]] = []
 

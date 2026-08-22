@@ -49,21 +49,29 @@ _TEMPORAL_MONTH_YEAR = re.compile(
     re.IGNORECASE,
 )
 
-# A column whose header names a grouping dimension (an "Indicator" a row
-# describes, a "Region", a "Product") identifies WHAT a row's value is
-# about — it is never itself a metric, and should instead become the title
-# of the metric derived from a sibling value column.
-_IDENTITY_COLUMN_KEYWORDS = (
-    "indicator",
+# A column whose header names something OTHER than a value identifies
+# WHAT a row's value is about, rather than being a metric itself. But
+# "identifies what a row is about" splits into two semantically opposite
+# cases, both handled by _is_identity_column() below but requiring
+# different downstream treatment (Phase 3 Step 3, _identity_column_kind):
+#
+# - DIMENSION: the column's values are INSTANCES of one shared,
+#   externally-named metric (Region="West", Channel="Digital") — a
+#   sibling value column names the metric; the identity column names
+#   WHICH population/segment/product it was measured for. Comparing two
+#   instances (highest/lowest/gap) is valid: they measure the same thing.
+# - METRIC IDENTITY: the column's values ARE distinct metric identities
+#   themselves ("Operational Resilience Score", "Overall Risk Score") —
+#   there is no single shared metric; each row is its own, independent,
+#   non-comparable measurement. Comparing two rows as "highest/lowest" is
+#   as invalid as claiming one caused a change in the other — they don't
+#   measure the same thing at all.
+_DIMENSION_KEYWORDS = (
     "category",
     "segment",
     "product",
     "region",
     "type",
-    "name",
-    "label",
-    "group",
-    "metric",
     "class",
     "line",
     "channel",
@@ -71,7 +79,15 @@ _IDENTITY_COLUMN_KEYWORDS = (
     "unit",
     "department",
     "risk",
+    "group",
 )
+_METRIC_IDENTITY_KEYWORDS = (
+    "indicator",
+    "metric",
+    "name",
+    "label",
+)
+_IDENTITY_COLUMN_KEYWORDS = _DIMENSION_KEYWORDS + _METRIC_IDENTITY_KEYWORDS
 
 # A column whose header names a change/delta ("Change/Rate", "YoY Delta")
 # describes the MOVEMENT of another column's value — it is not an
@@ -121,6 +137,15 @@ def _infer_unit(header: str, sample_cells: list[str]) -> str:
 
     if "%" in haystack:
         return "%"
+
+    # Checked last, only after currency/percent detection fails, so it
+    # never overrides an existing correct unit (e.g. "Retention Rate (%)"
+    # still correctly resolves to "%" above, never "score"). A purely
+    # dimensionless "score"/"rating" column (e.g. a Risk Committee
+    # scorecard) currently has no unit at all otherwise — a labeling
+    # clarity nicety, not a correctness fix.
+    if re.search(r"\bscore\b|\brating\b", haystack, re.IGNORECASE):
+        return "score"
 
     return ""
 
@@ -173,6 +198,25 @@ def _is_identity_column(header: str, raw_cells: list[str]) -> bool:
     if distinct < len(values):
         return True
     return len(values) >= 3 and distinct <= 8
+
+
+def _identity_column_kind(header: str) -> str:
+    """Sub-classifies an already-detected identity column as "dimension"
+    (values are instances of one shared, externally-named metric) or
+    "metric_identity" (values ARE distinct, non-comparable metric
+    identities — see the _DIMENSION_KEYWORDS/_METRIC_IDENTITY_KEYWORDS
+    comment above). A metric-identity keyword match takes priority since
+    it is the narrower, more specific signal; the structural (non-
+    keyword) cardinality fallback in _is_identity_column() defaults to
+    "dimension" here — real-world tables where a column holds genuinely
+    different metric names essentially always use one of the
+    metric-identity header words, so the ambiguous, keyword-free case
+    defaults to the already-proven-correct dimension behavior."""
+
+    header_lower = header.lower()
+    if any(keyword in header_lower for keyword in _METRIC_IDENTITY_KEYWORDS):
+        return "metric_identity"
+    return "dimension"
 
 
 def _is_derived_rate_column(header: str, raw_cells: list[str]) -> bool:
@@ -413,6 +457,9 @@ def _extract_from_table(rows: list[list[str]], *, source_document: str) -> list[
     # with neither a recognizable time nor category axis.
     label_col = time_col if time_col is not None else (identity_col if identity_col is not None else 0)
     temporal = time_col is not None
+    identity_kind = (
+        _identity_column_kind(header[identity_col].strip()) if identity_col is not None else "dimension"
+    )
 
     value_cols = [
         i
@@ -511,6 +558,38 @@ def _extract_from_table(rows: list[list[str]], *, source_document: str) -> list[
                     metric_group=column_header,
                 )
             )
+        elif identity_kind == "metric_identity" and row_identities and len(set(aligned_identities)) > 1:
+            # No time column, AND the identity column's values are
+            # themselves distinct metric identities (e.g. "Metric":
+            # "Operational Resilience Score", "Overall Risk Score") —
+            # NOT instances of one shared, comparable metric. Each row is
+            # its own independent, non-comparable single observation.
+            # Never compute cross-sectional stats here: "highest/lowest/
+            # gap" between two genuinely different metrics is exactly as
+            # invalid as claiming a change between them — they don't
+            # measure the same thing at all.
+            for identity, prow in zip(aligned_identities, parsed_rows):
+                # The value column's own header is typically generic
+                # ("Value") in this shape — the score/rating language
+                # lives in the metric's own name instead (e.g.
+                # "Operational Resilience Score"), so _infer_unit()'s
+                # header/cell check won't see it. A direct check here is
+                # more targeted than widening _infer_unit()'s signature
+                # for this one narrow case.
+                row_unit = unit or ("score" if re.search(r"\bscore\b|\brating\b", identity, re.IGNORECASE) else "")
+                series_list.append(
+                    MetricSeries(
+                        title=identity or column_header,
+                        source_document=source_document,
+                        unit=row_unit,
+                        rows=[prow],
+                        calculations={},
+                        reported_change=reported_change_by_group.get(identity, []),
+                        dimension_type="single_observation",
+                        category_value=None,
+                        metric_group=None,
+                    )
+                )
         else:
             # No time column anywhere in this table — a purely categorical
             # comparison (e.g. Channel x Premium Share). Never compute a
@@ -664,6 +743,12 @@ def format_metrics_for_evidence(tables: list[dict[str, Any]]) -> str:
                 "_(categorical comparison across "
                 f"{', '.join(row['label'] for row in table['rows'])} — not a time series; "
                 "do not describe these values as a change/increase/decrease.)_"
+            )
+        elif dimension_type == "single_observation":
+            lines.append(
+                "_(single observation — no prior period or comparable baseline exists; "
+                "describe as a fact, never as an improvement, increase, decrease, or other "
+                "directional change.)_"
             )
 
         for row in table["rows"]:

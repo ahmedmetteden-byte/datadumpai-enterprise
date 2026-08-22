@@ -132,12 +132,69 @@ def test_line_chart_uses_block_provided_axis_labels():
     assert figure.layout.yaxis.title.text == "Gross Premium (₦ billion)"
 
 
+def test_line_chart_three_period_series_shows_every_period_on_the_x_axis():
+    """Regression test for the confirmed chart x-axis bug: a 3-period
+    series must show ALL THREE periods as their own x-axis positions,
+    with each point plotted under its own correct label — not the old
+    "Previous vs Current" pairwise design, which silently dropped the
+    first period (2023) from the axis entirely and plotted its value
+    under the SECOND period's label instead."""
+
+    block = {
+        "type": "LINE_CHART",
+        "title": "Gross Premium",
+        "data": {
+            "points": [
+                {"label": "2023", "value": 1200.0},
+                {"label": "2024", "value": 1367.0},
+                {"label": "2025", "value": 1567.0},
+            ]
+        },
+        "x_label": "Period",
+        "y_label": "Gross Premium ($m)",
+    }
+    _title, figure = _figure_from_visualization_block(block)
+
+    assert len(figure.data) == 1
+    trace = figure.data[0]
+    assert list(trace.x) == ["2023", "2024", "2025"]
+    assert list(trace.y) == [1200.0, 1367.0, 1567.0]
+
+
+def test_line_chart_legacy_trends_shape_still_renders_via_fallback():
+    """Already-persisted report chart data (saved before this fix) used
+    the old {label, prior, current} pairwise shape. The renderer must
+    still handle it gracefully — recovering the first point's value
+    (previously silently mislabeled under the second period) with a
+    blank label rather than a wrong one, and every subsequent point
+    correctly labeled and valued."""
+
+    block = {
+        "type": "LINE_CHART",
+        "title": "Gross Premium",
+        "data": {
+            "trends": [
+                {"label": "2024", "prior": 1200.0, "current": 1367.0},
+                {"label": "2025", "prior": 1367.0, "current": 1567.0},
+            ]
+        },
+        "x_label": "Period",
+        "y_label": "Gross Premium ($m)",
+    }
+    _title, figure = _figure_from_visualization_block(block)
+
+    trace = figure.data[0]
+    assert list(trace.x) == ["", "2024", "2025"]
+    assert list(trace.y) == [1200.0, 1367.0, 1567.0]
+
+
 def test_line_chart_omits_when_multiple_points_collapse_to_one_x_position():
-    """Phase 3 Step 2 defensive guard: if every trend point were ever
-    tagged with the same period label (e.g. a categorical series
-    mis-classified as temporal upstream), rendering a connected line
-    across a single collapsed x-axis position would read as a real trend
-    where none exists — omit the chart rather than render that."""
+    """Phase 3 Step 2 defensive guard (exercised here via the legacy
+    fallback path): if every trend point were ever tagged with the same
+    period label (e.g. a categorical series mis-classified as temporal
+    upstream), rendering a connected line across a single collapsed
+    x-axis position would read as a real trend where none exists — omit
+    the chart rather than render that."""
 
     block = {
         "type": "LINE_CHART",

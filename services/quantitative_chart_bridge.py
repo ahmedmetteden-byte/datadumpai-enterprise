@@ -31,10 +31,15 @@ def metric_series_to_chart_data(series: dict[str, Any]) -> dict[str, Any] | None
     VisualizationBlock-shaped chart data.
 
     Temporal series (has period_over_period calculations) become a
-    LINE_CHART: each adjacent row pair becomes one {label, prior, current}
-    trend point, using the exact same pairing quantitative_analysis_service
-    used to compute period_over_period — so the chart and the "Verified
-    Calculations" evidence block can never disagree.
+    LINE_CHART: one continuous point per row — {label, value} for every
+    row in the series, in order — so a 3+-period series gets one line
+    with every period as its own x-axis position. (Phase 3 Step 3: this
+    replaces an earlier "Previous vs Current" pairwise design that only
+    ever labeled a trend point from zip(rows, rows[1:])'s SECOND row,
+    silently dropping the first period from the x-axis entirely for any
+    series with 3+ rows — confirmed by direct reproduction: a 2023/2024/
+    2025 series rendered with only "2024"/"2025" on the axis, 2023's
+    value plotted one position to the right of where it belonged.)
 
     Categorical (non-temporal) series become a BAR_CHART, one bar per row.
 
@@ -48,15 +53,10 @@ def metric_series_to_chart_data(series: dict[str, Any]) -> dict[str, Any] | None
     is_temporal = bool((series.get("calculations") or {}).get("period_over_period"))
 
     if is_temporal:
-        trends = [
-            {
-                "label": str(current.get("label", "")),
-                "prior": prior.get("value"),
-                "current": current.get("value"),
-            }
-            for prior, current in zip(rows, rows[1:])
+        points = [
+            {"label": str(row.get("label", "")), "value": row.get("value")} for row in rows
         ]
-        return {"type": "LINE_CHART", "data": {"trends": trends}}
+        return {"type": "LINE_CHART", "data": {"points": points}}
 
     bar_series = [
         {"label": str(row.get("label", "")), "value": row.get("value")} for row in rows

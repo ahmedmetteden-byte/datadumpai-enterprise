@@ -333,6 +333,56 @@ def test_kpi_cards_use_real_dashboard_selection_data_when_available():
     assert kpi_blocks[0]["y_label"] == "Latest Reported Value"
 
 
+def test_kpi_cards_never_mixes_units_from_dashboard_selection():
+    """Regression test for the reported mixed-unit chart bug: when
+    dashboard_selection ranks a $-denominated metric alongside a
+    %-denominated one (report_plan_service's materiality ranking is
+    unit-agnostic by design), the KPI_CARDS block must only ever include
+    the largest same-unit group — never combine $ and % on one shared
+    axis."""
+
+    report_data = ReportData(
+        report_type="Executive Summary",
+        title="Executive Summary — Custom / Ad hoc",
+        narrative=EXECUTIVE_SUMMARY_FINDINGS_DOCUMENT,
+        metadata={
+            "dashboard_selection": {
+                "kpis": [
+                    {"label": "Total Claims Incurred", "value": 940.0, "unit": "$ million",
+                     "total_change_percent": 20.5, "direction": "increase"},
+                    {"label": "Total Gross Premium", "value": 1567.0, "unit": "$ million",
+                     "total_change_percent": 30.6, "direction": "increase"},
+                    {"label": "Total Operating Expense", "value": 245.0, "unit": "$ million",
+                     "total_change_percent": 16.7, "direction": "increase"},
+                    {"label": "Total Loss Ratio", "value": 77.9, "unit": "%",
+                     "total_change_percent": 60.0, "direction": "increase"},
+                ],
+                "chart_requirements": [],
+            }
+        },
+    )
+    enriched = apply_visualizations(
+        report_data,
+        user_report_type="Executive Summary",
+        document_text=EXECUTIVE_SUMMARY_FINDINGS_DOCUMENT,
+        include_charts=True,
+        force_generate=True,
+    )
+
+    kpi_blocks = [
+        block for block in enriched.charts["visualizations"]
+        if block["type"] == VisualizationStrategy.KPI_CARDS.value
+    ]
+    assert kpi_blocks, "expected a KPI_CARDS block"
+
+    items = kpi_blocks[0]["data"]["items"]
+    units = {item.get("unit") for item in items}
+    assert len(units) == 1
+    labels = {item["label"] for item in items}
+    assert labels == {"Total Claims Incurred", "Total Gross Premium", "Total Operating Expense"}
+    assert "Total Loss Ratio" not in labels
+
+
 def test_currency_pattern_does_not_match_across_word_boundaries():
     """"Microsoft 365" (digits immediately followed by a word starting
     with "m") must not be treated as a "365 million"-style currency

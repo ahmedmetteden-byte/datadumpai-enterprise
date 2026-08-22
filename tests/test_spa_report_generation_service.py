@@ -821,6 +821,94 @@ def test_generate_markdown_includes_causal_language_guardrail():
     assert "warrants investigation into whether service issues" in prompt
 
 
+def test_generate_markdown_includes_single_observation_guardrail():
+    """Phase 3 Step 3: the prompt must explicitly warn against describing
+    a single, baseline-less observation as an "improvement" — the actual
+    root-cause fix for the reported Direct Digital retention bug, since
+    the deterministic layer's cross-sectional framing was already correct
+    but nothing banned "improve"/"improvement" specifically for a lone
+    figure with no comparator at all."""
+
+    svc = SpaReportGenerationService()
+    client, completions = _fake_openai_client()
+    svc._client = client
+    sources = [{"filename": "a.pdf", "excerpt": "Some evidence."}]
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_name="Executive Summary",
+        sources=sources,
+    )
+    prompt = completions.calls[0]["messages"][1]["content"]
+
+    assert "'improved', 'deteriorated', 'gotten better', or 'gotten worse'" in prompt
+    assert "Direct Digital retention was 86% in 2025" in prompt
+    assert "single observation" in prompt
+
+
+def test_generate_markdown_warns_against_conflating_different_metrics():
+    """Regression test for the reported Risk Committee Score bug: the
+    prompt's dimension-framing guardrail must explicitly cover two
+    DIFFERENT metrics sharing a table (not just two categories of one
+    metric), since the deterministic layer's fix operates upstream of
+    the raw source text the model can still see."""
+
+    svc = SpaReportGenerationService()
+    client, completions = _fake_openai_client()
+    svc._client = client
+    sources = [{"filename": "a.pdf", "excerpt": "Some evidence."}]
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_name="Executive Summary",
+        sources=sources,
+    )
+    prompt = completions.calls[0]["messages"][1]["content"]
+
+    assert "Operational Resilience Score" in prompt and "Overall Risk Score" in prompt
+    assert "not comparable at all, not even as a cross-sectional" in prompt
+
+
+def test_generate_markdown_basis_tag_includes_observation_value():
+    svc = SpaReportGenerationService()
+    client, completions = _fake_openai_client()
+    svc._client = client
+    sources = [{"filename": "a.pdf", "excerpt": "Some evidence."}]
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_name="Executive Summary",
+        sources=sources,
+    )
+    prompt = completions.calls[0]["messages"][1]["content"]
+
+    assert "`Observation`" in prompt
+    assert "claims grew faster than premium" in prompt
+    assert "EXACTLY one of these four literal phrases" in prompt
+
+
+def test_generate_markdown_opportunities_section_warns_against_unsupported_improvement():
+    svc = SpaReportGenerationService()
+    client, completions = _fake_openai_client()
+    svc._client = client
+    sources = [{"filename": "a.pdf", "excerpt": "Some evidence."}]
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_name="Executive Summary",
+        sources=sources,
+    )
+    prompt = completions.calls[0]["messages"][1]["content"]
+    opportunities_section = prompt.split("## Opportunities")[1].split("## Strategic Recommendations")[0]
+
+    assert "Direct Digital recorded the highest reported retention rate" in opportunities_section
+    assert "never 'Direct Digital retention improved to 86%'" in opportunities_section
+
+
 def test_generate_markdown_grounds_risks_and_opportunities_with_basis_tag():
     svc = SpaReportGenerationService()
     client, completions = _fake_openai_client()

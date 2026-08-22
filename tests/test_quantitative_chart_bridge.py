@@ -44,13 +44,20 @@ MARKET_SHARE_SERIES = {
 
 
 def test_metric_series_to_chart_data_temporal_series_becomes_line_chart():
+    """Phase 3 Step 3: every row becomes its own continuous point — no
+    more "Previous vs Current" pairwise trends, which silently dropped
+    the first row's own label for any 3+-row series (the confirmed x-axis
+    bug: a 2023/2024/2025 series rendered with only 2024/2025 on the
+    axis)."""
+
     chart_data = metric_series_to_chart_data(PREMIUM_SERIES)
 
     assert chart_data["type"] == "LINE_CHART"
-    trends = chart_data["data"]["trends"]
-    assert trends == [
-        {"label": "2023", "prior": 789.6, "current": 1043.1},
-        {"label": "2024", "prior": 1043.1, "current": 1558.7},
+    points = chart_data["data"]["points"]
+    assert points == [
+        {"label": "2022", "value": 789.6},
+        {"label": "2023", "value": 1043.1},
+        {"label": "2024", "value": 1558.7},
     ]
 
 
@@ -82,7 +89,8 @@ def test_select_chart_candidates_only_builds_charts_for_requirements():
     assert block.unit == "₦ billion"
     assert block.x_label == "Period"
     assert block.y_label == "Gross Premium (₦ billion)"
-    assert block.data["trends"][0]["current"] == 1043.1
+    assert [p["label"] for p in block.data["points"]] == ["2022", "2023", "2024"]
+    assert block.data["points"][0]["value"] == 789.6
 
 
 def test_select_chart_candidates_skips_requirement_with_no_matching_table():

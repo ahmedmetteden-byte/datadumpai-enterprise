@@ -774,3 +774,119 @@ def test_generic_header_still_titled_from_identity_value_alone():
     }
     tables = extract_metric_tables([source])
     assert tables[0]["title"] == "Claims Backlog"
+
+
+# --- Phase 3 Step 3: metric identity vs. dimension distinction ---
+
+
+def test_different_metrics_in_one_table_never_get_a_cross_sectional_gap():
+    """Regression test for the reported Risk Committee Score bug: a
+    "Metric | Value" table with no time column must never treat distinct
+    metric NAMES as if they were dimensional instances of one metric —
+    each must become its own independent single-observation series, and
+    no cross_sectional (highest/lowest/gap) comparison may ever be
+    computed between them."""
+
+    source = {
+        "filename": "risk_committee.xlsx",
+        "excerpt": (
+            "| Metric | Value |\n"
+            "|--------|------:|\n"
+            "| Operational Resilience Score | 81 |\n"
+            "| Overall Risk Score | 72 |\n"
+            "| Compliance Rating | 88 |\n"
+            "| Governance Score | 79 |\n"
+        ),
+    }
+    tables = extract_metric_tables([source], max_tables=10)
+
+    titles = {t["title"] for t in tables}
+    assert titles == {
+        "Operational Resilience Score",
+        "Overall Risk Score",
+        "Compliance Rating",
+        "Governance Score",
+    }
+    assert "Value" not in titles
+
+    for table in tables:
+        assert table["dimension_type"] == "single_observation"
+        assert table["calculations"] == {}
+        assert "cross_sectional" not in table["calculations"]
+        assert len(table["rows"]) == 1
+
+    resilience = next(t for t in tables if t["title"] == "Operational Resilience Score")
+    assert resilience["rows"][0]["value"] == 81.0
+    assert resilience["unit"] == "score"
+
+    block = format_metrics_for_evidence(tables)
+    assert "single observation" in block
+    assert "Highest:" not in block
+    assert "gap of" not in block
+    # The exact reported bogus figure must never appear.
+    assert "12.5%" not in block
+
+
+def test_metric_identity_column_with_a_single_distinct_value_is_unaffected():
+    """A constant metric-identity value (Step 1's "Claims Backlog" case,
+    paired with a time column) must be completely unaffected by the new
+    metric-identity branch — that branch only fires when there is no
+    time column AND the identity column has multiple distinct values."""
+
+    source = {
+        "filename": "risk_ops.xlsx",
+        "excerpt": (
+            "| Period | Indicator | Value |\n"
+            "|--------|-----------|------:|\n"
+            "| Q1 2025 | Claims Backlog | 14 |\n"
+            "| Q2 2025 | Claims Backlog | 19 |\n"
+            "| Q3 2025 | Claims Backlog | 27 |\n"
+            "| Q4 2025 | Claims Backlog | 31 |\n"
+        ),
+    }
+    tables = extract_metric_tables([source])
+    assert tables[0]["title"] == "Claims Backlog"
+    assert tables[0]["dimension_type"] == "temporal"
+    assert tables[0]["calculations"]["total_change"]["percent"] == 121.4
+
+
+def test_dimension_column_still_gets_cross_sectional_treatment():
+    """Regression test: "Channel" (a genuine dimension keyword, not a
+    metric-identity keyword) must still route through the existing,
+    correct cross-sectional path — Step 3's new branch must not
+    over-trigger on legitimate dimensional comparisons."""
+
+    source = {
+        "filename": "channel.xlsx",
+        "excerpt": (
+            "| Channel | Premium Share (%) |\n"
+            "|---------|-------------------:|\n"
+            "| Digital | 38 |\n"
+            "| Partners | 7 |\n"
+        ),
+    }
+    tables = extract_metric_tables([source])
+    assert tables[0]["title"] == "Premium Share (%)"
+    assert tables[0]["dimension_type"] == "categorical"
+    assert tables[0]["calculations"]["cross_sectional"]["gap_percent"] == 81.6
+
+
+def test_indicator_column_with_multiple_distinct_values_and_no_time_splits_independently():
+    """"Indicator" is a metric-identity keyword too — a table listing
+    several different indicators' single latest values (no time column)
+    must split the same way "Metric" does, not be cross-compared."""
+
+    source = {
+        "filename": "indicators.xlsx",
+        "excerpt": (
+            "| Indicator | Value |\n"
+            "|-----------|------:|\n"
+            "| Customer Satisfaction Index | 74 |\n"
+            "| Employee Engagement Index | 68 |\n"
+        ),
+    }
+    tables = extract_metric_tables([source])
+    titles = {t["title"] for t in tables}
+    assert titles == {"Customer Satisfaction Index", "Employee Engagement Index"}
+    for table in tables:
+        assert table["dimension_type"] == "single_observation"

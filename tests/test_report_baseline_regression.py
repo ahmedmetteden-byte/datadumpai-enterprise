@@ -193,7 +193,14 @@ def test_baseline_metric_derived_chart_survives_markdown_round_trip_and_exports(
     assert block["type"] == "LINE_CHART"
     assert block["x_label"] == "Period"
     assert block["y_label"] not in ("Value", "y", "")
-    assert block["data"]["trends"][-1]["current"] == 1558.7
+    # Phase 3 Step 3: LINE_CHART data is now one continuous point per row
+    # (not "Previous vs Current" pairs, which silently dropped the first
+    # period's own label for any 3+-row series) — every period must be
+    # its own x-axis position, with the correct value attached to it.
+    points = block["data"]["points"]
+    assert points[-1]["value"] == 1558.7
+    assert len(points) >= 3
+    assert len({p["label"] for p in points}) == len(points)
 
     is_chart_export_available.cache_clear()
     if is_chart_export_available():
