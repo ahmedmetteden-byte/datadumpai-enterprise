@@ -119,6 +119,14 @@ def _check_numerical_consistency(
         for change in calculations.get("period_over_period") or []:
             if change.get("percent") is not None:
                 percents.append(float(change["percent"]))
+        cross_sectional = calculations.get("cross_sectional") or {}
+        if cross_sectional.get("gap_percent") is not None:
+            # Phase 3 Step 2: a categorical finding's gap figure needs the
+            # same citation check as a temporal total_change — confirmed
+            # via real-pipeline testing that the model can cite a correct
+            # highest/lowest comparison while still inventing its own gap
+            # magnitude instead of the deterministically computed one.
+            percents.append(float(cross_sectional["gap_percent"]))
 
         for percent in percents:
             formatted = f"{abs(percent):.1f}%"
@@ -197,6 +205,37 @@ def _check_no_implausible_ungrounded_percentages(
             )
         )
 
+    return issues
+
+
+_GENERIC_METRIC_TITLES = {"total", "amount", "value", "sum", "count", "figure", "number"}
+
+
+def _check_no_generic_metric_titles(metric_tables: list[dict[str, Any]]) -> list[QCIssue]:
+    """A metric titled with a single generic word (e.g. a spreadsheet
+    column literally headed "Total", with no sibling identity column to
+    disambiguate it — quantitative_analysis_service.py only composes a
+    specific title when one is available) is confusing on its own as a
+    chart title or citation. Flagged (low severity — a labeling
+    nicety, not a correctness bug) rather than silently charted or
+    guessed at, per "a bad chart is worse than no chart.\""""
+
+    issues: list[QCIssue] = []
+    for table in metric_tables:
+        title = str(table.get("title") or "").strip()
+        if title.lower() in _GENERIC_METRIC_TITLES:
+            issues.append(
+                QCIssue(
+                    severity="low",
+                    category="generic_metric_title",
+                    message=(
+                        f"Metric titled {title!r} has no more specific name available in the "
+                        "source table — consider whether an identity/category column (e.g. "
+                        "'Product', 'Region') could disambiguate it."
+                    ),
+                    location=title,
+                )
+            )
     return issues
 
 
@@ -397,6 +436,28 @@ def _check_period_correctness(
     if "## Changes Since Last Report" not in narrative:
         return issues
 
+    if period_id == "custom":
+        # Phase 3 Step 2 safety net: SpaReportGenerationService._find_
+        # previous_report() never auto-matches a previous report for an
+        # ad-hoc/custom-period request (every ad-hoc report shares the
+        # single generic period_id "custom", with no real date-range to
+        # tell two unrelated ad-hoc requests apart) — this section should
+        # be structurally impossible here. Flag high severity if it ever
+        # appears anyway, since a comparison against an unrelated prior
+        # ad-hoc report is exactly the failure this fix exists to prevent.
+        issues.append(
+            QCIssue(
+                severity="high",
+                category="period_correctness",
+                message=(
+                    "Narrative includes a 'Changes Since Last Report' section for a Custom / "
+                    "Ad hoc report — ad-hoc reports have no reliable way to confirm a previous "
+                    "report covers the same scope, so this comparison should never be offered."
+                ),
+            )
+        )
+        return issues
+
     if not previous_report:
         issues.append(
             QCIssue(
@@ -578,6 +639,7 @@ def run_qc_pass(
     issues: list[QCIssue] = []
     issues.extend(_check_numerical_consistency(narrative, metric_tables or []))
     issues.extend(_check_no_implausible_ungrounded_percentages(narrative, metric_tables or []))
+    issues.extend(_check_no_generic_metric_titles(metric_tables or []))
     issues.extend(_check_citation_consistency(narrative, source_documents))
     issues.extend(_check_chart_consistency(chart_requirements or [], visualizations or []))
     issues.extend(_check_period_correctness(narrative, previous_report, period_id))

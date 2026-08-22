@@ -98,8 +98,10 @@ def test_skips_truncated_table_with_a_short_row():
 
 def test_non_temporal_labels_produce_rows_without_fabricated_period_deltas():
     """A category-comparison table (not a time series) must not get a
-    'period-over-period' framing that implies a time relationship between
-    unrelated rows."""
+    'period-over-period'/'total_change' framing that implies a time
+    relationship between unrelated rows — Phase 3 Step 2: it gets
+    deterministic cross-sectional stats (highest/lowest/gap) instead,
+    never a fabricated "change"."""
 
     source = {
         "filename": "report.pdf",
@@ -111,8 +113,13 @@ def test_non_temporal_labels_produce_rows_without_fabricated_period_deltas():
         ),
     }
     tables = extract_metric_tables([source])
-    assert tables[0]["calculations"] == {}
     assert [row["value"] for row in tables[0]["rows"]] == [32.0, 68.0]
+    calc = tables[0]["calculations"]
+    assert "total_change" not in calc
+    assert "period_over_period" not in calc
+    assert calc["cross_sectional"]["highest"] == {"label": "Non-Life", "value": 68.0}
+    assert calc["cross_sectional"]["lowest"] == {"label": "Life", "value": 32.0}
+    assert tables[0]["dimension_type"] == "categorical"
 
 
 def test_skips_a_table_whose_header_row_is_actually_a_data_row():
@@ -533,4 +540,237 @@ def test_non_temporal_category_table_without_identity_column_still_works():
     }
     tables = extract_metric_tables([source])
     assert tables[0]["title"] == "Market Share"
-    assert tables[0]["calculations"] == {}
+    assert "total_change" not in tables[0]["calculations"]
+    assert "period_over_period" not in tables[0]["calculations"]
+
+
+# --- Phase 3 Step 2: position-independent time-vs-category classification ---
+
+
+def test_region_first_table_produces_the_same_result_as_time_first():
+    """Regression test for the confirmed Region-first bug: a table ordered
+    Region-then-Year must classify Year as the time axis and Region as the
+    category axis regardless of column position, producing the identical
+    per-region result as the Year-first ordering of the same data."""
+
+    year_first = {
+        "filename": "retention.xlsx",
+        "excerpt": (
+            "| Year | Region | Retention Rate (%) |\n"
+            "|------|--------|--------------------:|\n"
+            "| 2023 | West | 70.0 |\n"
+            "| 2024 | West | 65.0 |\n"
+            "| 2025 | West | 61.0 |\n"
+        ),
+    }
+    region_first = {
+        "filename": "retention.xlsx",
+        "excerpt": (
+            "| Region | Year | Retention Rate (%) |\n"
+            "|--------|------|--------------------:|\n"
+            "| West | 2023 | 70.0 |\n"
+            "| West | 2024 | 65.0 |\n"
+            "| West | 2025 | 61.0 |\n"
+        ),
+    }
+
+    year_first_tables = extract_metric_tables([year_first])
+    region_first_tables = extract_metric_tables([region_first])
+
+    assert len(year_first_tables) == 1
+    assert len(region_first_tables) == 1
+
+    yf, rf = year_first_tables[0], region_first_tables[0]
+    assert yf["title"] == rf["title"] == "West Retention Rate (%)"
+    assert [r["value"] for r in yf["rows"]] == [r["value"] for r in rf["rows"]] == [70.0, 65.0, 61.0]
+    assert yf["calculations"]["total_change"]["percent"] == rf["calculations"]["total_change"]["percent"]
+    assert rf["calculations"]["total_change"]["percent"] == -12.9
+    assert rf["category_value"] == "West"
+
+
+def test_region_first_multi_region_splits_correctly_per_region():
+    source = {
+        "filename": "retention.xlsx",
+        "excerpt": (
+            "| Region | Year | Retention Rate (%) |\n"
+            "|--------|------|--------------------:|\n"
+            "| North | 2023 | 93.0 |\n"
+            "| North | 2024 | 92.4 |\n"
+            "| West | 2023 | 70.0 |\n"
+            "| West | 2024 | 61.0 |\n"
+        ),
+    }
+    tables = extract_metric_tables([source])
+    titles = {t["title"] for t in tables}
+    assert titles == {"North Retention Rate (%)", "West Retention Rate (%)"}
+
+    west = next(t for t in tables if t["title"] == "West Retention Rate (%)")
+    assert west["calculations"]["total_change"]["percent"] == round((61.0 - 70.0) / 70.0 * 100, 1)
+
+
+def test_channel_only_categorical_table_gets_cross_sectional_stats_not_a_change():
+    """Regression test for the reported 81.6%/131.0%/25.4% bugs: a
+    Channel-dimensioned table with no time column at all must never
+    produce total_change/period_over_period — only cross-sectional
+    highest/lowest stats."""
+
+    source = {
+        "filename": "channel_performance.xlsx",
+        "excerpt": (
+            "| Channel | Premium Share (%) | Complaint Rate (%) | Complaints |\n"
+            "|---------|-------------------:|--------------------:|------------:|\n"
+            "| Digital | 38 | 3.2 | 126 |\n"
+            "| Agents | 30 | 2.1 | 110 |\n"
+            "| Brokers | 25 | 1.8 | 100 |\n"
+            "| Partners | 7 | 7.4 | 94 |\n"
+        ),
+    }
+    tables = extract_metric_tables([source], max_tables=10)
+    assert len(tables) == 3
+
+    for table in tables:
+        assert "total_change" not in table["calculations"]
+        assert "period_over_period" not in table["calculations"]
+        assert table["dimension_type"] == "categorical"
+
+    premium_share = next(t for t in tables if t["title"] == "Premium Share (%)")
+    assert premium_share["calculations"]["cross_sectional"]["highest"] == {
+        "label": "Digital",
+        "value": 38.0,
+    }
+    assert premium_share["calculations"]["cross_sectional"]["lowest"] == {
+        "label": "Partners",
+        "value": 7.0,
+    }
+
+    block = format_metrics_for_evidence(tables)
+    assert "not a time series" in block
+    assert "Highest: Digital at 38.0" in block
+    assert "Lowest: Partners at 7.0" in block
+    # The gap magnitude can legitimately share a number with the reported
+    # bug (a cross-sectional gap and a wrongly-framed "decrease" between
+    # the same two values are mathematically the same size) — what must
+    # never appear is the WRONG framing: a change/increase/decrease
+    # phrasing applied to these categorical rows.
+    assert "% relative decrease" not in block
+    assert "% relative increase" not in block
+    assert "total_change" not in block
+    assert "period_over_period" not in block
+
+
+def test_channel_keyword_is_recognized_as_identity_even_without_repeats():
+    """"Channel" was previously missing from the identity keyword list —
+    confirm it is now recognized even with zero duplicate values (four
+    distinct channel names, each appearing once)."""
+
+    source = {
+        "filename": "channel.xlsx",
+        "excerpt": (
+            "| Channel | Value |\n"
+            "|---------|------:|\n"
+            "| Digital | 38 |\n"
+            "| Agents | 30 |\n"
+            "| Brokers | 25 |\n"
+            "| Partners | 7 |\n"
+        ),
+    }
+    tables = extract_metric_tables([source])
+    assert tables[0]["title"] == "Value"
+    assert tables[0]["dimension_type"] == "categorical"
+
+
+def test_percentage_point_labeling_in_evidence_block():
+    source = {
+        "filename": "retention.xlsx",
+        "excerpt": (
+            "| Year | Retention Rate (%) |\n"
+            "|------|--------------------:|\n"
+            "| 2023 | 70.0 |\n"
+            "| 2024 | 65.0 |\n"
+            "| 2025 | 61.0 |\n"
+        ),
+    }
+    tables = extract_metric_tables([source])
+    block = format_metrics_for_evidence(tables)
+    assert "percentage points" in block
+    assert "12.9% relative decrease" in block
+
+
+def test_absolute_value_change_is_not_labeled_percentage_points():
+    tables = extract_metric_tables([PREMIUM_TABLE_SOURCE])
+    block = format_metrics_for_evidence(tables)
+    assert "percentage points" not in block
+
+
+def test_trend_direction_classification():
+    increasing = {
+        "filename": "a.xlsx",
+        "excerpt": (
+            "| Year | Metric |\n"
+            "|------|-------:|\n"
+            "| 2023 | 10 |\n"
+            "| 2024 | 20 |\n"
+            "| 2025 | 30 |\n"
+        ),
+    }
+    decreasing = {
+        "filename": "b.xlsx",
+        "excerpt": (
+            "| Year | Metric |\n"
+            "|------|-------:|\n"
+            "| 2023 | 30 |\n"
+            "| 2024 | 20 |\n"
+            "| 2025 | 10 |\n"
+        ),
+    }
+    volatile = {
+        "filename": "c.xlsx",
+        "excerpt": (
+            "| Year | Metric |\n"
+            "|------|-------:|\n"
+            "| 2023 | 10 |\n"
+            "| 2024 | 30 |\n"
+            "| 2025 | 15 |\n"
+        ),
+    }
+    assert extract_metric_tables([increasing])[0]["calculations"]["direction"] == "increasing"
+    assert extract_metric_tables([decreasing])[0]["calculations"]["direction"] == "decreasing"
+    assert extract_metric_tables([volatile])[0]["calculations"]["direction"] == "volatile"
+
+
+def test_retention_rate_column_with_region_column_produces_composite_titles():
+    """Regression test matching the audit's Section E finding: a series
+    split per category must keep the metric name in its title, not just
+    the bare category value — "West Retention Rate (%)", not just
+    "West"."""
+
+    source = {
+        "filename": "regional.xlsx",
+        "excerpt": (
+            "| Year | Region | Retention Rate (%) |\n"
+            "|------|--------|--------------------:|\n"
+            "| 2023 | West | 70.0 |\n"
+            "| 2024 | West | 65.0 |\n"
+            "| 2025 | West | 61.0 |\n"
+        ),
+    }
+    tables = extract_metric_tables([source])
+    assert tables[0]["title"] == "West Retention Rate (%)"
+
+
+def test_generic_header_still_titled_from_identity_value_alone():
+    """Regression test: Step 1's "Claims Backlog" case (a generic "Value"
+    header with a constant Indicator value) must still produce a bare
+    identity-value title, not "Claims Backlog Value"."""
+
+    source = {
+        "filename": "risk_ops.xlsx",
+        "excerpt": (
+            "| Period | Indicator | Value |\n"
+            "|--------|-----------|------:|\n"
+            "| Q1 2025 | Claims Backlog | 14 |\n"
+            "| Q2 2025 | Claims Backlog | 19 |\n"
+        ),
+    }
+    tables = extract_metric_tables([source])
+    assert tables[0]["title"] == "Claims Backlog"

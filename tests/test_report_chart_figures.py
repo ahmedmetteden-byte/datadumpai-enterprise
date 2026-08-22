@@ -132,6 +132,44 @@ def test_line_chart_uses_block_provided_axis_labels():
     assert figure.layout.yaxis.title.text == "Gross Premium (₦ billion)"
 
 
+def test_line_chart_omits_when_multiple_points_collapse_to_one_x_position():
+    """Phase 3 Step 2 defensive guard: if every trend point were ever
+    tagged with the same period label (e.g. a categorical series
+    mis-classified as temporal upstream), rendering a connected line
+    across a single collapsed x-axis position would read as a real trend
+    where none exists — omit the chart rather than render that."""
+
+    block = {
+        "type": "LINE_CHART",
+        "title": "Complaint Rate",
+        "data": {
+            "trends": [
+                {"label": "2025", "prior": 3.2, "current": 2.1},
+                {"label": "2025", "prior": 2.1, "current": 1.8},
+                {"label": "2025", "prior": 1.8, "current": 7.4},
+            ]
+        },
+        "x_label": "Period",
+        "y_label": "Complaint Rate (%)",
+    }
+    assert _figure_from_visualization_block(block) is None
+
+
+def test_line_chart_single_trend_point_is_still_rendered():
+    """A single Previous-vs-Current transition legitimately has exactly
+    one label — must not be caught by the collapsed-axis guard above."""
+
+    block = {
+        "type": "LINE_CHART",
+        "title": "Claims Backlog",
+        "data": {"trends": [{"label": "Q4 2025", "prior": 14, "current": 31}]},
+        "x_label": "Period",
+        "y_label": "Claims Backlog",
+    }
+    result = _figure_from_visualization_block(block)
+    assert result is not None
+
+
 def test_risk_matrix_has_meaningful_axis_labels():
     block = {
         "type": "RISK_MATRIX",

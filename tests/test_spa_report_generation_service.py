@@ -363,6 +363,11 @@ def _seed_report(
 def test_find_previous_report_matches_same_template_id_only(
     isolated_env, project_service: ProjectService
 ):
+    # Named period ("quarterly"), not "custom" — Phase 3 Step 2 makes
+    # "custom" (ad-hoc) never auto-match at all (see the dedicated
+    # test_find_previous_report_never_matches_for_custom_period below);
+    # this test exercises template_id matching specifically, which is
+    # orthogonal and belongs on a named period.
     project = project_service.create_project("Template Match Test Project")
     _seed_report(
         project["id"],
@@ -370,6 +375,7 @@ def test_find_previous_report_matches_same_template_id_only(
         template_id="risk_assessment",
         created_at="2026-01-01T00:00:00+00:00",
         content="Risk content.",
+        period_id="quarterly",
     )
     matching = _seed_report(
         project["id"],
@@ -377,10 +383,11 @@ def test_find_previous_report_matches_same_template_id_only(
         template_id="executive_summary",
         created_at="2026-01-02T00:00:00+00:00",
         content="Exec content.",
+        period_id="quarterly",
     )
 
     found = SpaReportGenerationService()._find_previous_report(
-        project["id"], "executive_summary", "custom"
+        project["id"], "executive_summary", "quarterly"
     )
 
     assert found is not None
@@ -434,6 +441,7 @@ def test_find_previous_report_returns_most_recent_by_created_at_field(
         template_id="executive_summary",
         created_at="2026-06-01T00:00:00+00:00",
         content="Later content.",
+        period_id="quarterly",
     )
     # Saved SECOND but stamped with the EARLIER createdAt.
     _seed_report(
@@ -442,10 +450,11 @@ def test_find_previous_report_returns_most_recent_by_created_at_field(
         template_id="executive_summary",
         created_at="2026-01-01T00:00:00+00:00",
         content="Earlier content.",
+        period_id="quarterly",
     )
 
     found = SpaReportGenerationService()._find_previous_report(
-        project["id"], "executive_summary", "custom"
+        project["id"], "executive_summary", "quarterly"
     )
 
     assert found is not None
@@ -469,10 +478,11 @@ def test_find_previous_report_skips_legacy_reports_without_report_data(
         template_id="executive_summary",
         created_at="2026-01-01T00:00:00+00:00",
         content="Valid content.",
+        period_id="quarterly",
     )
 
     found = SpaReportGenerationService()._find_previous_report(
-        project["id"], "executive_summary", "custom"
+        project["id"], "executive_summary", "quarterly"
     )
 
     assert found is not None
@@ -503,10 +513,11 @@ def test_find_previous_report_skips_malformed_report_data(
         template_id="executive_summary",
         created_at="2026-01-01T00:00:00+00:00",
         content="Valid content.",
+        period_id="quarterly",
     )
 
     found = SpaReportGenerationService()._find_previous_report(
-        project["id"], "executive_summary", "custom"
+        project["id"], "executive_summary", "quarterly"
     )
 
     assert found is not None
@@ -523,6 +534,34 @@ def test_find_previous_report_returns_none_when_nothing_matches(
         template_id="risk_assessment",
         created_at="2026-01-01T00:00:00+00:00",
         content="Content.",
+        period_id="quarterly",
+    )
+
+    found = SpaReportGenerationService()._find_previous_report(
+        project["id"], "executive_summary", "quarterly"
+    )
+
+    assert found is None
+
+
+def test_find_previous_report_never_matches_for_custom_period(
+    isolated_env, project_service: ProjectService
+):
+    """Phase 3 Step 2: every ad-hoc/"Custom" report shares the single
+    generic period_id "custom" with no real date-range differentiation —
+    a previous ad-hoc report might cover a completely unrelated scope, so
+    "Changes Since Last Report" must never be offered for a custom-period
+    report, even when a same-template, same-period-id previous report
+    genuinely exists."""
+
+    project = project_service.create_project("Custom Period Never Matches Project")
+    _seed_report(
+        project["id"],
+        name="Earlier Ad Hoc Report",
+        template_id="executive_summary",
+        created_at="2026-01-01T00:00:00+00:00",
+        content="Earlier content.",
+        period_id="custom",
     )
 
     found = SpaReportGenerationService()._find_previous_report(
@@ -735,6 +774,74 @@ def test_generate_markdown_instructs_restraint_against_unearned_adjectives():
     assert "remarkable" in prompt and "robust" in prompt  # named as words to avoid
     assert "not a promoter" in prompt
     assert "does not by itself mean profitability improved" in prompt
+
+
+def test_generate_markdown_includes_categorical_vs_temporal_guardrail():
+    """Phase 3 Step 2: the prompt must explicitly warn against treating a
+    cross-category comparison (e.g. two different channels' Premium
+    Share in the same period) as a change over time — the actual
+    root-cause fix for the reported 81.6%/131.0%/25.4% fabricated
+    percentage-change bugs, since the deterministic layer correctly
+    refuses to compute these itself but the raw categorical rows still
+    reach the model."""
+
+    svc = SpaReportGenerationService()
+    client, completions = _fake_openai_client()
+    svc._client = client
+    sources = [{"filename": "a.pdf", "excerpt": "Some evidence."}]
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_name="Executive Summary",
+        sources=sources,
+    )
+    prompt = completions.calls[0]["messages"][1]["content"]
+
+    assert "SAME thing at two DIFFERENT points in time" in prompt
+    assert "Digital has the highest Premium Share at 38%" in prompt
+    assert "cross-sectional comparison" in prompt
+
+
+def test_generate_markdown_includes_causal_language_guardrail():
+    svc = SpaReportGenerationService()
+    client, completions = _fake_openai_client()
+    svc._client = client
+    sources = [{"filename": "a.pdf", "excerpt": "Some evidence."}]
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_name="Executive Summary",
+        sources=sources,
+    )
+    prompt = completions.calls[0]["messages"][1]["content"]
+
+    assert "unless a source document explicitly states that causal mechanism" in prompt
+    assert "warrants investigation into whether service issues" in prompt
+
+
+def test_generate_markdown_grounds_risks_and_opportunities_with_basis_tag():
+    svc = SpaReportGenerationService()
+    client, completions = _fake_openai_client()
+    svc._client = client
+    sources = [{"filename": "a.pdf", "excerpt": "Some evidence."}]
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_name="Executive Summary",
+        sources=sources,
+    )
+    prompt = completions.calls[0]["messages"][1]["content"]
+
+    risks_section = prompt.split("## Risks & Issues")[1].split("## Opportunities")[0]
+    opportunities_section = prompt.split("## Opportunities")[1].split("## Strategic Recommendations")[0]
+
+    assert "never a generic category label" in risks_section
+    assert "Claims backlog escalation" in risks_section
+    assert "**Basis:**" in risks_section
+    assert "**Basis:**" in opportunities_section
 
 
 def test_generate_markdown_requires_bulleted_risks_and_opportunities():

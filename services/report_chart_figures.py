@@ -83,6 +83,17 @@ def _figure_from_visualization_block(block: dict[str, Any]) -> tuple[str, go.Fig
         if not trends:
             return None
         labels = [item.get("label", "") for item in trends]
+        # Defensive guard (Phase 3 Step 2): a single trend point (one
+        # Previous-vs-Current pair) legitimately has exactly one label —
+        # that's not the bug. The bug is MULTIPLE points collapsing onto
+        # the SAME x-axis position — e.g. a categorical series that was
+        # ever mis-classified as temporal upstream, every row tagged with
+        # the same period — where Plotly would stack every point at one
+        # x tick and still connect them with a line, reading as a real
+        # trend where none exists. Per "a bad chart is worse than no
+        # chart," omit rather than render that specific case.
+        if len(trends) >= 2 and len(set(labels)) < 2:
+            return None
         prior = [float(item.get("prior", 0)) for item in trends]
         current = [float(item.get("current", 0)) for item in trends]
         figure = go.Figure()

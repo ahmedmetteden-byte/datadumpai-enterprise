@@ -115,6 +115,33 @@ def test_select_chart_candidates_kill_switch_disables_bridge(monkeypatch):
     assert blocks == []
 
 
+def test_categorical_series_with_cross_sectional_stats_still_becomes_bar_chart():
+    """Phase 3 Step 2 integration point: a real categorical MetricSeries
+    now carries a non-empty `calculations` dict (cross_sectional stats,
+    quantitative_analysis_service.py), not `{}` as before — confirm the
+    bridge still correctly reads is_temporal from `period_over_period`
+    specifically (absent here) rather than "calculations truthy", and so
+    still produces BAR_CHART, never LINE_CHART, for this shape."""
+
+    series = {
+        **MARKET_SHARE_SERIES,
+        "calculations": {
+            "cross_sectional": {
+                "highest": {"label": "Non-Life", "value": 68.0},
+                "lowest": {"label": "Life", "value": 32.0},
+                "range": 36.0,
+                "gap_percent": 52.9,
+            }
+        },
+    }
+    chart_data = metric_series_to_chart_data(series)
+    assert chart_data["type"] == "BAR_CHART"
+    assert chart_data["data"]["series"] == [
+        {"label": "Life", "value": 32.0},
+        {"label": "Non-Life", "value": 68.0},
+    ]
+
+
 def test_select_chart_candidates_no_generic_labels_ever():
     requirements = [
         {"strategy": "LINE_CHART", "metric_title": "Gross Premium", "reason": "x"},

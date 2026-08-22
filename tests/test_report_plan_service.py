@@ -82,11 +82,57 @@ def test_ranks_findings_by_materiality_descending():
     assert plan.ranked_findings[0].metric_ref == "Gross Premium"
 
 
-def test_categorical_non_temporal_tables_are_excluded_from_ranking():
+def test_categorical_table_with_no_computed_stats_is_excluded_from_ranking():
+    """MARKET_SHARE_TABLE's calculations dict is hand-crafted empty here
+    (no cross_sectional key) — a categorical table only participates in
+    ranking once it actually carries computed cross-sectional stats (see
+    test_categorical_table_with_cross_sectional_stats_is_ranked below);
+    an empty calculations dict simply has nothing to rank on."""
+
     plan = build_report_plan(metric_tables=[MARKET_SHARE_TABLE, PREMIUM_TABLE])
 
     labels = [f.label for f in plan.ranked_findings]
     assert labels == ["Gross Premium"]
+
+
+def test_categorical_table_with_cross_sectional_stats_is_ranked():
+    """Phase 3 Step 2: a categorical table WITH real cross-sectional stats
+    (as produced by quantitative_analysis_service's
+    _compute_cross_sectional_stats) now participates in ranking via its
+    gap magnitude — closing the gap the previous test's sibling used to
+    flag as "the public API can't reach it yet"."""
+
+    channel_table = {
+        "title": "Premium Share (%)",
+        "source_document": "report.pdf",
+        "unit": "%",
+        "rows": [
+            {"label": "Digital", "value": 38.0},
+            {"label": "Partners", "value": 7.0},
+        ],
+        "calculations": {
+            "cross_sectional": {
+                "highest": {"label": "Digital", "value": 38.0},
+                "lowest": {"label": "Partners", "value": 7.0},
+                "range": 31.0,
+                "gap_percent": 81.6,
+            }
+        },
+    }
+    plan = build_report_plan(metric_tables=[channel_table, PREMIUM_TABLE])
+
+    finding = next(f for f in plan.ranked_findings if f.label == "Premium Share (%)")
+    assert finding.materiality_score == 81.6
+    assert finding.direction == "flat"
+    assert finding.kind == "categorical"
+
+    assert len(plan.chart_requirements) >= 1
+    chart = next(c for c in plan.chart_requirements if c.metric_title == "Premium Share (%)")
+    assert chart.strategy == "BAR_CHART"
+    assert "cross-sectional gap" in chart.reason
+
+    block = render_plan_for_prompt(plan)
+    assert "cross-sectional comparison, not a change over time" in block
 
 
 def test_caps_ranked_findings_at_max():
@@ -140,10 +186,11 @@ def test_chart_requirements_follow_ranked_findings_and_are_capped():
 
 
 def test_chart_requirements_use_bar_chart_for_categorical_ranked_findings():
-    """_chart_requirements() itself (not build_report_plan(), which never
-    ranks categorical tables today) must still choose BAR_CHART correctly
-    for a non-temporal metric if it ever appears in ranked_findings — this
-    exercises that branch directly since the public API can't reach it yet."""
+    """_chart_requirements() must choose BAR_CHART for a non-temporal
+    metric's ranked finding — exercised directly here against a
+    hand-built RankedFinding; see
+    test_categorical_table_with_cross_sectional_stats_is_ranked for the
+    full build_report_plan() path that now reaches this branch too."""
 
     ranked = [RankedFinding(label="Segment Market Share", materiality_score=10, direction="increase")]
     requirements = _chart_requirements([MARKET_SHARE_TABLE], ranked)

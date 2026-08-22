@@ -14,6 +14,7 @@ from services.report_qc_service import (
     _check_duplicate_content,
     _check_evidence_leaks_into_narrative,
     _check_growth_terminology,
+    _check_no_generic_metric_titles,
     _check_no_implausible_ungrounded_percentages,
     _check_numerical_consistency,
     _check_period_correctness,
@@ -53,6 +54,48 @@ def test_numerical_consistency_flags_missing_figure():
     assert len(issues) == 3  # total_change + 2 period_over_period figures, all missing
     assert all(issue.category == "numerical_consistency" for issue in issues)
     assert all(issue.severity == "medium" for issue in issues)
+
+
+# --- Phase 3 Step 2: cross-sectional gap citation consistency ---
+
+
+def test_numerical_consistency_flags_missing_cross_sectional_gap():
+    """Real-pipeline testing showed the model can correctly frame a
+    categorical comparison (never claiming a temporal change) while still
+    inventing its own gap magnitude instead of citing the deterministic
+    one — this check catches that the correct figure never appeared."""
+
+    table = {
+        "title": "Complaints",
+        "calculations": {
+            "cross_sectional": {
+                "highest": {"label": "Digital", "value": 126.0},
+                "lowest": {"label": "Partners", "value": 94.0},
+                "range": 32.0,
+                "gap_percent": 25.4,
+            }
+        },
+    }
+    narrative = "Digital has more complaints than Partners, a 58.2% difference."
+    issues = _check_numerical_consistency(narrative, [table])
+    assert len(issues) == 1
+    assert "25.4%" in issues[0].message
+
+
+def test_numerical_consistency_passes_when_cross_sectional_gap_cited():
+    table = {
+        "title": "Complaints",
+        "calculations": {
+            "cross_sectional": {
+                "highest": {"label": "Digital", "value": 126.0},
+                "lowest": {"label": "Partners", "value": 94.0},
+                "range": 32.0,
+                "gap_percent": 25.4,
+            }
+        },
+    }
+    narrative = "Digital has more complaints than Partners, a gap of 25.4%."
+    assert _check_numerical_consistency(narrative, [table]) == []
 
 
 # --- Phase 3: safety net for the 414.3%-style bug ---
@@ -111,6 +154,22 @@ def test_implausible_percentage_skips_reports_with_no_structured_metrics():
     narrative = "Some unrelated document cites a 900% figure with no structured backing."
     issues = _check_no_implausible_ungrounded_percentages(narrative, [])
     assert issues == []
+
+
+# --- Phase 3 Step 2: generic metric title detection ---
+
+
+def test_generic_metric_title_flagged():
+    tables = [{"title": "Total"}, {"title": "Value"}]
+    issues = _check_no_generic_metric_titles(tables)
+    assert len(issues) == 2
+    assert all(issue.severity == "low" for issue in issues)
+    assert all(issue.category == "generic_metric_title" for issue in issues)
+
+
+def test_specific_metric_title_not_flagged():
+    tables = [{"title": "Claims Backlog"}, {"title": "West Retention Rate (%)"}]
+    assert _check_no_generic_metric_titles(tables) == []
 
 
 def test_citation_consistency_passes_for_known_sources():
@@ -173,6 +232,23 @@ def test_period_correctness_passes_when_periods_match():
     narrative = "## Changes Since Last Report\nNothing changed."
     previous_report = {"periodId": "weekly"}
     assert _check_period_correctness(narrative, previous_report, "weekly") == []
+
+
+def test_period_correctness_flags_changes_section_on_custom_period_even_with_a_previous_report():
+    """Phase 3 Step 2 safety net: a Changes Since Last Report section must
+    never appear for an ad-hoc/custom-period report, even when a
+    previous report genuinely exists — every ad-hoc report shares the
+    same generic period_id, so a "match" carries no real scope
+    guarantee. This should be structurally impossible given
+    SpaReportGenerationService's fix, but is still flagged here as a
+    rollout safety net."""
+
+    narrative = "## Changes Since Last Report\nNothing changed."
+    previous_report = {"periodId": "custom"}
+    issues = _check_period_correctness(narrative, previous_report, "custom")
+    assert len(issues) == 1
+    assert issues[0].severity == "high"
+    assert "Custom / Ad hoc" in issues[0].message
 
 
 def test_duplicate_content_flags_verbatim_sentence_reuse():

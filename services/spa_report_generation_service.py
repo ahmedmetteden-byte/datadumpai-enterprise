@@ -205,7 +205,21 @@ class SpaReportGenerationService:
         at call time, not the report's actual creation time — ordering must
         use report_data["createdAt"] instead, which is written once by
         generate() and never touched again.
+
+        Phase 3 Step 2: every ad-hoc report shares the single literal
+        period_id "custom" (there is no real date-range field for a
+        custom period), so period_id matching alone cannot tell whether
+        two ad-hoc requests actually cover the same scope — the previous
+        ad-hoc report might be about something entirely unrelated. Rather
+        than risk a "Changes Since Last Report" section comparing against
+        an unrelated prior request, never auto-match a previous report
+        for a custom-period report at all. Named periods (e.g. "Q1 2025")
+        keep the existing behavior — their period_id genuinely
+        differentiates them.
         """
+
+        if period_id == "custom":
+            return None
 
         try:
             entries = ReportService.get_reports(
@@ -362,6 +376,28 @@ class SpaReportGenerationService:
             "('X% year-over-year growth', 'a total increase of X% over the period') rather than "
             "labeling it a compound annual growth rate.\n\n"
         )
+        dimension_framing_requirement = (
+            "Before describing any metric as having increased, decreased, grown, or declined, "
+            "confirm the values being compared represent the SAME thing at two DIFFERENT points "
+            "in time (e.g. the same region's retention rate in 2023 vs. 2025). Values that instead "
+            "differ by category — different regions, channels, products, segments, departments, "
+            "or risk types within the SAME period — are not a change over time, even when they "
+            "appear in the same table or as adjacent rows in the evidence. Describe those as a "
+            "comparison instead: 'Digital has the highest Premium Share at 38%, while Partners has "
+            "the lowest at 7%' — never 'Premium Share decreased by 81.6%' when 38% and 7% are two "
+            "different channels in the same period, not the same channel measured twice. A "
+            "'Verified Calculations' entry marked as a cross-sectional comparison (highest/lowest) "
+            "is exactly this case — cite the highest/lowest figures, never a change between "
+            "them.\n\n"
+        )
+        causal_language_requirement = (
+            "Do not state that one trend is CAUSING another (e.g. 'operational inefficiencies are "
+            "causing customer attrition') unless a source document explicitly states that causal "
+            "mechanism. When two findings coincide without an explicitly stated cause, describe "
+            "the association and flag it for investigation instead of asserting causation: "
+            "'The increase in complaints coincides with declining retention and warrants "
+            "investigation into whether service issues are contributing to customer attrition.'\n\n"
+        )
         report_plan_context = render_plan_for_prompt(report_plan) if report_plan else ""
         report_plan_requirement = (
             "A Report Plan is included in the evidence below, ranking findings by materiality "
@@ -381,6 +417,11 @@ class SpaReportGenerationService:
         recommendations_plan_clause = (
             " Every recommendation must trace back to one of the ranked findings in the Report "
             "Plan above — do not introduce a recommendation with no corresponding finding."
+            if report_plan_context
+            else ""
+        )
+        risk_plan_clause = (
+            "Reuse the Report Plan ranked findings above where a risk relates to one. "
             if report_plan_context
             else ""
         )
@@ -456,6 +497,8 @@ class SpaReportGenerationService:
             f"{coverage_gap_requirement}"
             f"{calculated_metrics_requirement}"
             f"{growth_terminology_requirement}"
+            f"{dimension_framing_requirement}"
+            f"{causal_language_requirement}"
             f"{report_plan_requirement}"
             "Go beyond summarizing — synthesize. For every major point, explain not just what "
             "happened but why it matters, what pattern or trend it fits into, what changed since "
@@ -510,18 +553,28 @@ class SpaReportGenerationService:
             "a particular analytical thread (e.g. no time-series data to discuss a trend), omit it "
             "rather than speculating.\n\n"
             "## Risks & Issues\n"
-            "Concrete risks or open problems surfaced by the evidence. Format each one as its own "
-            "markdown bullet — `- **<short title>:** <brief note on likely impact>` — one risk per "
-            "bullet, never combined into a single paragraph. If the evidence surfaces no material "
-            "risks, write one sentence starting with 'No risks were identified in the evidence "
-            "reviewed' — not 'no risks exist', which is a stronger claim the absence of evidence "
-            "doesn't support — rather than manufacturing a generic risk.\n\n"
+            "Concrete risks or open problems surfaced by the evidence — never a generic category "
+            "label like 'Operational Bottlenecks' or 'Customer Dissatisfaction'; name the specific "
+            "metric or figure behind it instead, e.g. 'Claims backlog escalation — backlog "
+            "increased from 14 to 31 cases (+121.4%), concentrated in the West region.' "
+            f"{risk_plan_clause}"
+            "Format each one as its own markdown bullet — `- **<specific title>:** <brief note on "
+            "likely impact>` — one risk per bullet, never combined into a single paragraph. "
+            "Immediately after each bullet, on its own line, add `**Basis:** <value>` using "
+            "exactly the same three literal values as Key Findings (`Source fact`, `Calculated "
+            "result`, or `Analytical inference`) — never assert a likely cause as if it were a "
+            "proven one. If the evidence surfaces no material risks, write one sentence starting "
+            "with 'No risks were identified in the evidence reviewed' — not 'no risks exist', "
+            "which is a stronger claim the absence of evidence doesn't support — rather than "
+            "manufacturing a generic risk.\n\n"
             "## Opportunities\n"
-            "Positive openings, efficiencies, or strategic options the evidence points to. Format "
-            "each one as its own markdown bullet — `- **<short title>:** <detail>` — one "
-            "opportunity per bullet, never combined into a single paragraph. If the evidence "
-            "contains none, write one sentence starting with 'No opportunities were identified in "
-            "the evidence reviewed' rather than inventing one.\n\n"
+            "Positive openings, efficiencies, or strategic options the evidence points to — "
+            "grounded the same way as Risks & Issues above: a specific metric or figure, never a "
+            "generic label. Format each one as its own markdown bullet — `- **<specific title>:** "
+            "<detail>` — one opportunity per bullet, never combined into a single paragraph, with "
+            "a `**Basis:**` line immediately after each bullet using the same convention as Risks "
+            "& Issues. If the evidence contains none, write one sentence starting with 'No "
+            "opportunities were identified in the evidence reviewed' rather than inventing one.\n\n"
             "## Strategic Recommendations\n"
             "A markdown numbered list of specific, actionable next steps, ordered by priority — not "
             "generic advice, but recommendations that follow directly from the findings above. Each "

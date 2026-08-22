@@ -38,6 +38,7 @@ class RankedFinding:
     materiality_score: float
     direction: str  # "increase" | "decrease" | "flat"
     metric_ref: str | None = None
+    kind: str = "temporal"  # "temporal" | "categorical" — Phase 3 Step 2
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -45,6 +46,7 @@ class RankedFinding:
             "materiality_score": self.materiality_score,
             "direction": self.direction,
             "metric_ref": self.metric_ref,
+            "kind": self.kind,
         }
 
 
@@ -84,8 +86,11 @@ class ReportPlan:
 def _materiality_from_calculations(calculations: dict[str, Any]) -> tuple[float, str] | None:
     """Materiality = magnitude of total percent change. Returns None for a
     non-temporal series (no total_change was computed) — such a series
-    simply doesn't participate in ranking, it isn't dropped from the
-    report itself."""
+    simply doesn't participate in growth-rate relationship comparisons
+    (_find_key_relationships below), which are meaningless for a
+    categorical spread. Kept temporal-only deliberately — see
+    _ranking_score for the broader function used for materiality
+    ranking/chart selection, which does cover categorical findings."""
 
     total = (calculations or {}).get("total_change")
     if not total or total.get("percent") is None:
@@ -96,15 +101,39 @@ def _materiality_from_calculations(calculations: dict[str, Any]) -> tuple[float,
     return abs(percent), direction
 
 
+def _ranking_score(calculations: dict[str, Any]) -> tuple[float, str, str] | None:
+    """(magnitude, direction, kind) for materiality ranking / chart
+    selection — covers BOTH a temporal total-change magnitude and a
+    categorical cross-sectional gap magnitude (Phase 3 Step 2), so a wide
+    cross-sectional spread ("Digital has the highest Premium Share at
+    38%, Partners the lowest at 7%") can compete fairly for Key
+    Findings/chart placement alongside a genuine temporal change — never
+    conflated with one, since `kind` stays "categorical" throughout and a
+    categorical finding's `direction` is always "flat" (no time-based
+    increase/decrease is implied)."""
+
+    total = (calculations or {}).get("total_change")
+    if total and total.get("percent") is not None:
+        percent = float(total["percent"])
+        direction = "increase" if percent > 0 else "decrease" if percent < 0 else "flat"
+        return abs(percent), direction, "temporal"
+
+    cross_sectional = (calculations or {}).get("cross_sectional")
+    if cross_sectional and cross_sectional.get("gap_percent") is not None:
+        return abs(float(cross_sectional["gap_percent"])), "flat", "categorical"
+
+    return None
+
+
 def _rank_findings(metric_tables: list[dict[str, Any]]) -> list[RankedFinding]:
     findings: list[RankedFinding] = []
 
     for table in metric_tables:
-        result = _materiality_from_calculations(table.get("calculations") or {})
+        result = _ranking_score(table.get("calculations") or {})
         if result is None:
             continue
 
-        magnitude, direction = result
+        magnitude, direction, kind = result
         title = str(table.get("title") or "")
         findings.append(
             RankedFinding(
@@ -112,6 +141,7 @@ def _rank_findings(metric_tables: list[dict[str, Any]]) -> list[RankedFinding]:
                 materiality_score=round(magnitude, 1),
                 direction=direction,
                 metric_ref=title or None,
+                kind=kind,
             )
         )
 
@@ -175,14 +205,21 @@ def _chart_requirements(
 
         is_temporal = bool((table.get("calculations") or {}).get("period_over_period"))
         strategy = "LINE_CHART" if is_temporal else "BAR_CHART"
+        if finding.kind == "categorical":
+            reason = (
+                f"{finding.label} shows the widest spread across categories in this report "
+                "(largest computed cross-sectional gap)."
+            )
+        else:
+            reason = (
+                f"{finding.label} is among the most material findings in this report "
+                "(largest computed change)."
+            )
         requirements.append(
             ChartRequirement(
                 strategy=strategy,
                 metric_title=finding.label,
-                reason=(
-                    f"{finding.label} is among the most material findings in this report "
-                    "(largest computed change)."
-                ),
+                reason=reason,
             )
         )
         if len(requirements) >= MAX_CHART_REQUIREMENTS:
@@ -306,8 +343,15 @@ def select_dashboard_items(
         if len(kpis) >= MAX_DASHBOARD_KPIS:
             break
         title = str(table.get("title") or "")
-        if not title or title in used_titles or table.get("calculations"):
-            continue  # temporal metrics are only added via ranked_findings above
+        # A table with a computed total_change is temporal and is only
+        # ever added via ranked_findings above. A categorical table now
+        # always carries SOME calculations (cross-sectional stats, Phase
+        # 3 Step 2) — checking for total_change specifically (rather than
+        # "calculations is non-empty") is what still lets a categorical
+        # table land in this "round out the picture" pass when it wasn't
+        # already added via ranked_findings.
+        if not title or title in used_titles or (table.get("calculations") or {}).get("total_change"):
+            continue
 
         value = _latest_row_value(table)
         if value is None:
@@ -337,10 +381,18 @@ def render_plan_for_prompt(plan: ReportPlan) -> str:
     if plan.ranked_findings:
         lines.append("Findings ranked by materiality (most important first):")
         for finding in plan.ranked_findings:
-            lines.append(
-                f"- {finding.label}: {finding.direction} of {finding.materiality_score}% "
-                "— prioritize this in Key Findings and weigh it for the Executive Summary."
-            )
+            if finding.kind == "categorical":
+                lines.append(
+                    f"- {finding.label}: a {finding.materiality_score}% gap across categories "
+                    "(highest vs. lowest) — this is a cross-sectional comparison, not a change "
+                    "over time; describe which category is highest/lowest, never as an "
+                    "increase/decrease."
+                )
+            else:
+                lines.append(
+                    f"- {finding.label}: {finding.direction} of {finding.materiality_score}% "
+                    "— prioritize this in Key Findings and weigh it for the Executive Summary."
+                )
         lines.append("")
 
     if plan.key_relationships:

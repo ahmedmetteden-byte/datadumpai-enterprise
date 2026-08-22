@@ -66,6 +66,11 @@ _IDENTITY_COLUMN_KEYWORDS = (
     "metric",
     "class",
     "line",
+    "channel",
+    "branch",
+    "unit",
+    "department",
+    "risk",
 )
 
 # A column whose header names a change/delta ("Change/Rate", "YoY Delta")
@@ -149,16 +154,25 @@ def _normalize_temporal_label(label: str) -> str:
 def _is_identity_column(header: str, raw_cells: list[str]) -> bool:
     """A non-numeric column that names what each row is about (an
     "Indicator", "Region", "Product"...). Detected by header keyword, and
-    generalized beyond a fixed keyword list via a cardinality heuristic:
+    generalized beyond a fixed keyword list via two cardinality heuristics:
     a grouping dimension's values commonly repeat across rows (unlike free
-    narrative/notes text, where every row tends to differ)."""
+    narrative/notes text, where every row tends to differ); and, even
+    without a repeat, a small bounded set of distinct non-numeric values
+    (e.g. four channel names, each appearing once in a cross-sectional
+    table) plausibly names a category axis rather than unique per-row
+    prose. The second heuristic is deliberately conservative (small
+    distinct-count ceiling, minimum row count) to avoid mistaking a short
+    free-text notes column for a dimension."""
 
     if any(keyword in header.lower() for keyword in _IDENTITY_COLUMN_KEYWORDS):
         return True
     values = [cell.strip() for cell in raw_cells if cell.strip()]
     if len(values) < 2:
         return False
-    return len(set(values)) < len(values)
+    distinct = len(set(values))
+    if distinct < len(values):
+        return True
+    return len(values) >= 3 and distinct <= 8
 
 
 def _is_derived_rate_column(header: str, raw_cells: list[str]) -> bool:
@@ -202,6 +216,12 @@ class MetricSeries:
     rows: list[dict[str, Any]] = field(default_factory=list)
     calculations: dict[str, Any] = field(default_factory=dict)
     reported_change: list[dict[str, str]] = field(default_factory=list)
+    # Phase 3 Step 2: explicit dimension metadata, so downstream consumers
+    # (chart bridge, evidence rendering) never have to re-derive "is this
+    # temporal or categorical" from calculations' shape alone.
+    dimension_type: str = "temporal"  # "temporal" | "categorical" | "temporal_by_category"
+    category_value: str | None = None
+    metric_group: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -211,6 +231,9 @@ class MetricSeries:
             "rows": self.rows,
             "calculations": self.calculations,
             "reported_change": self.reported_change,
+            "dimension_type": self.dimension_type,
+            "category_value": self.category_value,
+            "metric_group": self.metric_group,
         }
 
 
@@ -249,7 +272,100 @@ def _compute_calculations(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "absolute": round(total_absolute, 2),
             "percent": round(total_percent, 1) if total_percent is not None else None,
         },
+        "direction": _trend_direction(period_over_period),
     }
+
+
+def _trend_direction(period_over_period: list[dict[str, Any]]) -> str:
+    """Qualitative shape of a temporal series, derived purely from the
+    sign pattern of already-computed period-over-period deltas — no new
+    data source, just a label for numbers that exist already."""
+
+    percents = [c["percent"] for c in period_over_period if c["percent"] is not None]
+    if not percents:
+        return "stable"
+    if all(abs(p) < 1.0 for p in percents):
+        return "stable"
+    if all(p > 0 for p in percents):
+        return "increasing"
+    if all(p < 0 for p in percents):
+        return "decreasing"
+    return "volatile"
+
+
+def _compute_cross_sectional_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Deterministic highest/lowest/range/gap for a CATEGORICAL (non-
+    temporal) comparison — the cross-sectional counterpart to
+    _compute_calculations(). Gives the report writer genuine Verified-
+    Calculations content for "which category is highest/lowest" instead
+    of leaving it to infer a (potentially fabricated) change from bare,
+    unflagged rows. Never computes a "change" — categories have no
+    inherent order, so there is no "first" or "last" to diff."""
+
+    if len(rows) < 2:
+        return {}
+
+    highest = max(rows, key=lambda r: r["value"])
+    lowest = min(rows, key=lambda r: r["value"])
+    value_range = round(highest["value"] - lowest["value"], 2)
+    gap_percent = round(value_range / highest["value"] * 100, 1) if highest["value"] else None
+
+    return {
+        "cross_sectional": {
+            "highest": {"label": highest["label"], "value": highest["value"]},
+            "lowest": {"label": lowest["label"], "value": lowest["value"]},
+            "range": value_range,
+            "gap_percent": gap_percent,
+        }
+    }
+
+
+_GENERIC_VALUE_HEADERS = {"value", "amount", "total", "figure", "sum", "count", "number"}
+
+
+def _compose_category_title(category_value: str, column_header: str) -> str:
+    """When a value column is split per category, title the resulting
+    series from the category value alone if the column header is a
+    generic placeholder ("Value", "Total"...) — matching Step 1's "Claims
+    Backlog" case, where the header carried no real information — or as
+    "{category} {header}" when the header names a real metric (e.g. "West
+    Retention Rate (%)"), so the metric identity survives alongside the
+    dimension instead of being silently dropped."""
+
+    if not category_value:
+        return column_header
+    if column_header.strip().lower() in _GENERIC_VALUE_HEADERS:
+        return category_value
+    return f"{category_value} {column_header}"
+
+
+def _classify_column(column_header: str, raw_cells: list[str]) -> str:
+    """Column-position-independent role classification: "temporal" (row
+    labels are years/quarters/months — reuses _looks_temporal, no longer
+    hardcoded to column 0), "identity" (a category-naming column),
+    "derived_rate", "value", or "narrative" (ignored). This is what makes
+    a `Region | Year | Retention Rate` table (category-first) work
+    identically to a `Year | Region | Retention Rate` table (time-first)
+    — previously only the second ordering worked, since temporality was
+    only ever checked against column 0."""
+
+    # Temporal is checked first, directly against the (possibly non-
+    # numeric) string label — "Q1 2025" and "Jan 2024" are temporal but
+    # not numeric-parseable, so gating this behind a numeric check first
+    # (as an earlier draft of this function did) would silently stop
+    # recognizing quarter/month-year columns as temporal at all.
+    normalized = [_normalize_temporal_label(cell.strip()) for cell in raw_cells]
+    temporal_count = sum(1 for label in normalized if _looks_temporal(label))
+    if normalized and temporal_count >= max(2, len(normalized) - 1):
+        return "temporal"
+
+    if all(_parse_numeric_cell(cell) is not None for cell in raw_cells):
+        if _is_derived_rate_column(column_header, raw_cells):
+            return "derived_rate"
+        return "value"
+    if _is_identity_column(column_header, raw_cells):
+        return "identity"
+    return "narrative"
 
 
 def _extract_from_table(rows: list[list[str]], *, source_document: str) -> list[MetricSeries]:
@@ -273,36 +389,37 @@ def _extract_from_table(rows: list[list[str]], *, source_document: str) -> list[
     if all(_parse_numeric_cell(cell) is not None for cell in header[1:]):
         return []
 
-    labels = [_normalize_temporal_label(row[0].strip()) for row in data_rows if row]
-    temporal = labels and sum(1 for label in labels if _looks_temporal(label)) >= max(
-        2, len(labels) - 1
-    )
-
-    # Pass 1: classify each non-label column. An identity column (e.g.
-    # "Indicator") names what a row's value is about and becomes a title
-    # source, never a metric itself. A derived-rate column (e.g.
-    # "Change/Rate") describes another column's movement and must never
-    # become an independent metric with its own period-over-period math
-    # computed on top of already-computed percentages.
-    identity_col: int | None = None
-    value_cols: list[int] = []
-    derived_rate_cols: list[int] = []
-
-    for col_index in range(1, len(header)):
+    # Pass 1: classify EVERY column (including column 0 — no longer a
+    # hardcoded assumption that the first column is always the time/label
+    # axis). A column with a misaligned row count (truncated table) is
+    # treated as narrative/ignored rather than guessed at.
+    col_roles: dict[int, str] = {}
+    for col_index in range(len(header)):
         column_header = header[col_index].strip()
-        if not column_header:
-            continue
         raw_cells = [row[col_index] for row in data_rows if len(row) > col_index]
-        if len(raw_cells) != len(data_rows):
+        if not column_header or len(raw_cells) != len(data_rows):
+            col_roles[col_index] = "narrative"
             continue
+        col_roles[col_index] = _classify_column(column_header, raw_cells)
 
-        if all(_parse_numeric_cell(cell) is not None for cell in raw_cells):
-            if _is_derived_rate_column(column_header, raw_cells):
-                derived_rate_cols.append(col_index)
-            else:
-                value_cols.append(col_index)
-        elif identity_col is None and _is_identity_column(column_header, raw_cells):
-            identity_col = col_index
+    time_col = next((i for i in range(len(header)) if col_roles.get(i) == "temporal"), None)
+    identity_col = next(
+        (i for i in range(len(header)) if col_roles.get(i) == "identity" and i != time_col),
+        None,
+    )
+    # Whichever column carries the row's "what period/category is this"
+    # label — the time column when one exists (wherever it sits), else
+    # the identity column, else column 0 as a safe default for tables
+    # with neither a recognizable time nor category axis.
+    label_col = time_col if time_col is not None else (identity_col if identity_col is not None else 0)
+    temporal = time_col is not None
+
+    value_cols = [
+        i
+        for i in range(len(header))
+        if col_roles.get(i) == "value" and i not in (time_col, identity_col, label_col)
+    ]
+    derived_rate_cols = [i for i in range(len(header)) if col_roles.get(i) == "derived_rate"]
 
     row_identities: list[str] = []
     if identity_col is not None:
@@ -318,9 +435,9 @@ def _extract_from_table(rows: list[list[str]], *, source_document: str) -> list[
         parsed_rows: list[dict[str, Any]] = []
         aligned_identities: list[str] = []
         for row_i, row in enumerate(data_rows):
-            if len(row) <= col_index:
+            if len(row) <= col_index or len(row) <= label_col:
                 continue
-            label = _normalize_temporal_label(row[0].strip())
+            label = _normalize_temporal_label(row[label_col].strip())
             value = _parse_numeric_cell(row[col_index])
             if not label or value is None:
                 continue
@@ -342,44 +459,76 @@ def _extract_from_table(rows: list[list[str]], *, source_document: str) -> list[
             data_rows=data_rows,
             derived_rate_cols=derived_rate_cols,
             row_identities=row_identities,
+            label_col=label_col,
         )
 
-        if row_identities and len(set(aligned_identities)) > 1:
-            # Multiple distinct indicators share this column — split into
-            # one series per indicator rather than one misleadingly-merged
-            # series spanning unrelated things under a generic title.
+        if temporal and row_identities and len(set(aligned_identities)) > 1:
+            # Time column found AND multiple distinct categories share it
+            # (e.g. Region x Year retention) — split into one temporal
+            # series per category rather than one series that jumbles
+            # every region's years together in row order.
             groups: dict[str, list[dict[str, Any]]] = {}
             for identity, prow in zip(aligned_identities, parsed_rows):
                 groups.setdefault(identity, []).append(prow)
             for identity, group_rows in groups.items():
                 if len(group_rows) < 2:
                     continue
-                group_temporal = temporal and all(_looks_temporal(r["label"]) for r in group_rows)
+                group_temporal = all(_looks_temporal(r["label"]) for r in group_rows)
                 series_list.append(
                     MetricSeries(
-                        title=identity or column_header,
+                        title=_compose_category_title(identity, column_header),
                         source_document=source_document,
                         unit=unit,
                         rows=group_rows,
                         calculations=_compute_calculations(group_rows) if group_temporal else {},
                         reported_change=reported_change_by_group.get(identity, []),
+                        dimension_type="temporal_by_category",
+                        category_value=identity or None,
+                        metric_group=column_header,
                     )
                 )
-        else:
-            # No identity column, or a single constant indicator value
-            # across the whole table — use that value as the series title
-            # instead of a generic column header like "Value".
-            title = aligned_identities[0] if aligned_identities and aligned_identities[0] else column_header
+        elif temporal:
+            # Time column found, no category split needed (no identity
+            # column, or a single constant category value across the
+            # whole table, e.g. Step 1's "Claims Backlog" case) — one
+            # temporal series, titled from the constant category value if
+            # present, else the column header.
+            title = _compose_category_title(
+                aligned_identities[0] if aligned_identities else "", column_header
+            )
             series_list.append(
                 MetricSeries(
                     title=title,
                     source_document=source_document,
                     unit=unit,
                     rows=parsed_rows,
-                    calculations=_compute_calculations(parsed_rows) if temporal else {},
+                    calculations=_compute_calculations(parsed_rows),
                     reported_change=reported_change_by_group.get(
                         aligned_identities[0] if aligned_identities else "", []
                     ),
+                    dimension_type="temporal",
+                    category_value=(aligned_identities[0] if aligned_identities else None) or None,
+                    metric_group=column_header,
+                )
+            )
+        else:
+            # No time column anywhere in this table — a purely categorical
+            # comparison (e.g. Channel x Premium Share). Never compute a
+            # period-over-period/total-change here: categories have no
+            # inherent order, so there is no "before" and "after" to diff.
+            # Cross-sectional stats (highest/lowest/gap) give the report
+            # writer real Verified-Calculations content instead.
+            series_list.append(
+                MetricSeries(
+                    title=column_header,
+                    source_document=source_document,
+                    unit=unit,
+                    rows=parsed_rows,
+                    calculations=_compute_cross_sectional_stats(parsed_rows),
+                    reported_change=[],
+                    dimension_type="categorical",
+                    category_value=None,
+                    metric_group=column_header,
                 )
             )
 
@@ -391,6 +540,7 @@ def _reported_change_by_identity(
     data_rows: list[list[str]],
     derived_rate_cols: list[int],
     row_identities: list[str],
+    label_col: int = 0,
 ) -> dict[str, list[dict[str, str]]]:
     """Group each derived-rate column's raw (as-reported) values by the
     identity value of the row they belong to, so a value series can cite
@@ -399,14 +549,14 @@ def _reported_change_by_identity(
     by_group: dict[str, list[dict[str, str]]] = {}
     for rate_col in derived_rate_cols:
         for row_i, row in enumerate(data_rows):
-            if len(row) <= rate_col:
+            if len(row) <= rate_col or len(row) <= label_col:
                 continue
             raw = row[rate_col].strip()
             if not raw:
                 continue
             group_key = row_identities[row_i] if row_identities else ""
             by_group.setdefault(group_key, []).append(
-                {"label": _normalize_temporal_label(row[0].strip()), "reported": raw}
+                {"label": _normalize_temporal_label(row[label_col].strip()), "reported": raw}
             )
     return by_group
 
@@ -500,7 +650,22 @@ def format_metrics_for_evidence(tables: list[dict[str, Any]]) -> str:
             granularity = _infer_granularity(table.get("rows") or [])
             if granularity != "other":
                 display_title = f"{display_title} — {granularity.capitalize()}"
+        unit = str(table.get("unit") or "")
+        absolute_unit = "percentage points" if unit == "%" else unit
+
+        def _absolute_label(value: float) -> str:
+            return f"{value:+,} {absolute_unit}" if absolute_unit else f"{value:+,}"
+
         lines.append(f"**{display_title}{unit_suffix}** — source: {table['source_document']}")
+
+        dimension_type = str(table.get("dimension_type") or "")
+        if dimension_type == "categorical":
+            lines.append(
+                "_(categorical comparison across "
+                f"{', '.join(row['label'] for row in table['rows'])} — not a time series; "
+                "do not describe these values as a change/increase/decrease.)_"
+            )
+
         for row in table["rows"]:
             lines.append(f"- {row['label']}: {row['value']:,}")
 
@@ -511,8 +676,8 @@ def format_metrics_for_evidence(tables: list[dict[str, Any]]) -> str:
             direction = "increase" if change["percent"] >= 0 else "decrease"
             lines.append(
                 f"- {change['from']} → {change['to']}: "
-                f"{abs(change['percent'])}% {direction} "
-                f"({change['absolute']:+,})"
+                f"{abs(change['percent'])}% relative {direction} "
+                f"({_absolute_label(change['absolute'])})"
             )
 
         total = calculations.get("total_change")
@@ -520,8 +685,20 @@ def format_metrics_for_evidence(tables: list[dict[str, Any]]) -> str:
             direction = "increase" if total["percent"] >= 0 else "decrease"
             lines.append(
                 f"- {total['from']} → {total['to']} total: "
-                f"{abs(total['percent'])}% {direction} "
-                f"({total['absolute']:+,})"
+                f"{abs(total['percent'])}% relative {direction} "
+                f"({_absolute_label(total['absolute'])})"
+            )
+
+        cross_sectional = calculations.get("cross_sectional")
+        if cross_sectional:
+            highest = cross_sectional["highest"]
+            lowest = cross_sectional["lowest"]
+            gap_note = f" — a gap of {_absolute_label(cross_sectional['range'])}"
+            if cross_sectional.get("gap_percent") is not None:
+                gap_note += f" ({cross_sectional['gap_percent']}% of the highest)"
+            lines.append(
+                f"- Highest: {highest['label']} at {highest['value']:,}; "
+                f"Lowest: {lowest['label']} at {lowest['value']:,}{gap_note}"
             )
 
         reported_change = table.get("reported_change") or []
