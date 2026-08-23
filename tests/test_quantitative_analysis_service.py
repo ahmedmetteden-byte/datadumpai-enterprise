@@ -525,6 +525,87 @@ def test_max_tables_cap_keeps_the_most_material_series_not_the_first_encountered
     assert "Claims Settlement Backlog (cases)" in titles
 
 
+def test_max_tables_cap_guarantees_every_source_document_at_least_one_seat():
+    """Production incident: a report synthesizing 3 documents cited one of
+    them in 4 of 5 Key Findings and never once cited a second document's
+    metrics, because that document's real-but-modest percentage changes
+    never out-ranked another document's more dramatic swings under a
+    pure global-materiality cap. Confirmed by direct reproduction (same
+    shape as the real Financial Performance vs. Channel Performance
+    documents): a document with several highly material series and a
+    document with only modest ones, capped tight enough that pure
+    materiality ranking would exclude the modest document entirely."""
+
+    high_materiality_source = {
+        "filename": "financial_performance.xlsx",
+        "excerpt": (
+            "| Year | Gross Premium ($m) | Claims Incurred ($m) | Operating Expense ($m) | Headcount |\n"
+            "|------|--------------------:|----------------------:|-------------------------:|----------:|\n"
+            "| 2023 | 1200 | 817.7 | 208 | 400 |\n"
+            "| 2024 | 1367 | 1017.0 | 236 | 420 |\n"
+            "| 2025 | 1567 | 1220.8 | 265 | 440 |\n"
+        ),
+    }
+    modest_materiality_source = {
+        "filename": "channel_performance.xlsx",
+        "excerpt": (
+            "| Channel | Retention Rate |\n"
+            "|---------|----------------:|\n"
+            "| Direct Digital | 86 |\n"
+            "| Agents | 78 |\n"
+            "| Brokers | 81 |\n"
+            "| Partners | 69 |\n"
+        ),
+    }
+
+    # Sanity check: under pure materiality ranking (no per-document floor),
+    # the modest document is fully excluded once the cap is tight relative
+    # to the number of highly material series in the other document.
+    without_floor = sorted(
+        (
+            *_extract_from_table_titles(high_materiality_source),
+            *_extract_from_table_titles(modest_materiality_source),
+        ),
+        key=lambda t: t[1],
+        reverse=True,
+    )[:4]
+    assert not any(
+        source == "channel_performance.xlsx" for _title, _score, source in without_floor
+    ), "test setup must reproduce the crowd-out condition, or this test proves nothing"
+
+    tables = extract_metric_tables(
+        [high_materiality_source, modest_materiality_source], max_tables=4
+    )
+
+    sources = {t["source_document"] for t in tables}
+    assert "financial_performance.xlsx" in sources
+    assert "channel_performance.xlsx" in sources, (
+        "the modest-materiality document must still get at least one seat, "
+        "never be silently crowded out entirely"
+    )
+    assert len(tables) <= 4
+
+
+def _extract_from_table_titles(source: dict[str, str]) -> list[tuple[str, float, str]]:
+    """Test helper: raw (title, materiality-proxy, source) tuples used only
+    to independently confirm the crowd-out condition this test exercises,
+    without depending on extract_metric_tables' own (fixed) selection."""
+
+    from services.quantitative_analysis_service import _extract_from_table
+    from services.report_markdown_renderer import parse_markdown_blocks
+
+    results = []
+    filename = str(source.get("filename") or "")
+    for block in parse_markdown_blocks(str(source.get("excerpt") or "")):
+        if block.block_type != "table":
+            continue
+        for series in _extract_from_table(block.rows, source_document=filename):
+            total = series.calculations.get("total_change") if series.calculations else None
+            percent = abs(total["percent"]) if total and total.get("percent") is not None else -1.0
+            results.append((series.title, percent, filename))
+    return results
+
+
 # --- Phase 3: unchanged non-temporal / truncation behavior with the new classifier ---
 
 

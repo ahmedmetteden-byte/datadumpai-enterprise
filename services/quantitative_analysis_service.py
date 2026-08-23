@@ -718,9 +718,11 @@ def extract_metric_tables(
     + unit + granularity (keeping whichever candidate has the most rows —
     the most complete time series — since the same table often appears,
     with overlapping years, across multiple source documents), capped to
-    max_tables by materiality (largest total-change first) to bound prompt
-    size without letting an early-encountered, low-significance table
-    crowd out a more materially important one from a later source.
+    max_tables. Selection guarantees each source document at least one
+    seat (its single most material table) before filling remaining seats
+    by global materiality (largest total-change first), so a document
+    with only modest-magnitude metrics can't be silently crowded out of
+    the evidence set by another document's more dramatic swings.
     """
 
     candidates: list[MetricSeries] = []
@@ -747,7 +749,35 @@ def extract_metric_tables(
             best_by_key[key] = series
 
     ranked = sorted(best_by_key.values(), key=_materiality_score, reverse=True)
-    deduped = ranked[:max_tables]
+
+    # Materiality alone can let one document's dramatic percentage swings
+    # crowd out every table from a document whose real metrics are just
+    # less volatile -- confirmed in production: a report synthesizing 3
+    # workbooks cited one of them in 4 of 5 Key Findings and never once
+    # cited a second workbook's Channel Performance metrics, because their
+    # 69-86% retention rates never produced a "materiality" score dramatic
+    # enough to survive the cap next to another document's 30-49% multi-
+    # year swings. The LLM is explicitly told to use every document, but
+    # a document silently absent from the "Verified Calculations" evidence
+    # block never gets a real chance to be cited, no matter what the
+    # prompt says. Guarantee each represented document at least one seat
+    # (its own single most material table) before filling the remaining
+    # seats by global materiality, so "use all three documents" is honored
+    # by the evidence the LLM actually receives, not just by the source
+    # documents having been retrieved.
+    floor_ids: set[int] = set()
+    floor_by_document: dict[str, MetricSeries] = {}
+    for series in ranked:
+        if series.source_document not in floor_by_document:
+            floor_by_document[series.source_document] = series
+            floor_ids.add(id(series))
+
+    floor_selected = list(floor_by_document.values())
+    remaining = [series for series in ranked if id(series) not in floor_ids]
+    fill_count = max(0, max_tables - len(floor_selected))
+    deduped = floor_selected + remaining[:fill_count]
+    deduped.sort(key=_materiality_score, reverse=True)
+    deduped = deduped[:max_tables]
     return [series.to_dict() for series in deduped]
 
 
