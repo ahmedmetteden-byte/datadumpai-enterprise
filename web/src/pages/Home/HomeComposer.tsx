@@ -598,6 +598,8 @@ export function HomeComposer() {
         </div>
       </div>
 
+      <p className="text-caption text-ink-faint">{UI_COPY.aiDisclaimer}</p>
+
       {mode === 'report' ? (
         <Collapsible title={UI_COPY.homeComposerAdvanced} defaultOpen={false}>
           <div className="grid gap-3 text-left sm:grid-cols-2">

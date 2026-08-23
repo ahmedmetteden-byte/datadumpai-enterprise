@@ -194,6 +194,8 @@ export function ReportDetailPanel({
         </span>
       </div>
 
+      <p className="text-caption text-ink-faint">{UI_COPY.aiDisclaimer}</p>
+
       <div className="flex flex-wrap gap-2">
         {report.status === 'draft' ? (
           <Button size="sm" onClick={() => void handleSave()}>

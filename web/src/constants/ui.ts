@@ -164,6 +164,8 @@ export const UI_COPY = {
   reportsRegenerated: 'New version generated.',
   homeComposerReportReadyTitle: 'Your report is ready',
   homeComposerGenerateAnother: 'Generate another',
+  aiDisclaimer:
+    'DataDumpAI can make mistakes. Please verify important information before relying on it.',
   nameWorkspaceTitle: 'Name this workspace',
   nameWorkspaceBody:
     'Give this collection a name so related reports are easy to find later — e.g. "Quarterly Reports 2026".',

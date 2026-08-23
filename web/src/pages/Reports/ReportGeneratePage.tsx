@@ -451,6 +451,7 @@ export function ReportGeneratePage() {
           <div className="space-y-4">
             <p className="text-small text-success">{UI_COPY.reportsSaved}</p>
             <h3 className="text-section text-ink">{report.name}</h3>
+            <p className="text-caption text-ink-faint">{UI_COPY.aiDisclaimer}</p>
             <div className="flex flex-wrap gap-2">
               <Button
                 variant="secondary"
