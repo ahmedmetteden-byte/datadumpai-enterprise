@@ -102,6 +102,10 @@ export function HomeComposer() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [latestAnswerOutOfView, setLatestAnswerOutOfView] = useState(false);
   const activeMessages = temporaryChat ? tempMessages : studio.conversation?.messages ?? [];
+  // Once a conversation exists, a docked composer at the bottom of the
+  // viewport lets the user ask a follow-up without scrolling back up to
+  // the main composer above the conversation history.
+  const showDockedComposer = mode === 'ask' && activeMessages.length > 0;
 
   // The composer stays fixed near the top of the page while asked
   // questions/answers append below it in normal page flow (no isolated
@@ -733,6 +737,8 @@ export function HomeComposer() {
         <InlineRequestStatus kind="error" message={studio.error} />
       ) : null}
       {mode === 'ask' ? <div ref={messagesEndRef} /> : null}
+      {/* Reserves space so the docked composer never covers the last message. */}
+      {showDockedComposer ? <div className="h-20" aria-hidden /> : null}
 
       {mode === 'ask' && latestAnswerOutOfView && typeof document !== 'undefined'
         ? createPortal(
@@ -753,13 +759,53 @@ export function HomeComposer() {
                   block: 'end',
                 })
               }
-              className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-brand-500 px-4 py-2 text-small font-medium text-white shadow-lg animate-fade-in hover:bg-brand-600"
+              className={cn(
+                'fixed left-1/2 z-40 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-brand-500 px-4 py-2 text-small font-medium text-white shadow-lg animate-fade-in hover:bg-brand-600',
+                showDockedComposer ? 'bottom-24' : 'bottom-6',
+              )}
             >
               <span aria-hidden className="animate-bounce">
                 ↓
               </span>
               {UI_COPY.studioNewAnswer}
             </button>,
+            document.body,
+          )
+        : null}
+
+      {showDockedComposer && typeof document !== 'undefined'
+        ? createPortal(
+            // Same portal rationale as the scroll-hint button above: this
+            // needs to stay pinned to the real viewport, not the
+            // transformed ancestor section.
+            <div className="fixed inset-x-0 bottom-0 z-30 border-t border-surface-border bg-white/95 px-4 py-3 shadow-float backdrop-blur">
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (canSubmit) void handleSubmit();
+                }}
+                className="mx-auto flex w-full max-w-2xl items-center gap-2"
+              >
+                <label htmlFor="home-composer-docked-text" className="sr-only">
+                  {UI_COPY.homeComposerAskInputLabel}
+                </label>
+                <input
+                  id="home-composer-docked-text"
+                  type="text"
+                  value={text}
+                  onChange={(event) => setText(event.target.value)}
+                  placeholder={UI_COPY.homeComposerAskPlaceholder}
+                  className="min-w-0 flex-1 rounded-full border border-surface-border bg-surface-alt/50 px-4 py-2.5 text-body text-ink placeholder:text-ink-faint focus-visible:border-brand-500 focus-visible:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+                />
+                <Button
+                  type="submit"
+                  disabled={!canSubmit}
+                  leftIcon={submitting ? <Spinner size={16} /> : undefined}
+                >
+                  {submitting ? UI_COPY.homeComposerGenerating : UI_COPY.homeComposerAsk}
+                </Button>
+              </form>
+            </div>,
             document.body,
           )
         : null}
