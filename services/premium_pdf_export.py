@@ -807,16 +807,17 @@ class PremiumPDFBuilder:
         story: list[Any] = []
 
         for title, png_bytes in chart_export.images:
-            story.append(Paragraph(escape_xml(title), self.styles["subheading"]))
-            story.append(
+            chart_block: list[Any] = [
+                Paragraph(escape_xml(title), self.styles["subheading"]),
                 Image(
                     BytesIO(png_bytes),
                     width=6.6 * inch,
                     height=2.7 * inch,
                     kind="proportional",
-                )
-            )
-            story.append(Spacer(1, 0.12 * inch))
+                ),
+                Spacer(1, 0.12 * inch),
+            ]
+            story.append(KeepTogether(chart_block))
 
         if chart_export.unavailable_note:
             story.append(

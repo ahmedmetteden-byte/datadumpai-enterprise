@@ -54,6 +54,62 @@ def chart_layout(**extra: Any) -> dict[str, Any]:
     return layout
 
 
+def _axis_tick_format(unit: str, values: list[float]) -> dict[str, Any]:
+    """Plotly tick-formatting kwargs for a value axis, derived from the
+    metric's own `unit` field (never guessed from chart title text).
+
+    Deliberately does NOT rely on a rotated axis title string to convey
+    the unit — a long/redundant title (e.g. a metric name that already
+    contains "($m)" combined with a separately-appended "($ million)")
+    was found to overflow Kaleido's rotated-text layout and render
+    corrupted in real production PDFs (confirmed by direct reproduction:
+    "Total Claims Incurred ($m) ($ million)" rendered as a garbled,
+    truncated "m)(" fragment). Encoding the unit into tick labels instead
+    is both more robust and more readable.
+    """
+
+    unit = (unit or "").strip()
+    if unit.startswith("$"):
+        fmt: dict[str, Any] = {"tickprefix": "$", "tickformat": ",.0f"}
+        if "billion" in unit:
+            fmt["ticksuffix"] = "bn"
+        elif "million" in unit:
+            fmt["ticksuffix"] = "m"
+        return fmt
+    if unit == "%":
+        # Percent-unit values are not consistently scaled upstream (a
+        # column can store 0.86 or 86 depending on how the source cell
+        # was formatted) — only apply the auto-multiplying ".0%" format
+        # when values already look like fractions, otherwise just label
+        # the existing scale rather than guessing and risking a silent
+        # 100x display error.
+        if values and max(abs(v) for v in values) <= 1.5:
+            return {"tickformat": ".0%"}
+        return {"ticksuffix": "%"}
+    if values and max(abs(v) for v in values) >= 1000:
+        return {"tickformat": ",.0f"}
+    return {}
+
+
+def _format_value_label(unit: str, value: float) -> str:
+    """Human-readable value label matching `_axis_tick_format`'s scale
+    assumptions, used for on-chart data-point/bar annotations."""
+
+    unit = (unit or "").strip()
+    if unit.startswith("$"):
+        if "billion" in unit:
+            return f"${value:,.2f}bn"
+        if "million" in unit:
+            return f"${value:,.1f}m"
+        return f"${value:,.0f}"
+    if unit == "%":
+        pct = value * 100 if abs(value) <= 1.5 else value
+        return f"{pct:,.1f}%"
+    if value == int(value):
+        return f"{value:,.0f}"
+    return f"{value:,.2f}"
+
+
 def _figure_from_visualization_block(block: dict[str, Any]) -> tuple[str, go.Figure] | None:
     block_type = str(block.get("type", "")).upper()
     title = str(block.get("title", "Visualization"))
@@ -65,17 +121,31 @@ def _figure_from_visualization_block(block: dict[str, Any]) -> tuple[str, go.Fig
             return None
         labels = [item.get("label", "") for item in series]
         values = [float(item.get("value", 0)) for item in series]
+        unit = str(block.get("unit") or "")
         x_label = str(block.get("x_label") or "Category")
-        y_label = str(block.get("y_label") or title)
         figure = px.bar(
             x=labels,
             y=values,
-            labels={"x": x_label, "y": y_label},
+            labels={"x": x_label},
             title=title,
             color_discrete_sequence=CHART_COLORS,
         )
         figure.update_layout(**chart_layout())
-        figure.update_traces(marker_line_width=0)
+        top = max(values) * 1.18 if values and max(values) > 0 else 1
+        figure.update_traces(
+            marker_line_width=0,
+            text=[_format_value_label(unit, v) for v in values],
+            textposition="outside",
+            textfont={"size": 11, "color": "#0F172A"},
+        )
+        figure.update_yaxes(
+            title="",
+            range=[0, top],
+            gridcolor="#E2E8F0",
+            zeroline=False,
+            **_axis_tick_format(unit, values),
+        )
+        figure.update_xaxes(gridcolor="#F1F5F9")
         return title, figure
 
     if block_type == "LINE_CHART":
@@ -113,24 +183,69 @@ def _figure_from_visualization_block(block: dict[str, Any]) -> tuple[str, go.Fig
         real_labels = [l for l in labels if l]
         if len(real_labels) >= 2 and len(set(real_labels)) < 2:
             return None
+
+        unit = str(block.get("unit") or "")
+        value_labels = [_format_value_label(unit, v) for v in values]
+        # Label only the first and last points (not every point) so the
+        # chart states its own headline numbers without becoming cluttered.
+        # These MUST be trace-native text (mode="...+text"), never a
+        # separate `add_annotation()` call: on a category x-axis,
+        # Kaleido's static-image renderer was found to silently collapse
+        # every point onto the first x position — and mis-place the
+        # annotation itself — the moment an annotation referencing that
+        # axis is added (confirmed by direct reproduction: a single
+        # `add_annotation(x="2023", ...)` call alone, with no other
+        # change, turned a correct 3-point 2023/2024/2025 line into all
+        # three points stacked at "2023" with "2024"/"2025" missing from
+        # the axis entirely). Trace-native `text`/`textposition` has none
+        # of this failure mode.
+        last_idx = len(points) - 1
+        point_text = [
+            value_labels[i] if i in (0, last_idx) else "" for i in range(len(points))
+        ]
+        text_positions = [
+            "top right" if i == 0 else "top left" if i == last_idx else "top center"
+            for i in range(len(points))
+        ]
         figure = go.Figure()
         figure.add_trace(
             go.Scatter(
                 x=labels,
                 y=values,
-                mode="lines+markers",
+                mode="lines+markers+text",
                 name=title,
                 line={"color": "#2563EB", "width": 3},
-                marker={"color": "#2563EB"},
+                marker={"color": "#2563EB", "size": 8, "line": {"color": "#FFFFFF", "width": 1.5}},
+                fill="tozeroy",
+                fillcolor="rgba(37, 99, 235, 0.10)",
+                text=point_text,
+                textposition=text_positions,
+                textfont={"size": 12, "color": "#1D4ED8", "family": "Inter, sans-serif"},
+                customdata=value_labels,
+                hovertemplate="%{x}: %{customdata}<extra></extra>",
             )
         )
+        # Explicit range (rather than autorange) so "fill='tozeroy'" reads
+        # as a soft shaded band under the line, clipped to the visible
+        # window — not a chart squashed flat against a y=0 baseline that
+        # can be far below the metric's real, meaningful range.
+        lo = min(values)
+        hi = max(values)
+        pad = (hi - lo) * 0.15 if hi > lo else (abs(hi) * 0.1 or 1.0)
         figure.update_layout(
             **chart_layout(
                 title=title,
                 xaxis_title=str(block.get("x_label") or "Period"),
-                yaxis_title=str(block.get("y_label") or title),
+                margin=dict(l=20, r=50, t=40, b=20),
             ),
         )
+        figure.update_yaxes(
+            range=[lo - pad, hi + pad],
+            gridcolor="#E2E8F0",
+            zeroline=False,
+            **_axis_tick_format(unit, values),
+        )
+        figure.update_xaxes(gridcolor="#F1F5F9")
         return title, figure
 
     if block_type == "PIE_CHART":
@@ -155,17 +270,34 @@ def _figure_from_visualization_block(block: dict[str, Any]) -> tuple[str, go.Fig
             return None
         labels = [item.get("label", "") for item in items]
         values = [float(item.get("value", 0) or 0) for item in items]
+        # Every item shares one unit by construction (visualization_engine.py's
+        # unit-consistency gate groups KPI candidates by unit before this
+        # block is ever built), so the first item's unit applies to all.
+        unit = str(items[0].get("unit") or "") if items else ""
         x_label = str(block.get("x_label") or "Metric")
-        y_label = str(block.get("y_label") or title)
         figure = px.bar(
             x=labels,
             y=values,
-            labels={"x": x_label, "y": y_label},
+            labels={"x": x_label},
             title=title,
             color_discrete_sequence=CHART_COLORS,
         )
         figure.update_layout(**chart_layout())
-        figure.update_traces(marker_line_width=0)
+        top = max(values) * 1.18 if values and max(values) > 0 else 1
+        figure.update_traces(
+            marker_line_width=0,
+            text=[_format_value_label(unit, v) for v in values],
+            textposition="outside",
+            textfont={"size": 11, "color": "#0F172A"},
+        )
+        figure.update_yaxes(
+            title="",
+            range=[0, top],
+            gridcolor="#E2E8F0",
+            zeroline=False,
+            **_axis_tick_format(unit, values),
+        )
+        figure.update_xaxes(gridcolor="#F1F5F9")
         return title, figure
 
     if block_type == "TIMELINE":

@@ -76,12 +76,19 @@ def test_bar_chart_uses_block_provided_axis_labels():
             ]
         },
         "x_label": "Segment",
-        "y_label": "Market Share (%)",
+        "unit": "%",
     }
     _title, figure = _figure_from_visualization_block(block)
 
     assert figure.layout.xaxis.title.text == "Segment"
-    assert figure.layout.yaxis.title.text == "Market Share (%)"
+    # The y-axis no longer carries a rotated title string at all (a long/
+    # redundant title was found to overflow Kaleido's rotated-text layout
+    # and render corrupted in real production PDFs — see
+    # _axis_tick_format's docstring). The unit is instead conveyed via
+    # tick formatting and on-bar value labels.
+    assert not figure.layout.yaxis.title.text
+    assert figure.layout.yaxis.ticksuffix == "%"
+    assert list(figure.data[0].text) == ["32.0%", "68.0%"]
 
 
 def test_bar_chart_never_falls_back_to_generic_metric_value_labels():
@@ -94,28 +101,31 @@ def test_bar_chart_never_falls_back_to_generic_metric_value_labels():
                 {"label": "2024", "value": 1558.7},
             ]
         },
+        "unit": "$ million",
     }
     _title, figure = _figure_from_visualization_block(block)
 
     assert figure.layout.xaxis.title.text != "Metric"
-    assert figure.layout.yaxis.title.text != "Value"
-    assert figure.layout.yaxis.title.text == "Gross Premium"  # falls back to the block's own title
+    # No generic "Value" axis title, and no unformatted raw numbers either
+    # — each bar states its own real, unit-formatted value.
+    assert list(figure.data[0].text) == ["$1,043.1m", "$1,558.7m"]
+    assert figure.layout.yaxis.tickprefix == "$"
 
 
 def test_kpi_cards_gets_real_axis_labels_not_literal_x_y():
     block = {
         "type": "KPI_CARDS",
         "title": "Key Performance Indicators",
-        "data": {"items": [{"label": "Gross Premium", "value": 1558.7}]},
+        "data": {"items": [{"label": "Gross Premium", "value": 1558.7, "unit": "$ million"}]},
         "x_label": "Metric",
-        "y_label": "₦ billion",
     }
     _title, figure = _figure_from_visualization_block(block)
 
     assert figure.layout.xaxis.title.text == "Metric"
-    assert figure.layout.yaxis.title.text == "₦ billion"
     assert figure.layout.xaxis.title.text != "x"
+    assert not figure.layout.yaxis.title.text
     assert figure.layout.yaxis.title.text != "y"
+    assert list(figure.data[0].text) == ["$1,558.7m"]
 
 
 def test_line_chart_uses_block_provided_axis_labels():
@@ -124,12 +134,21 @@ def test_line_chart_uses_block_provided_axis_labels():
         "title": "Gross Premium",
         "data": {"trends": [{"label": "2024", "prior": 1043.1, "current": 1558.7}]},
         "x_label": "Period",
-        "y_label": "Gross Premium (₦ billion)",
+        "unit": "$ billion",
     }
     _title, figure = _figure_from_visualization_block(block)
 
     assert figure.layout.xaxis.title.text == "Period"
-    assert figure.layout.yaxis.title.text == "Gross Premium (₦ billion)"
+    assert figure.layout.yaxis.title.text is None
+    assert figure.layout.yaxis.ticksuffix == "bn"
+    # First and last points are labeled with real, unit-formatted values —
+    # via trace-native text, never figure.add_annotation(). A category
+    # x-axis annotation was found to collapse every point in the trace
+    # onto a single x position under Kaleido's static-image renderer
+    # (confirmed by direct reproduction), so on-chart point labels must
+    # never use that mechanism.
+    assert not figure.layout.annotations
+    assert list(figure.data[0].text) == ["$1,043.10bn", "$1,558.70bn"]
 
 
 def test_line_chart_three_period_series_shows_every_period_on_the_x_axis():

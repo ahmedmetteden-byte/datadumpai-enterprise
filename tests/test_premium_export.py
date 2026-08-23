@@ -300,13 +300,21 @@ def test_executive_summary_page_keeps_top_risks_heading_with_its_content():
             return "".join(f.text for f in frags)
         return ""
 
-    risks_block = keep_togethers[0]
+    def _heading_of(block) -> str:
+        first = block._content[0]
+        return _flowable_text(first) if isinstance(first, Paragraph) else ""
+
+    # Indexed by heading text, not raw position — the chart section (also
+    # correctly KeepTogether-wrapped, so a chart heading can never split
+    # from its own image across a page break) may add its own blocks
+    # ahead of Risks/Opportunities.
+    by_heading = {_heading_of(block): block for block in keep_togethers}
+
+    risks_block = by_heading["Top Risks"]
     assert isinstance(risks_block._content[0], Paragraph)
-    assert _flowable_text(risks_block._content[0]) == "Top Risks"
     assert len(risks_block._content) >= 2  # heading + at least one content line
 
-    opportunities_block = keep_togethers[1]
-    assert _flowable_text(opportunities_block._content[0]) == "Top Opportunities"
+    opportunities_block = by_heading["Top Opportunities"]
     assert len(opportunities_block._content) >= 2
 
 
