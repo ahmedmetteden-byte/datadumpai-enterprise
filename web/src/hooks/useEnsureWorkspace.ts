@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { services } from '@/api/services';
 import { useAuth } from '@/context/AuthContext';
 import { useWorkspace } from '@/context/WorkspaceContext';
@@ -26,14 +26,11 @@ export function useEnsureWorkspace(): EnsureWorkspaceState {
     useWorkspace();
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const attempted = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
 
     async function ensure() {
-      if (attempted.current) return;
-      attempted.current = true;
       const auth = { accessToken };
       try {
         const workspaces = await services.workspace.listWorkspaces(auth);
