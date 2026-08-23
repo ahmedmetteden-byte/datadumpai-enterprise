@@ -1,3 +1,4 @@
+import { Collapsible } from '@/components/ui/Collapsible';
 import { CopyButton } from '@/components/ui/CopyButton';
 import { UI_COPY } from '@/constants/ui';
 import { ConfidenceBadge } from './ConfidenceBadge';
@@ -70,85 +71,91 @@ export function ConversationMessage({
         </p>
       </section>
 
-      {message.evidence ? (
-        <section className="rounded-lg bg-surface-alt/60 px-3 py-3">
-          <h3 className="text-caption uppercase tracking-wide text-ink-faint">
-            {UI_COPY.studioEvidence}
-          </h3>
-          <p className="mt-2 text-small text-ink-muted">{message.evidence}</p>
-        </section>
-      ) : null}
+      {message.evidence || citations.length > 0 || linked.length > 0 || (message.sources && message.sources.length > 0) ? (
+        <Collapsible title={UI_COPY.studioEvidenceToggle} defaultOpen={false}>
+          <div className="space-y-5">
+            {message.evidence ? (
+              <section className="rounded-lg bg-surface-alt/60 px-3 py-3">
+                <h3 className="text-caption uppercase tracking-wide text-ink-faint">
+                  {UI_COPY.studioEvidence}
+                </h3>
+                <p className="mt-2 text-small text-ink-muted">{message.evidence}</p>
+              </section>
+            ) : null}
 
-      {citations.length > 0 ? (
-        <section>
-          <h3 className="mb-2 text-caption uppercase tracking-wide text-ink-faint">
-            {UI_COPY.studioCitations}
-          </h3>
-          <ol className="space-y-2">
-            {citations.map((citation) => (
-              <li
-                key={citation.id}
-                className="rounded-lg border border-surface-border px-3 py-2"
-              >
-                <div className="flex items-baseline gap-2">
-                  <span className="text-caption font-semibold text-brand-600">
-                    [{citation.index}]
-                  </span>
-                  <span className="text-small font-medium text-ink">
-                    {citation.label}
-                  </span>
+            {citations.length > 0 ? (
+              <section>
+                <h3 className="mb-2 text-caption uppercase tracking-wide text-ink-faint">
+                  {UI_COPY.studioCitations}
+                </h3>
+                <ol className="space-y-2">
+                  {citations.map((citation) => (
+                    <li
+                      key={citation.id}
+                      className="rounded-lg border border-surface-border px-3 py-2"
+                    >
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-caption font-semibold text-brand-600">
+                          [{citation.index}]
+                        </span>
+                        <span className="text-small font-medium text-ink">
+                          {citation.label}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-caption text-ink-muted">
+                        “{citation.quote}”
+                      </p>
+                      {citation.location ? (
+                        <p className="mt-1 font-mono text-caption text-ink-faint">
+                          {citation.location}
+                        </p>
+                      ) : null}
+                    </li>
+                  ))}
+                </ol>
+              </section>
+            ) : null}
+
+            {linked.length > 0 ? (
+              <section>
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <h3 className="text-caption uppercase tracking-wide text-ink-faint">
+                    {UI_COPY.studioLinkedDocuments}
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={onSelectSources}
+                    className="text-caption font-medium text-brand-600 hover:text-brand-700"
+                  >
+                    {UI_COPY.studioOpenSources}
+                  </button>
                 </div>
-                <p className="mt-1 text-caption text-ink-muted">
-                  “{citation.quote}”
-                </p>
-                {citation.location ? (
-                  <p className="mt-1 font-mono text-caption text-ink-faint">
-                    {citation.location}
-                  </p>
-                ) : null}
-              </li>
-            ))}
-          </ol>
-        </section>
-      ) : null}
-
-      {linked.length > 0 ? (
-        <section>
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <h3 className="text-caption uppercase tracking-wide text-ink-faint">
-              {UI_COPY.studioLinkedDocuments}
-            </h3>
-            <button
-              type="button"
-              onClick={onSelectSources}
-              className="text-caption font-medium text-brand-600 hover:text-brand-700"
-            >
-              {UI_COPY.studioOpenSources}
-            </button>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {linked.slice(0, 4).map((source) => (
+                    <SourceCard
+                      key={source.id}
+                      source={source}
+                      onOpen={() => onSelectSources?.()}
+                    />
+                  ))}
+                </div>
+              </section>
+            ) : message.sources && message.sources.length > 0 ? (
+              <section>
+                <h3 className="mb-2 text-caption uppercase tracking-wide text-ink-faint">
+                  {UI_COPY.studioSources}
+                </h3>
+                <button
+                  type="button"
+                  onClick={onSelectSources}
+                  className="text-small text-ink-muted hover:text-ink"
+                >
+                  {message.sources.length} {UI_COPY.studioSourcesCount}
+                </button>
+              </section>
+            ) : null}
           </div>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {linked.slice(0, 4).map((source) => (
-              <SourceCard
-                key={source.id}
-                source={source}
-                onOpen={() => onSelectSources?.()}
-              />
-            ))}
-          </div>
-        </section>
-      ) : message.sources && message.sources.length > 0 ? (
-        <section>
-          <h3 className="mb-2 text-caption uppercase tracking-wide text-ink-faint">
-            {UI_COPY.studioSources}
-          </h3>
-          <button
-            type="button"
-            onClick={onSelectSources}
-            className="text-small text-ink-muted hover:text-ink"
-          >
-            {message.sources.length} {UI_COPY.studioSourcesCount}
-          </button>
-        </section>
+        </Collapsible>
       ) : null}
 
       {message.followUps && message.followUps.length > 0 ? (

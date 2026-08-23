@@ -287,6 +287,8 @@ export const UI_COPY = {
   studioSources: 'Sources',
   studioSourcesCount: 'sources in evidence panel',
   studioLinkedDocuments: 'Linked documents',
+  studioEvidenceToggle: 'Evidence, citations & sources',
+  studioNewAnswer: 'New answer below',
   studioNoEvidence: 'Evidence appears here after an answer.',
   studioReferencedDocuments: 'Referenced documents',
   studioReferencedMeetings: 'Referenced meetings',

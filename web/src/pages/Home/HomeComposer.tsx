@@ -98,6 +98,33 @@ export function HomeComposer() {
   const [tempMessages, setTempMessages] = useState<IntelligenceMessage[]>([]);
   const historyDrawer = useDisclosure(false);
 
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [latestAnswerOutOfView, setLatestAnswerOutOfView] = useState(false);
+  const activeMessages = temporaryChat ? tempMessages : studio.conversation?.messages ?? [];
+
+  // The composer stays fixed near the top of the page while asked
+  // questions/answers append below it in normal page flow (no isolated
+  // scroll container) — so a new answer can render entirely off-screen
+  // with no indication it arrived. Watches whether the end of the
+  // conversation is currently visible and, if not, surfaces a "scroll
+  // down" affordance rather than leaving the user to wonder whether
+  // anything happened.
+  useEffect(() => {
+    if (mode !== 'ask' || activeMessages.length === 0) {
+      setLatestAnswerOutOfView(false);
+      return;
+    }
+    const target = messagesEndRef.current;
+    if (!target) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => setLatestAnswerOutOfView(!entry.isIntersecting),
+      { threshold: 0 },
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [mode, activeMessages.length]);
+
   const destinationDialog = useDisclosure(false);
   const [pendingFiles, setPendingFiles] = useState<File[] | null>(null);
   const [resolvingDestination, setResolvingDestination] = useState(false);
@@ -703,6 +730,25 @@ export function HomeComposer() {
       ) : null}
       {mode === 'ask' && !temporaryChat && studio.error ? (
         <InlineRequestStatus kind="error" message={studio.error} />
+      ) : null}
+      {mode === 'ask' ? <div ref={messagesEndRef} /> : null}
+
+      {mode === 'ask' && latestAnswerOutOfView ? (
+        <button
+          type="button"
+          onClick={() =>
+            messagesEndRef.current?.scrollIntoView({
+              behavior: 'smooth',
+              block: 'end',
+            })
+          }
+          className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-brand-500 px-4 py-2 text-small font-medium text-white shadow-lg animate-fade-in hover:bg-brand-600"
+        >
+          <span aria-hidden className="animate-bounce">
+            ↓
+          </span>
+          {UI_COPY.studioNewAnswer}
+        </button>
       ) : null}
 
       <Drawer
