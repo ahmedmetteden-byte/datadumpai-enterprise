@@ -596,6 +596,7 @@ PLANS = {
             "team_sharing": False,
             "priority_processing": False,
             "priority_support": False,
+            "watermark": True,
         },
         "includes": [
             "Up to 3 projects",
@@ -630,6 +631,7 @@ PLANS = {
             "team_sharing": False,
             "priority_processing": False,
             "priority_support": False,
+            "watermark": False,
         },
         "includes": [
             "Unlimited projects",
@@ -667,6 +669,7 @@ PLANS = {
             "team_sharing": True,
             "priority_processing": True,
             "priority_support": True,
+            "watermark": False,
         },
         "includes": [
             "Unlimited projects, uploads, and reports",
@@ -709,6 +712,7 @@ PLANS = {
             "api_access": True,
             "on_premise": True,
             "white_label": True,
+            "watermark": False,
         },
         "includes": [
             "Everything in Professional",

@@ -126,6 +126,10 @@ class PremiumExportMetadata:
     reporting_period: str = "Not specified"
     source_documents: list[str] | None = None
     pack_type: str = "executive"
+    # Defaults to True (the free-tier / most-restrictive behavior) so any
+    # caller that doesn't explicitly resolve the account's plan never
+    # accidentally ships an unwatermarked PDF.
+    show_watermark: bool = True
 
 
 class PremiumPDFBuilder:
@@ -329,15 +333,16 @@ class PremiumPDFBuilder:
         return None
 
     def _draw_page_decorations(self, canvas_obj, doc) -> None:
-        canvas_obj.saveState()
         width, height = letter
 
-        canvas_obj.setFillColor(colors.Color(0.92, 0.94, 0.97, alpha=0.35))
-        canvas_obj.setFont(HEADING_FONT, 46)
-        canvas_obj.translate(width / 2, height / 2)
-        canvas_obj.rotate(35)
-        canvas_obj.drawCentredString(0, 0, APP_NAME)
-        canvas_obj.restoreState()
+        if self.metadata.show_watermark:
+            canvas_obj.saveState()
+            canvas_obj.setFillColor(colors.Color(0.92, 0.94, 0.97, alpha=0.35))
+            canvas_obj.setFont(HEADING_FONT, 46)
+            canvas_obj.translate(width / 2, height / 2)
+            canvas_obj.rotate(35)
+            canvas_obj.drawCentredString(0, 0, APP_NAME)
+            canvas_obj.restoreState()
 
         if getattr(doc, "page", 1) <= 1:
             return

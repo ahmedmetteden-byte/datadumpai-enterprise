@@ -273,13 +273,6 @@ def export_report(
         source_documents=list(report.get("sourceDocuments") or []),
     )
 
-    context = ReportExportContext(
-        project_id=workspace_id,
-        project_name=str(project.get("name") or "Workspace"),
-        report=report_data,
-        reporting_period=str(report.get("periodName") or "Not specified"),
-    )
-
     with user_request_scope(principal):
         plans = PlanService(access_token=principal.access_token)
         if format == "docx" and not plans.has_feature("word_export"):
@@ -292,6 +285,14 @@ def export_report(
                 status.HTTP_403_FORBIDDEN,
                 detail="PowerPoint export requires the Professional plan or higher.",
             )
+
+        context = ReportExportContext(
+            project_id=workspace_id,
+            project_name=str(project.get("name") or "Workspace"),
+            report=report_data,
+            reporting_period=str(report.get("periodName") or "Not specified"),
+            show_watermark=plans.show_watermark(),
+        )
 
         premium = PremiumExportService(
             ExportService(access_token=principal.access_token)

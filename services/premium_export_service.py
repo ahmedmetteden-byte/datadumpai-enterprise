@@ -31,6 +31,11 @@ class ReportExportContext:
     project_name: str
     report: ReportData
     reporting_period: str = "Not specified"
+    # Defaults to True (free-tier behavior) so a caller that doesn't
+    # resolve the account's plan never accidentally ships an unwatermarked
+    # PDF -- callers with plan context (the export API route) pass the
+    # real value explicitly.
+    show_watermark: bool = True
 
     @property
     def report_name(self) -> str:
@@ -68,6 +73,7 @@ class PremiumExportService:
                     reporting_period=context.reporting_period,
                     source_documents=context.source_documents,
                     pack_type="executive",
+                    show_watermark=context.show_watermark,
                 ),
             )
             filename = f"{self._slugify(context.report_name, 'executive')}.pdf"
@@ -97,6 +103,7 @@ class PremiumExportService:
                     reporting_period=context.reporting_period,
                     source_documents=context.source_documents,
                     pack_type="board_pack",
+                    show_watermark=context.show_watermark,
                 ),
             )
             filename = f"{self._slugify(context.report_name, 'board_pack')}.pdf"

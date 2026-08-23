@@ -70,6 +70,19 @@ def test_professional_plan_unlocks_word_and_pptx_export(isolated_env):
     assert plans.locked_export_formats() == {}
 
 
+def test_free_plan_shows_watermark(plan_service: PlanService):
+    assert plan_service.show_watermark() is True
+
+
+@pytest.mark.parametrize("plan_id", ["starter", "professional", "enterprise"])
+def test_paid_plans_do_not_show_watermark(isolated_env, plan_id):
+    usage = UsageService()
+    usage.set_plan(plan_id)
+    plans = PlanService(usage)
+
+    assert plans.show_watermark() is False
+
+
 def test_plan_service_threads_access_token_to_usage_service(monkeypatch):
     import services.plan_service as plan_service_module
 

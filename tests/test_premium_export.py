@@ -70,7 +70,111 @@ def test_build_premium_pdf_returns_pdf_bytes():
     assert pdf_bytes.startswith(b"%PDF")
 
 
-def test_build_premium_presentation_returns_pptx_bytes():
+class _FakeCanvas:
+    """Records the draw calls _draw_page_decorations makes, without
+    depending on real PDF rendering/text-extraction (rotated watermark
+    text has been shown, elsewhere in this codebase, to extract unreliably
+    via naive PDF-text tools -- testing the actual method calls the
+    watermark logic branches on is more direct and robust)."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def saveState(self):
+        self.calls.append("saveState")
+
+    def restoreState(self):
+        self.calls.append("restoreState")
+
+    def setFillColor(self, *_args, **_kwargs):
+        self.calls.append("setFillColor")
+
+    def setFont(self, *_args, **_kwargs):
+        self.calls.append("setFont")
+
+    def translate(self, *_args, **_kwargs):
+        self.calls.append("translate")
+
+    def rotate(self, *_args, **_kwargs):
+        self.calls.append("rotate")
+
+    def drawCentredString(self, _x, _y, text):
+        self.calls.append(f"drawCentredString:{text}")
+
+    def setStrokeColor(self, *_args, **_kwargs):
+        pass
+
+    def line(self, *_args, **_kwargs):
+        pass
+
+    def drawString(self, _x, _y, text):
+        self.calls.append(f"drawString:{text}")
+
+    def drawRightString(self, _x, _y, text):
+        self.calls.append(f"drawRightString:{text}")
+
+
+class _FakeDoc:
+    def __init__(self, page: int) -> None:
+        self.page = page
+
+
+def test_free_plan_pdf_draws_the_watermark():
+    from services.premium_pdf_export import PremiumPDFBuilder
+
+    builder = PremiumPDFBuilder(
+        PremiumExportMetadata(
+            project_name="p", report_name="r", show_watermark=True,
+        )
+    )
+    canvas = _FakeCanvas()
+    builder._draw_page_decorations(canvas, _FakeDoc(page=1))
+
+    assert "rotate" in canvas.calls
+    assert "drawCentredString:DataDumpAI" in canvas.calls
+
+
+def test_paid_plan_pdf_omits_the_watermark():
+    from services.premium_pdf_export import PremiumPDFBuilder
+
+    builder = PremiumPDFBuilder(
+        PremiumExportMetadata(
+            project_name="p", report_name="r", show_watermark=False,
+        )
+    )
+    canvas = _FakeCanvas()
+    builder._draw_page_decorations(canvas, _FakeDoc(page=1))
+
+    assert "rotate" not in canvas.calls
+    assert "drawCentredString:DataDumpAI" not in canvas.calls
+
+
+def test_paid_plan_pdf_keeps_the_header_footer_branding_on_later_pages():
+    """Removing the watermark must not remove the (separate, non-diagonal)
+    header/footer branding that appears on page 2+."""
+
+    from services.premium_pdf_export import PremiumPDFBuilder
+
+    builder = PremiumPDFBuilder(
+        PremiumExportMetadata(
+            project_name="p", report_name="r", show_watermark=False,
+        )
+    )
+    canvas = _FakeCanvas()
+    builder._draw_page_decorations(canvas, _FakeDoc(page=2))
+
+    assert "rotate" not in canvas.calls
+    # The header/footer branding (a separate, non-diagonal element) still
+    # renders even with the watermark off.
+    assert "drawString:DataDumpAI" in canvas.calls
+    assert any(call.startswith("drawRightString:Page") for call in canvas.calls)
+    # Only the footer's saveState/restoreState pair ran -- the watermark's
+    # own pair was skipped, not left unbalanced.
+    assert canvas.calls.count("saveState") == 1
+    assert canvas.calls.count("restoreState") == 1
+
+
+def test_build_premium_pdf_returns_pdf_bytes():
     pptx_bytes = build_premium_presentation(
         report_text=SAMPLE_REPORT,
         metadata=PresentationExportMetadata(

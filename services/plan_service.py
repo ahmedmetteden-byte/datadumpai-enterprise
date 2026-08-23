@@ -99,6 +99,9 @@ class PlanService:
     def can_use_pptx_export(self) -> bool:
         return self.has_feature("pptx_export")
 
+    def show_watermark(self) -> bool:
+        return self.has_feature("watermark")
+
     def projects_max(self) -> int | None:
         return self.get_plan_config().get("projects_max")
 
