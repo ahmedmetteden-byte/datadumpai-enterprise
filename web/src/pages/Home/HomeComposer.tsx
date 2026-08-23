@@ -5,6 +5,7 @@ import {
   useState,
   type DragEvent,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { InlineRequestStatus } from '@/components/feedback';
 import { Button } from '@/components/ui/Button';
 import { Collapsible } from '@/components/ui/Collapsible';
@@ -733,23 +734,35 @@ export function HomeComposer() {
       ) : null}
       {mode === 'ask' ? <div ref={messagesEndRef} /> : null}
 
-      {mode === 'ask' && latestAnswerOutOfView ? (
-        <button
-          type="button"
-          onClick={() =>
-            messagesEndRef.current?.scrollIntoView({
-              behavior: 'smooth',
-              block: 'end',
-            })
-          }
-          className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-brand-500 px-4 py-2 text-small font-medium text-white shadow-lg animate-fade-in hover:bg-brand-600"
-        >
-          <span aria-hidden className="animate-bounce">
-            ↓
-          </span>
-          {UI_COPY.studioNewAnswer}
-        </button>
-      ) : null}
+      {mode === 'ask' && latestAnswerOutOfView && typeof document !== 'undefined'
+        ? createPortal(
+            // Portalled straight to <body>: this component's own root
+            // section uses "animate-slide-up" (a transform-based
+            // animation), and per the CSS spec ANY transform on an
+            // ancestor -- even a resolved-to-identity one -- creates a
+            // new containing block for position:fixed descendants.
+            // Confirmed by direct measurement: without the portal this
+            // button rendered 1300+px down the page instead of pinned to
+            // the visible viewport, because it was positioning itself
+            // relative to that section instead of the real viewport.
+            <button
+              type="button"
+              onClick={() =>
+                messagesEndRef.current?.scrollIntoView({
+                  behavior: 'smooth',
+                  block: 'end',
+                })
+              }
+              className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-brand-500 px-4 py-2 text-small font-medium text-white shadow-lg animate-fade-in hover:bg-brand-600"
+            >
+              <span aria-hidden className="animate-bounce">
+                ↓
+              </span>
+              {UI_COPY.studioNewAnswer}
+            </button>,
+            document.body,
+          )
+        : null}
 
       <Drawer
         open={historyDrawer.isOpen}
