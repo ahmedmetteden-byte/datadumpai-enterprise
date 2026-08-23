@@ -326,6 +326,15 @@ def _cover_page(document: Document, metadata: DocxExportMetadata) -> None:
     report_name.runs[0].bold = True
     report_name.runs[0].font.size = Pt(13)
 
+    document.add_paragraph()
+    disclaimer = document.add_paragraph(
+        "DataDumpAI can make mistakes. Please verify important information before "
+        "relying on it."
+    )
+    disclaimer.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    disclaimer.runs[0].font.size = Pt(9)
+    disclaimer.runs[0].font.color.rgb = COLOR_MUTED
+
     document.add_page_break()
 
 

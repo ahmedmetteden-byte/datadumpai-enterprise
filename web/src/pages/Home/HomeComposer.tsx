@@ -395,11 +395,13 @@ export function HomeComposer() {
         <button
           type="button"
           onClick={() => setMode('report')}
+          disabled={submitting}
           className={cn(
             'rounded-full px-4 py-1.5 text-small font-medium transition-colors',
             mode === 'report'
               ? 'bg-brand-500 text-white'
               : 'bg-surface-alt text-ink-muted hover:text-ink',
+            submitting && 'cursor-not-allowed opacity-60',
           )}
         >
           {UI_COPY.homeComposerReportTab}
@@ -407,11 +409,13 @@ export function HomeComposer() {
         <button
           type="button"
           onClick={() => setMode('ask')}
+          disabled={submitting}
           className={cn(
             'rounded-full px-4 py-1.5 text-small font-medium transition-colors',
             mode === 'ask'
               ? 'bg-brand-500 text-white'
               : 'bg-surface-alt text-ink-muted hover:text-ink',
+            submitting && 'cursor-not-allowed opacity-60',
           )}
         >
           {UI_COPY.homeComposerAskTab}
@@ -469,7 +473,9 @@ export function HomeComposer() {
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
               event.preventDefault();
-              void handleSubmit();
+              if (canSubmit) {
+                void handleSubmit();
+              }
             }
           }}
           placeholder={
@@ -573,7 +579,7 @@ export function HomeComposer() {
                 : UI_COPY.homeComposerNeedTextOrFile}
             </p>
           ) : null}
-          {submitting && mode === 'report' ? (
+          {submitting ? (
             <p className="text-caption text-ink-faint" role="status">
               {UI_COPY.reportsGeneratingEstimate}
             </p>
@@ -581,12 +587,12 @@ export function HomeComposer() {
           <Button
             onClick={() => void handleSubmit()}
             disabled={!canSubmit}
-            leftIcon={submitting && mode === 'report' ? <Spinner size={16} /> : undefined}
+            leftIcon={submitting ? <Spinner size={16} /> : undefined}
           >
-            {mode === 'ask'
-              ? UI_COPY.homeComposerAsk
-              : submitting
-                ? UI_COPY.homeComposerGenerating
+            {submitting
+              ? UI_COPY.homeComposerGenerating
+              : mode === 'ask'
+                ? UI_COPY.homeComposerAsk
                 : UI_COPY.homeComposerGenerate}
           </Button>
         </div>

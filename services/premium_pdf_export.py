@@ -396,6 +396,14 @@ class PremiumPDFBuilder:
 
         story.append(Spacer(1, 0.8 * inch))
         story.append(Paragraph(self.metadata.report_name, self.styles["cover_meta_value"]))
+        story.append(Spacer(1, 0.6 * inch))
+        story.append(
+            Paragraph(
+                "DataDumpAI can make mistakes. Please verify important information before "
+                "relying on it.",
+                self.styles["caption"],
+            )
+        )
         story.append(PageBreak())
 
         return story

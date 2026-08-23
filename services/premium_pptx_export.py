@@ -74,6 +74,15 @@ class PremiumPresentationBuilder:
             paragraph.font.color.rgb = MUTED
             paragraph.alignment = PP_ALIGN.CENTER
 
+        disclaimer = slide.shapes.add_textbox(Inches(0.8), Inches(6.7), Inches(11.5), Inches(0.5))
+        disclaimer_frame = disclaimer.text_frame
+        disclaimer_frame.text = (
+            "DataDumpAI can make mistakes. Please verify important information before relying on it."
+        )
+        disclaimer_frame.paragraphs[0].font.size = Pt(10)
+        disclaimer_frame.paragraphs[0].font.color.rgb = MUTED
+        disclaimer_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
+
     def _bullet_slide(self, title: str, bullets: list[str]) -> None:
         slide = self.presentation.slides.add_slide(self.presentation.slide_layouts[6])
         heading = slide.shapes.add_textbox(Inches(0.7), Inches(0.5), Inches(12), Inches(0.7))
