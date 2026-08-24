@@ -62,6 +62,14 @@ export interface IntelligenceMessage {
   answer?: string;
   evidence?: string;
   confidence?: number;
+  /**
+   * Independent of `confidence` (answer/evidence quality): whether this
+   * answer's numerical claims were checked against DataDumpAI's
+   * deterministic calculations and found consistent. `undefined`/`null`
+   * means no verifiable numeric claim was made — not that verification
+   * failed.
+   */
+  calculationVerified?: boolean | null;
   followUps?: string[];
   sources?: IntelligenceSource[];
   citations?: IntelligenceCitation[];

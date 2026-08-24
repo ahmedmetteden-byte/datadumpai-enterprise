@@ -140,6 +140,60 @@ def test_financial_reports_generate_charts():
     assert figures
 
 
+# Phase 3 Step 4, Phase A: reproduces the exact production bug — no real
+# table, no genuine Revenue/Profit/Growth figures anywhere, but the
+# words "growth" and "profitability" appear near a bare year number
+# ("2026") elsewhere in the narrative. The old keyword-then-nearest-
+# digits fallback in _financial_series() picked up "2026" as if it were
+# a real value for all three labels, fabricating a "Financial
+# Performance" chart with three identical bogus bars.
+NO_REAL_FINANCIAL_DATA_DOCUMENT = """
+=== SOURCE DOCUMENT: Quarterly_Business_Report_2026.pdf ===
+
+## Executive Summary
+
+Gross premium rose from $128.4 million in January to $139.6 million in March 2026,
+reflecting a steady growth trajectory. This increase is notable as it indicates a
+positive trend in revenue generation, essential for sustaining operational capacity
+and profitability. However, the growth rate has slowed, suggesting potential market
+saturation or increased competition. Loss ratio moderated, indicating a more
+favorable underwriting environment and improved profitability outlook overall.
+"""
+
+
+def test_no_chart_generated_when_no_real_financial_data_exists_in_prose():
+    """A clean report with no chart is better than a fabricated one: when
+    the narrative has no real table and no genuine Revenue/Expenses/
+    Profit/Growth figures, the BAR_CHART "Financial Performance" block
+    must never appear — regardless of how many financial-sounding words
+    or unrelated numbers (like a bare year) the prose happens to contain."""
+
+    report_data = _base_report_data(
+        NO_REAL_FINANCIAL_DATA_DOCUMENT, report_type="Financial Analysis"
+    )
+    enriched = apply_visualizations(
+        report_data,
+        user_report_type="Financial Analysis",
+        document_text=NO_REAL_FINANCIAL_DATA_DOCUMENT,
+        include_charts=True,
+        force_generate=True,
+    )
+
+    bar_blocks = [
+        block
+        for block in enriched.charts.get("visualizations", [])
+        if block["type"] == VisualizationStrategy.BAR_CHART.value
+        and block.get("title") == "Financial Performance"
+    ]
+    assert not bar_blocks, f"expected no fabricated Financial Performance chart, got {bar_blocks}"
+
+    # Specifically confirm the bogus "2026" value never appears in ANY
+    # chart data — the year must never be picked up as a metric value.
+    for block in enriched.charts.get("visualizations", []):
+        block_text = str(block.get("data") or {})
+        assert "2026" not in block_text or block.get("type") != VisualizationStrategy.BAR_CHART.value
+
+
 TABULAR_FINANCIAL_DOCUMENT = """
 === SOURCE DOCUMENT: Quarterly_Revenue.pdf ===
 

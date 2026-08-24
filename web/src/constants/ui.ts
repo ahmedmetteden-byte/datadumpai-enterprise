@@ -283,6 +283,7 @@ export const UI_COPY = {
   studioEvidence: 'Evidence',
   studioEvidenceSubtitle: 'Sources used for the latest answer.',
   studioConfidence: 'Confidence',
+  studioCalculationVerified: 'Calculations verified',
   studioFollowUps: 'Suggested follow-up questions',
   studioSources: 'Sources',
   studioSourcesCount: 'sources in evidence panel',

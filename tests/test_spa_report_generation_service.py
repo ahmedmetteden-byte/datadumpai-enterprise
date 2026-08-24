@@ -1266,3 +1266,115 @@ def test_generate_omits_visible_charts_for_purely_narrative_content(
 
     chart_data = extract_chart_data(record["content"])
     assert not has_chart_visuals(chart_data)
+
+
+# --- Phase 3 Step 4, Phase A: deterministic calculations reach the prompt ---
+
+
+def test_generate_threads_deterministic_calculations_into_the_prompt(
+    isolated_env, project_service: ProjectService, monkeypatch
+):
+    """End-to-end wiring check: generate() must build a document_periods
+    map and pass it through to extract_metric_tables(), so a real
+    cross-document prose evidence set (three monthly reports, one data
+    point per metric per document — no markdown tables at all) produces
+    a genuine "Verified Calculations" block in the actual LLM prompt,
+    with the correct Jan-to-March Gross Premium figure, rather than
+    leaving the model with no deterministic anchor at all."""
+
+    project = project_service.create_project("Quarterly Wiring Test Project")
+
+    january_text = (
+        "Reporting period: January 2026\n"
+        "Key Findings\n"
+        "Gross premium: $128.4m, +6.2% month-on-month.\n"
+    )
+    march_text = (
+        "Reporting period: March 2026\n"
+        "Key Findings\n"
+        "Gross premium: $139.6m, +3.6% month-on-month.\n"
+    )
+
+    svc = SpaReportGenerationService()
+    monkeypatch.setattr(
+        svc,
+        "_gather_sources",
+        lambda *a, **k: [
+            {"filename": "January_2026_Monthly_Report.docx", "excerpt": january_text},
+            {"filename": "March_2026_Monthly_Report.docx", "excerpt": march_text},
+        ],
+    )
+    client, completions = _fake_openai_client()
+    svc._client = client
+
+    svc.generate(
+        workspace_id=project["id"],
+        project=project,
+        template_id="financial_analysis",
+        period_id="custom",
+    )
+
+    prompt = completions.calls[0]["messages"][1]["content"]
+    assert "Verified Calculations" in prompt
+    assert "Gross premium" in prompt
+    assert "January 2026 \u2192 March 2026 total: 8.7% relative increase" in prompt
+    assert "cite them exactly as given" in prompt
+
+
+def test_generate_document_periods_map_uses_real_project_document_metadata(
+    isolated_env, project_service: ProjectService, monkeypatch
+):
+    """The document_periods map generate() builds must reflect the
+    project's actual stored documents (period_date / uploaded_at), not
+    just whatever _gather_sources happens to return — proving the wiring
+    reads from the real document list, not a coincidence of the prose
+    fallback alone."""
+
+    project = project_service.create_project("Metadata Wiring Test Project")
+    project["documents"] = [
+        {
+            "filename": "January_2026_Monthly_Report.docx",
+            "period_date": "2026-01-31",
+            "uploaded_at": "2026-06-01T00:00:00Z",
+        },
+        {
+            "filename": "March_2026_Monthly_Report.docx",
+            "period_date": "2026-03-31",
+            "uploaded_at": "2026-05-01T00:00:00Z",
+        },
+    ]
+
+    captured: dict = {}
+    from services import quantitative_analysis_service as quant_module
+
+    original = quant_module.extract_metric_tables
+
+    def _spy(sources, **kwargs):
+        captured["document_periods"] = kwargs.get("document_periods")
+        return original(sources, **kwargs)
+
+    monkeypatch.setattr(quant_module, "extract_metric_tables", _spy)
+    monkeypatch.setattr(
+        "services.spa_report_generation_service.extract_metric_tables", _spy
+    )
+
+    svc = SpaReportGenerationService()
+    monkeypatch.setattr(
+        svc,
+        "_gather_sources",
+        lambda *a, **k: [
+            {"filename": "January_2026_Monthly_Report.docx", "excerpt": "No metrics here."},
+        ],
+    )
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    svc.generate(
+        workspace_id=project["id"],
+        project=project,
+        template_id="executive_summary",
+        period_id="custom",
+    )
+
+    document_periods = captured["document_periods"]
+    assert document_periods["January_2026_Monthly_Report.docx"]["period_date"] == "2026-01-31"
+    assert document_periods["March_2026_Monthly_Report.docx"]["period_date"] == "2026-03-31"

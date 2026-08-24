@@ -659,19 +659,26 @@ def _table_financial_series(text: str) -> list[dict[str, Any]]:
 
 
 def _financial_series(report_data: ReportData, text: str) -> list[dict[str, Any]]:
+    """Financial-performance bar-chart data, sourced ONLY from a real
+    markdown table (_table_financial_series) or a structured "trends"
+    entry already on report_data.charts — never scraped from prose.
+
+    Phase 3 Step 4, Phase A: this used to fall back to searching the
+    entire narrative for the words "revenue"/"expenses"/"profit"/"growth"
+    and grabbing the NEAREST following digits with no check that the
+    number actually belonged to that label — confirmed in production to
+    match unrelated numbers anywhere later in the document (including a
+    bare year like "2026"), fabricating a "Revenue/Profit/Growth" chart
+    with no basis in the source data at all. Removed outright rather than
+    made safer: per this phase's explicit principle, a report with no
+    chart is strictly better than one with a fabricated chart, and the
+    real fix (see quantitative_analysis_service.py's cross-document
+    prose extraction) now gives genuine metrics a real chance to reach
+    this pipeline as an actual table/metric-derived series instead."""
+
     table_series = _table_financial_series(text)
     if table_series:
         return table_series
-
-    labels = ("Revenue", "Expenses", "Profit", "Growth")
-    values: list[float] = []
-
-    for label in labels:
-        match = re.search(rf"{label.lower()}[^0-9]*([\d,]+(?:\.\d+)?)", text, re.IGNORECASE)
-        values.append(float(match.group(1).replace(",", "")) if match else 0.0)
-
-    if any(values):
-        return [{"label": label, "value": value} for label, value in zip(labels, values) if value > 0]
 
     trends = report_data.charts.get("trends") or []
     if trends:

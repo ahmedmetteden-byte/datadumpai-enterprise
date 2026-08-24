@@ -10,6 +10,7 @@ from services.report_qc_service import (
     QCIssue,
     _check_chart_consistency,
     _check_citation_consistency,
+    check_direction_consistency,
     _check_document_coverage,
     _check_duplicate_content,
     _check_evidence_leaks_into_narrative,
@@ -144,6 +145,165 @@ def test_numerical_consistency_skips_proximity_check_for_an_all_generic_title():
     }
     narrative = "Overall performance was 11.1% higher this period."
     assert _check_numerical_consistency(narrative, [table]) == []
+
+
+# --- Phase 3 Step 4, Phase A: direction/sign consistency ---
+
+CLAIMS_TABLE = {
+    "title": "Claims incurred",
+    "calculations": {
+        "total_change": {"from": "January 2026", "to": "March 2026", "absolute": 7.6, "percent": 9.3},
+    },
+}
+
+LOSS_RATIO_TABLE = {
+    "title": "Loss ratio",
+    "calculations": {
+        "total_change": {"from": "January 2026", "to": "March 2026", "absolute": 0.3, "percent": 0.5},
+        "period_over_period": [
+            {"from": "February 2026", "to": "March 2026", "absolute": -3.9, "percent": -5.7},
+        ],
+    },
+}
+
+
+def test_direction_consistency_flags_decrease_word_against_a_positive_change():
+    """The exact production bug: a report said claims 'decreased by 9.3%'
+    while the verified total change was +9.3% (an increase)."""
+
+    narrative = "Claims incurred decreased by 9.3% between January and March 2026."
+    issues = check_direction_consistency(narrative, [CLAIMS_TABLE])
+
+    assert len(issues) == 1
+    assert issues[0].severity == "high"
+    assert issues[0].category == "direction_consistency"
+    assert "decrease" in issues[0].message
+    assert "increase" in issues[0].message
+
+
+def test_direction_consistency_passes_when_increase_word_matches_positive_change():
+    narrative = "Claims incurred increased by 9.3% between January and March 2026."
+    assert check_direction_consistency(narrative, [CLAIMS_TABLE]) == []
+
+
+def test_direction_consistency_flags_improved_against_a_worsening_loss_ratio():
+    """The second production bug: a report said the loss ratio 'improved'
+    while the verified January-to-March change was +0.3 percentage
+    points (a deterioration for a lower-is-better ratio metric)."""
+
+    narrative = "The loss ratio improved from January to March 2026, moving by 0.5%."
+    issues = check_direction_consistency(narrative, [LOSS_RATIO_TABLE])
+
+    assert len(issues) == 1
+    assert issues[0].severity == "high"
+    assert "improved" in issues[0].message
+
+
+def test_direction_consistency_passes_when_worsened_matches_a_genuine_deterioration():
+    narrative = "The loss ratio worsened from January to March 2026, moving by 0.5%."
+    assert check_direction_consistency(narrative, [LOSS_RATIO_TABLE]) == []
+
+
+def test_direction_consistency_passes_when_improved_correctly_describes_a_real_improvement():
+    """February-to-March really IS an improvement for the loss ratio
+    (-3.9 percentage points) — must not be flagged just because the
+    metric is on the lower-is-better list."""
+
+    narrative = "The loss ratio improved by 5.7% from February to March 2026."
+    assert check_direction_consistency(narrative, [LOSS_RATIO_TABLE]) == []
+
+
+def test_direction_consistency_ignores_sentiment_words_for_non_ratio_metrics():
+    """"Improved"/"worsened" checks are scoped to the explicit
+    lower-is-better ratio keyword list — a non-ratio metric (e.g. gross
+    premium) must never be flagged on sentiment wording alone."""
+
+    table = {
+        "title": "Gross premium",
+        "calculations": {
+            "total_change": {"from": "January 2026", "to": "March 2026", "absolute": 11.2, "percent": 8.7}
+        },
+    }
+    narrative = "Gross premium improved by 8.7% from January to March 2026."
+    assert check_direction_consistency(narrative, [table]) == []
+
+
+def test_direction_consistency_skips_figures_not_near_this_metrics_title():
+    """A coincidentally-matching figure belonging to a different metric
+    must not trigger a direction flag — that ambiguity is already
+    _check_numerical_consistency's job, not this check's."""
+
+    narrative = "Some unrelated total decreased by 9.3% due to seasonal effects."
+    assert check_direction_consistency(narrative, [CLAIMS_TABLE]) == []
+
+
+def test_direction_consistency_catches_endpoint_value_contradiction_with_no_percentage():
+    """A direction contradiction stated via a metric's raw endpoint
+    values, with no percentage figure anywhere for the percent-proximity
+    pass to anchor to — check_direction_consistency must still catch it
+    via the metric's own row values."""
+
+    table = {
+        "title": "Claims incurred",
+        "rows": [{"label": "January 2026", "value": 82.1}, {"label": "March 2026", "value": 89.7}],
+        "calculations": {},
+    }
+    narrative = "Claims incurred decreased from $82.1m in January to $89.7m in March 2026."
+    issues = check_direction_consistency(narrative, [table])
+    assert len(issues) == 1
+    assert issues[0].severity == "high"
+
+
+def test_direction_consistency_does_not_bleed_across_bullet_lines():
+    """Phase 3 Step 4, Phase B real E2E regression: a bulleted answer
+    listing several metrics, each on its own line, must never let one
+    bullet's direction word "cover for" an adjacent, unrelated bullet's
+    genuinely wrong direction word — found live when a claims-backlog
+    contradiction ("decreased from 418 to 431", actually an increase)
+    went undetected because "increased" from a NEIGHBORING bullet about
+    a different metric fell inside the same character-radius window,
+    tripping the both-directions-present ambiguity guard."""
+
+    backlog_table = {
+        "title": "Claims backlog",
+        "rows": [
+            {"label": "January 2026", "value": 418.0},
+            {"label": "March 2026", "value": 431.0},
+        ],
+        "calculations": {"total_change": {"from": "January 2026", "to": "March 2026", "absolute": 13.0, "percent": 3.1}},
+    }
+    narrative = (
+        "Between January and March 2026:\n\n"
+        "- **Gross premium** increased from $128.4m to $139.6m.\n"
+        "- **Claims incurred** increased from $82.1m to $89.7m.\n"
+        "- **Claims backlog** decreased from 418 cases to 431 cases.\n"
+        "- **Customer retention** increased from 84.2% to 85.1%.\n"
+    )
+    issues = check_direction_consistency(narrative, [backlog_table])
+    assert len(issues) == 1
+    assert "Claims backlog" in issues[0].message
+
+
+def test_direction_consistency_still_allows_same_bullet_compound_transition():
+    """A single bullet correctly describing two real transitions of the
+    SAME metric (rose then fell) must still be treated as ambiguous, not
+    flagged — the line-scoping fix must not remove this existing
+    protection, only stop it from reaching into OTHER lines."""
+
+    claims_table = {
+        "title": "Claims incurred",
+        "rows": [
+            {"label": "January 2026", "value": 82.1},
+            {"label": "February 2026", "value": 91.8},
+            {"label": "March 2026", "value": 89.7},
+        ],
+        "calculations": {},
+    }
+    narrative = (
+        "- Claims incurred rose from $82.1m in January to $91.8m in February before "
+        "declining to $89.7m in March."
+    )
+    assert check_direction_consistency(narrative, [claims_table]) == []
 
 
 # --- Phase 3: safety net for the 414.3%-style bug ---

@@ -512,7 +512,14 @@ class SpaReportGenerationService:
         calculated_metrics_requirement = (
             "Where the evidence includes a 'Verified Calculations' block, treat those figures "
             "as ground truth — cite them exactly as given rather than re-deriving or estimating "
-            "your own percentage or growth figures from the raw numbers in the source text.\n\n"
+            "your own percentage or growth figures from the raw numbers in the source text. Each "
+            "line in that block is labeled with the EXACT two periods it covers (e.g. 'January "
+            "2026 → March 2026 total') — when you state a change for a given period span, you "
+            "MUST cite the line labeled with that exact span, never a different line (e.g. a "
+            "single month's own 'As-reported change/rate' figure, which covers only that one "
+            "month against the month before it) just because it is the nearest or most recent "
+            "figure in the evidence. Citing a value under a different period label than the one "
+            "you are describing is exactly the mistake this block exists to prevent.\n\n"
             if calculated_metrics_context
             else ""
         )
@@ -885,7 +892,15 @@ class SpaReportGenerationService:
                 "gaps": gaps,
             }
 
-        metric_tables = extract_metric_tables(sources)
+        document_periods = {
+            str(document.get("filename") or ""): {
+                "period_date": document.get("period_date"),
+                "uploaded_at": document.get("uploaded_at"),
+            }
+            for document in all_docs
+            if document.get("filename")
+        }
+        metric_tables = extract_metric_tables(sources, document_periods=document_periods)
         report_plan = (
             build_report_plan(
                 metric_tables=metric_tables,

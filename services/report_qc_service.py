@@ -13,6 +13,10 @@ since it adds latency/cost and is the least mature part of this layer.
 Checks (deterministic, always run when enabled):
 - numerical consistency: do the narrative's cited figures actually match
   quantitative_analysis_service's computed values?
+- direction consistency (Phase 3 Step 4, Phase A): does the narrative's
+  stated direction ("increased"/"decreased") or, for a small list of
+  conventionally lower-is-better ratio metrics, sentiment
+  ("improved"/"worsened") match the calculated sign?
 - citation consistency: does every "**Source:**" filename actually belong
   to this report's source documents?
 - chart consistency: did every chart the Report Plan required actually
@@ -192,6 +196,30 @@ def _check_numerical_consistency(
     return issues
 
 
+def _line_bounded_window(text: str, start: int, end: int, radius: int) -> tuple[int, int]:
+    """A [start-radius, end+radius) window clamped so it never crosses a
+    newline — found via Phase 3 Step 4, Phase B real E2E testing: a
+    bulleted multi-metric answer ("- Claims incurred increased...\n-
+    Claims backlog decreased...\n- Retention increased...") let a plain
+    character-radius window bleed into the ADJACENT bullet's unrelated
+    direction word, so a genuine contradiction on one bullet's own figure
+    went undetected because both an "increased" (from the bullet above)
+    and a "decreased" (the bullet's own, actually wrong, word) landed in
+    the same window, tripping the both-directions-present ambiguity
+    guard that exists for a different, legitimate case (one bullet
+    correctly describing two real transitions of the same metric).
+    Report prose (unlike a bulleted list) is typically one long line per
+    paragraph, so this only meaningfully narrows the window for
+    line-structured text — it's a no-op within a single unbroken line
+    short enough that start-radius/end+radius don't reach a boundary."""
+
+    line_start = text.rfind("\n", 0, start)
+    line_start = 0 if line_start == -1 else line_start + 1
+    line_end = text.find("\n", end)
+    line_end = len(text) if line_end == -1 else line_end
+    return max(line_start, start - radius), min(line_end, end + radius)
+
+
 def _has_nearby_word(narrative: str, needle: str, words: list[str], window: int = 300) -> bool:
     for match in re.finditer(re.escape(needle), narrative):
         start = max(0, match.start() - window)
@@ -200,6 +228,195 @@ def _has_nearby_word(narrative: str, needle: str, words: list[str], window: int 
         if any(word in context for word in words):
             return True
     return False
+
+
+# Phase 3 Step 4, Phase A: direction/sign consistency.
+#
+# Pure direction vocabulary — no business-meaning judgment involved.
+# "Decreased" contradicts a positive calculated change regardless of what
+# the metric is; this tier exists to catch exactly that, e.g. "Claims
+# decreased by 9.3%" against a verified +9.3% change.
+_INCREASE_WORDS = (
+    "increased", "increase", "increasing", "rose", "rising", "grew",
+    "growing", "climbed", "climbing", "gained", "surged", "jumped",
+)
+_DECREASE_WORDS = (
+    "decreased", "decrease", "decreasing", "fell", "falling", "dropped",
+    "dropping", "declined", "declining", "lost", "shrank", "slipped",
+)
+
+# A narrow, explicit list of metrics where "lower is better" is a
+# near-universal convention, used ONLY to check "improved"/"worsened"
+# sentiment words against the calculated sign for THESE specific metrics
+# — deliberately not a general business-polarity classifier (a distinct,
+# larger piece of work): this exists only to catch "Loss ratio improved"
+# stated against a positive (deteriorating) percentage-point change.
+_LOWER_IS_BETTER_RATIO_KEYWORDS = (
+    "loss ratio", "expense ratio", "combined ratio", "error rate",
+    "defect rate", "attrition rate", "churn rate", "delinquency rate",
+)
+_IMPROVEMENT_WORDS = ("improved", "improvement", "improving")
+_DETERIORATION_WORDS = ("worsened", "worsening", "deteriorated", "deterioration")
+
+
+def _direction_issue(title: str, formatted: str, stated: str, actual: str) -> QCIssue:
+    return QCIssue(
+        severity="high",
+        category="direction_consistency",
+        message=(
+            f"The narrative describes {title!r}'s {formatted} figure as {stated}, but the "
+            f"verified calculation is {actual} ({formatted})."
+        ),
+        location=title,
+    )
+
+
+def _sentiment_issue(title: str, formatted: str, stated_word: str, actual: str) -> QCIssue:
+    return QCIssue(
+        severity="high",
+        category="direction_consistency",
+        message=(
+            f"The narrative describes {title!r} as having {stated_word} at {formatted}, but the "
+            f"verified calculation shows the figure {actual} — inconsistent for a metric where "
+            "a lower value is conventionally better."
+        ),
+        location=title,
+    )
+
+
+def check_direction_consistency(
+    narrative: str, metric_tables: list[dict[str, Any]]
+) -> list[QCIssue]:
+    """Catch a narrative stating the WRONG direction or sentiment for a
+    verified calculated change — the exact failure mode that shipped
+    uncaught in production (e.g. "Claims decreased by 9.3%" against a
+    verified +9.3% increase; "Loss ratio improved" against a verified
+    +0.3 percentage-point deterioration). Reuses the same figure-mention
+    proximity technique as _check_numerical_consistency above, then
+    inspects the LOCAL context around each mention for a direction or
+    sentiment word and compares it against the calculated sign."""
+
+    issues: list[QCIssue] = []
+
+    for table in metric_tables:
+        title = str(table.get("title") or "")
+        calculations = table.get("calculations") or {}
+        distinctive_words = _distinctive_title_words(title)
+        if not distinctive_words:
+            continue
+
+        signed_changes: list[float] = []
+        total = calculations.get("total_change") or {}
+        if total.get("percent") is not None:
+            signed_changes.append(float(total["percent"]))
+        for change in calculations.get("period_over_period") or []:
+            if change.get("percent") is not None:
+                signed_changes.append(float(change["percent"]))
+
+        is_lower_is_better_ratio = any(
+            keyword in title.lower() for keyword in _LOWER_IS_BETTER_RATIO_KEYWORDS
+        )
+
+        for percent in signed_changes:
+            formatted = f"{abs(percent):.1f}%"
+            for match in re.finditer(re.escape(formatted), narrative):
+                start, end = _line_bounded_window(narrative, match.start(), match.end(), 80)
+                context = narrative[start:end].lower()
+                if not any(word in context for word in distinctive_words):
+                    # Not this metric's mention of the figure — a
+                    # coincidental match to a different metric's value is
+                    # already flagged by _check_numerical_consistency.
+                    continue
+
+                found_increase = any(word in context for word in _INCREASE_WORDS)
+                found_decrease = any(word in context for word in _DECREASE_WORDS)
+                # Only flag when the window contains ONE direction signal,
+                # not both — a compound sentence describing two different
+                # transitions ("rose 11.8% in February, but decreased in
+                # March") legitimately has both words near the figure, and
+                # attributing "decreased" to the OTHER clause's number
+                # would be a false positive, not a real contradiction.
+                if found_increase and not found_decrease and percent < 0:
+                    issues.append(_direction_issue(title, formatted, "an increase", "a decrease"))
+                elif found_decrease and not found_increase and percent >= 0:
+                    issues.append(_direction_issue(title, formatted, "a decrease", "an increase"))
+
+                if is_lower_is_better_ratio:
+                    found_improved = any(word in context for word in _IMPROVEMENT_WORDS)
+                    found_worsened = any(word in context for word in _DETERIORATION_WORDS)
+                    if found_improved and not found_worsened and percent > 0:
+                        issues.append(
+                            _sentiment_issue(title, formatted, "improved", "increased (a deterioration for this ratio)")
+                        )
+                    elif found_worsened and not found_improved and percent < 0:
+                        issues.append(
+                            _sentiment_issue(title, formatted, "worsened", "decreased (an improvement for this ratio)")
+                        )
+
+    issues.extend(_check_endpoint_value_direction(narrative, metric_tables))
+    return issues
+
+
+def _format_value_for_search(value: float) -> str:
+    """A metric's raw value as it plausibly appears in prose — "418.0"
+    (the stored float) is never written as "418.0 cases", always "418
+    cases"; "82.1" stays "82.1"."""
+
+    return f"{value:g}"
+
+
+def _check_endpoint_value_direction(
+    narrative: str, metric_tables: list[dict[str, Any]]
+) -> list[QCIssue]:
+    """Catches a direction contradiction stated via a metric's own raw
+    endpoint values rather than a restated percentage — e.g. "Claims
+    incurred decreased from $82.1m to $89.7m" has no percentage figure
+    anywhere for check_direction_consistency's percent-proximity pass
+    above to anchor to, but the contradiction is just as real: 89.7 is
+    not less than 82.1. Looks for the series' first and last row values
+    both appearing near each other in the narrative, together with a
+    direction word, and compares against the true first-to-last sign."""
+
+    issues: list[QCIssue] = []
+
+    for table in metric_tables:
+        title = str(table.get("title") or "")
+        rows = table.get("rows") or []
+        if len(rows) < 2:
+            continue
+        distinctive_words = _distinctive_title_words(title)
+        if not distinctive_words:
+            continue
+
+        first_value = float(rows[0]["value"])
+        last_value = float(rows[-1]["value"])
+        first_str = _format_value_for_search(first_value)
+        last_str = _format_value_for_search(last_value)
+        if not first_str or not last_str or first_str == last_str:
+            continue
+
+        for match in re.finditer(re.escape(first_str), narrative):
+            start, end = _line_bounded_window(narrative, match.start(), match.end(), 150)
+            window = narrative[start:end]
+            if last_str not in window:
+                continue
+
+            window_lower = window.lower()
+            if not any(word in window_lower for word in distinctive_words):
+                continue
+
+            found_increase = any(word in window_lower for word in _INCREASE_WORDS)
+            found_decrease = any(word in window_lower for word in _DECREASE_WORDS)
+            actual_increase = last_value > first_value
+            span = f"{first_str} → {last_str}"
+            if found_increase and not found_decrease and not actual_increase:
+                issues.append(_direction_issue(title, span, "an increase", "a decrease"))
+                break
+            if found_decrease and not found_increase and actual_increase:
+                issues.append(_direction_issue(title, span, "a decrease", "an increase"))
+                break
+
+    return issues
 
 
 _NARRATIVE_PERCENT = re.compile(r"(-?\d+(?:\.\d+)?)\s*%")
@@ -694,6 +911,7 @@ def run_qc_pass(
 
     issues: list[QCIssue] = []
     issues.extend(_check_numerical_consistency(narrative, metric_tables or []))
+    issues.extend(check_direction_consistency(narrative, metric_tables or []))
     issues.extend(_check_no_implausible_ungrounded_percentages(narrative, metric_tables or []))
     issues.extend(_check_no_generic_metric_titles(metric_tables or []))
     issues.extend(_check_citation_consistency(narrative, source_documents))

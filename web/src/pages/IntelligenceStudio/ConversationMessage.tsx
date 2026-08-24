@@ -58,6 +58,11 @@ export function ConversationMessage({
           {UI_COPY.studioAnswer}
         </h3>
         <div className="flex items-center gap-3">
+          {message.calculationVerified === true ? (
+            <span className="inline-flex items-center rounded-full bg-surface-alt px-2 py-0.5 text-caption font-medium text-success">
+              {UI_COPY.studioCalculationVerified}
+            </span>
+          ) : null}
           {typeof message.confidence === 'number' ? (
             <ConfidenceBadge value={message.confidence} />
           ) : null}

@@ -203,6 +203,13 @@ class IntelligenceMessageOut(CamelModel):
     answer: str | None = None
     evidence: str | None = None
     confidence: float | None = None
+    # Independent of `confidence` (evidence/answer quality): whether this
+    # answer's numerical claims were checked against Phase A's
+    # deterministic quantitative_analysis_service and found consistent.
+    # None = no verifiable quantitative claim was made (a qualitative
+    # answer, or a quantitative one that didn't end up engaging the
+    # verified figures) — not "verification failed."
+    calculation_verified: bool | None = None
     follow_ups: list[str] = Field(default_factory=list)
     sources: list[IntelligenceSourceOut] = Field(default_factory=list)
     citations: list[IntelligenceCitationOut] = Field(default_factory=list)

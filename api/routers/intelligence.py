@@ -189,6 +189,7 @@ def _message_out(raw: dict[str, Any]) -> IntelligenceMessageOut:
         answer=raw.get("answer"),
         evidence=raw.get("evidence"),
         confidence=raw.get("confidence"),
+        calculation_verified=raw.get("calculationVerified"),
         follow_ups=list(raw.get("followUps") or []),
         sources=[_source_out(item) for item in (raw.get("sources") or [])],
         citations=[_citation_out(item) for item in (raw.get("citations") or [])],
@@ -369,12 +370,14 @@ def _build_assistant_message(
             web_research_enabled = PlanService(
                 access_token=principal.access_token
             ).can_use_web_research()
+            project = _get_project(principal, workspace_id)
         rag = IntelligenceRagService()
         result = rag.answer(
             workspace_id=workspace_id,
             question=content,
             mode=mode or "ask",
             web_research_enabled=web_research_enabled,
+            documents=list(project.get("documents") or []),
         )
         return {
             "id": f"msg_{uuid.uuid4().hex[:10]}",
@@ -384,6 +387,7 @@ def _build_assistant_message(
             "answer": result.get("answer"),
             "evidence": result.get("evidence"),
             "confidence": result.get("confidence"),
+            "calculationVerified": result.get("calculationVerified"),
             "followUps": result.get("followUps") or [],
             "sources": result.get("sources") or [],
             "citations": result.get("citations") or [],
@@ -403,6 +407,7 @@ def _build_assistant_message(
             "answer": "Something went wrong while analysing this workspace.",
             "evidence": None,
             "confidence": 0.0,
+            "calculationVerified": None,
             "followUps": [],
             "sources": [],
             "citations": [],

@@ -12,11 +12,21 @@ narrative evidence here).
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from typing import Any
 
 from services.report_markdown_renderer import parse_markdown_blocks
+
+# Kill switch for cross-document prose metric extraction (Phase 3 Step 4,
+# Phase A) — instant rollback via config, no deploy needed, if the new
+# prose/cross-document path is ever in question. The pre-existing
+# markdown-table extraction path is never affected by this flag.
+QUANT_PROSE_EXTRACTION_ENABLED = os.getenv(
+    "QUANT_PROSE_EXTRACTION_ENABLED", "true"
+).strip().lower() not in {"0", "false", "no"}
 
 _METRIC_COLUMN_KEYWORDS = (
     "revenue",
@@ -354,7 +364,7 @@ def _compute_calculations(rows: list[dict[str, Any]]) -> dict[str, Any]:
     total_absolute = last["value"] - first["value"]
     total_percent = (total_absolute / first["value"] * 100) if first["value"] else None
 
-    return {
+    result: dict[str, Any] = {
         "period_over_period": period_over_period,
         "total_change": {
             "from": first["label"],
@@ -364,6 +374,52 @@ def _compute_calculations(rows: list[dict[str, Any]]) -> dict[str, Any]:
         },
         "direction": _trend_direction(period_over_period),
     }
+    result.update(_compute_temporal_shape(rows))
+    return result
+
+
+def _compute_temporal_shape(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Peak/trough and recovery shape for a temporal series with 3+ points
+    — additive to the adjacent-pair/first-to-last math above, which
+    together already carry every row's value. This locates any INTERIOR
+    extremum (e.g. a February spike between a January and March value)
+    and reports whether the series partially reversed by its final point,
+    so a report/prompt can say "Claims peaked in February at $91.8m
+    before moderating to $89.7m in March" instead of collapsing three
+    points into a single, misleading first-to-last delta.
+
+    Only fires on an INTERIOR point strictly between the first and last
+    row — a monotonic series (min/max at either endpoint) has no
+    "surprise" extremum worth narrating separately from total_change."""
+
+    if len(rows) < 3:
+        return {}
+
+    values = [r["value"] for r in rows]
+    peak_idx = max(range(len(rows)), key=lambda i: values[i])
+    trough_idx = min(range(len(rows)), key=lambda i: values[i])
+
+    first, last = rows[0], rows[-1]
+    if last["value"] > first["value"]:
+        net_direction = "increase"
+    elif last["value"] < first["value"]:
+        net_direction = "decrease"
+    else:
+        net_direction = "flat"
+
+    shape: dict[str, Any] = {"net_direction": net_direction}
+
+    if 0 < peak_idx < len(rows) - 1:
+        peak_row = rows[peak_idx]
+        shape["peak"] = {"label": peak_row["label"], "value": peak_row["value"]}
+        shape["recovered_after_peak"] = last["value"] < peak_row["value"]
+
+    if 0 < trough_idx < len(rows) - 1:
+        trough_row = rows[trough_idx]
+        shape["trough"] = {"label": trough_row["label"], "value": trough_row["value"]}
+        shape["recovered_after_trough"] = last["value"] > trough_row["value"]
+
+    return shape
 
 
 def _trend_direction(period_over_period: list[dict[str, Any]]) -> str:
@@ -682,6 +738,383 @@ def _extract_from_table(rows: list[list[str]], *, source_document: str) -> list[
     return series_list
 
 
+# ---------------------------------------------------------------------------
+# Phase 3 Step 4, Phase A: cross-document prose metric extraction.
+#
+# Everything above this point extracts a time series from markdown TABLE
+# rows within a single document. Real-world reporting documents (a Word
+# doc's "Key Findings" bullets, e.g. "Gross premium: $128.4m, +6.2%
+# month-on-month.") very often carry no table at all — every figure lives
+# in prose, one data point per document, one document per reporting
+# period (e.g. one monthly report per month). Without this section,
+# extract_metric_tables() returns [] for that whole document shape,
+# leaving the report/Q&A prompt with no deterministic anchor at all — the
+# root cause traced for Phase 3 Step 4. This section assembles a
+# cross-document time series from those single-point prose observations
+# instead, reusing the same _compute_calculations()/MetricSeries/
+# format_metrics_for_evidence() machinery as the table path above.
+# ---------------------------------------------------------------------------
+
+# Matches a capitalized "Label:" lead-in anywhere in prose (not anchored to
+# line/sentence start, since document_processor.py joins a document's
+# paragraphs with a single "\n" and consecutive non-blank, non-bullet
+# lines collapse into one merged paragraph block upstream in
+# parse_markdown_blocks() — so a "Key Findings" list of five "Label:
+# value." sentences typically arrives here as one paragraph, not five
+# separate lines, with no blank line marking where a "Key Findings"
+# section heading ends and the first real label begins).
+#
+# The label is capped at 2 words (one capitalized lead word plus at most
+# one more) specifically so a heading-like phrase immediately preceding a
+# real label — "Key Findings Gross premium: $128.4m" once newlines
+# collapse to spaces — can never be swallowed whole into one over-long
+# label. finditer's scan retries from each subsequent capitalized word on
+# failure: "Key Findings" (2 words) fails to reach a colon, "Findings
+# Gross" (2 words) fails too, and the scan lands correctly on "Gross
+# premium:" — a 3-word cap was tried first and still let "Findings Gross
+# premium:" complete a match, so 2 words is the tightest cap that still
+# covers every real label in this product's reporting vocabulary
+# ("Gross premium", "Claims incurred", "Loss ratio", "Customer
+# retention", "Claims backlog", ...) while refusing to bridge a heading.
+_PROSE_LABEL_PATTERN = re.compile(
+    r"\b([A-Z][a-z]+(?:[-/][A-Za-z]+)?(?:\s+[A-Za-z][a-z]*(?:[-/][A-Za-z]+)?){0,1}):\s+"
+)
+
+# A period is treated as a sentence boundary only when followed by
+# whitespace-then-a-capital-letter (or end of string) — this is what
+# distinguishes a genuine sentence end ("...down from 447. Risks &
+# Issues...") from a decimal point ("$128.4m", "+6.2%"), which is never
+# followed by whitespace at all, without needing any digit-lookbehind
+# heuristic that would otherwise miss a sentence ending in a bare number.
+_SENTENCE_BOUNDARY = re.compile(r"\.(?=\s+[A-Z]|\s*$)")
+
+_MAX_REPORTED_CHANGE_LENGTH = 120
+
+# The clause immediately after a "Label:" lead-in, up to the next "Label:"
+# match or end of text (see _extract_prose_observations) — NOT split on
+# sentence-ending periods, since a value like "6.2%" contains a period of
+# its own that a naive sentence-splitter would trip over.
+_PROSE_VALUE_PATTERN = re.compile(
+    r"^(?P<currency>[₦$€£])?\s?(?P<number>\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*"
+    r"(?P<suffix>%|million|billion|bn|m\b|cases?|days?)?",
+    re.IGNORECASE,
+)
+
+# A second, narrower pattern for the common narrative shape a figure
+# appears in when it's NOT stated as "Label: value" — e.g. "Customer
+# complaints also increased to 74 during the month." Deliberately
+# restricted to an explicit, small verb vocabulary and a required "to"/
+# "at" immediately before the number, to keep false positives rare; a
+# label that fails to line up with the same label elsewhere simply never
+# forms a 2+-point series (see _normalize_metric_label) rather than being
+# silently merged into the wrong metric.
+_PROSE_VERB_PATTERN = re.compile(
+    r"\b(?P<label>[A-Z][a-z]+(?:\s+[a-z]+){0,3}?)\s+"
+    r"(?:also\s+)?"
+    r"(?:increased|rose|grew|climbed|declined|decreased|fell|dropped|remained|reached|totaled|totalled|stood)\s+"
+    r"(?:[a-z]+\s+)?"
+    r"(?:to|at)\s+"
+    r"(?P<number>[₦$€£]?\s?\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*"
+    r"(?P<suffix>%|million|billion|bn|m\b|cases?|days?)?"
+)
+
+_REPORTING_PERIOD_PATTERN = re.compile(r"reporting\s+period\s*:\s*([^\n.]+)", re.IGNORECASE)
+
+_MONTH_YEAR_LABEL = re.compile(
+    r"^(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|"
+    r"Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+(\d{4})$",
+    re.IGNORECASE,
+)
+_MONTH_NUMBERS = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+
+def _parse_prose_value(primary: str) -> tuple[float | None, str]:
+    """Parse the leading numeric token of a prose value clause (e.g.
+    "$128.4m" from "$128.4m, +6.2% month-on-month") into (value, unit).
+    Mirrors _infer_unit()'s unit vocabulary so a prose-derived series and
+    a table-derived series for the same metric render identically."""
+
+    match = _PROSE_VALUE_PATTERN.match(primary.strip())
+    if not match:
+        return None, ""
+
+    try:
+        value = float(match.group("number").replace(",", ""))
+    except ValueError:
+        return None, ""
+
+    currency = match.group("currency") or ""
+    suffix = (match.group("suffix") or "").lower()
+    if suffix in {"million", "m"}:
+        unit = f"{currency} million".strip()
+    elif suffix in {"billion", "bn"}:
+        unit = f"{currency} billion".strip()
+    elif suffix == "%":
+        unit = "%"
+    elif suffix:
+        unit = suffix
+    elif currency:
+        unit = currency
+    else:
+        unit = ""
+    return value, unit
+
+
+def _normalize_metric_label(label: str) -> str:
+    """Conservative label normalization for cross-document aggregation —
+    exact match only, after case/whitespace normalization. Deliberately
+    NOT fuzzy: two similarly-worded but different metrics (e.g. "Gross
+    premium" vs "Gross premium income", or "Complaints" vs "Customer
+    complaints") must never be silently merged into one series just
+    because they read as related — a label that doesn't match verbatim
+    across documents simply doesn't form a cross-document series."""
+
+    normalized = re.sub(r"\s+", " ", label.strip().lower())
+    return normalized.rstrip(":")
+
+
+def _extract_prose_observations(text: str) -> list[dict[str, Any]]:
+    """Extract (label, value, unit, reported_change) single-point
+    observations from 'Label: value[, context].' and narrative
+    'Label verb to/at value' sentences within one block of text. Each
+    observation is ONE document's data point for ONE metric — cross-
+    document aggregation into a time series happens in
+    _extract_from_prose_across_documents()."""
+
+    observations: list[dict[str, Any]] = []
+    seen_labels: set[str] = set()
+
+    label_matches = list(_PROSE_LABEL_PATTERN.finditer(text))
+    for index, match in enumerate(label_matches):
+        label = match.group(1).strip()
+        start = match.end()
+        # The next label match is the preferred clause boundary, but for
+        # the LAST label in a merged multi-sentence paragraph there is no
+        # next match — the boundary falls back to end-of-text, which can
+        # be an entire remaining document's worth of unrelated narrative
+        # (Risks & Issues, Opportunities, Recommendations...) once
+        # several source sections have collapsed into one paragraph
+        # block. A sentence-boundary search always wins when it finds one
+        # before that fallback boundary, so this clause never runs past
+        # the sentence the label actually belongs to.
+        end = label_matches[index + 1].start() if index + 1 < len(label_matches) else len(text)
+        raw_clause = text[start:end]
+        boundary = _SENTENCE_BOUNDARY.search(raw_clause)
+        if boundary:
+            raw_clause = raw_clause[: boundary.start()]
+        clause = raw_clause.strip().rstrip(".").strip()
+        if not clause:
+            continue
+
+        primary, _, rest = clause.partition(",")
+        value, unit = _parse_prose_value(primary.strip())
+        if value is None:
+            continue
+
+        key = _normalize_metric_label(label)
+        if not key or key in seen_labels:
+            continue
+        seen_labels.add(key)
+        reported_change = rest.strip() or None
+        if reported_change and len(reported_change) > _MAX_REPORTED_CHANGE_LENGTH:
+            # Longer than any genuine short delta clause plausibly is —
+            # a leftover sign that the boundary logic above still let
+            # something run on; drop rather than show a garbled fragment.
+            reported_change = None
+        observations.append(
+            {"label": label, "value": value, "unit": unit, "reported_change": reported_change}
+        )
+
+    for match in _PROSE_VERB_PATTERN.finditer(text):
+        label = match.group("label").strip()
+        key = _normalize_metric_label(label)
+        if not key or key in seen_labels:
+            continue
+
+        number_text = (match.group("number") or "").replace(" ", "")
+        suffix = match.group("suffix") or ""
+        value, unit = _parse_prose_value(f"{number_text}{suffix}")
+        if value is None:
+            continue
+
+        seen_labels.add(key)
+        observations.append({"label": label, "value": value, "unit": unit, "reported_change": None})
+
+    return observations
+
+
+def _document_period_info(
+    filename: str,
+    text: str,
+    document_periods: dict[str, dict[str, Any]] | None,
+) -> tuple[Any | None, str | None]:
+    """Resolve (sort_key, display_label) for one document, in the priority
+    order Phase 3 Step 4 specifies: the document's tagged period_date
+    metadata first (most authoritative — a user-supplied fact about what
+    the document covers); else a "Reporting period: <text>" line scanned
+    from the document's own content (still document-authored, just not a
+    structured field); else the document's uploaded_at timestamp (a
+    proxy — upload time is not the same as reporting period, but it is
+    always available for legacy documents with neither of the above).
+    Returns (None, None) when no ordering signal exists at all, so the
+    caller can exclude that document from cross-document aggregation
+    rather than guess at its position in the series."""
+
+    info = (document_periods or {}).get(filename) or {}
+
+    period_date_raw = info.get("period_date")
+    if period_date_raw:
+        try:
+            parsed_date = date.fromisoformat(str(period_date_raw)[:10])
+            return parsed_date, parsed_date.strftime("%B %Y")
+        except ValueError:
+            pass
+
+    reporting_period_match = _REPORTING_PERIOD_PATTERN.search(text)
+    if reporting_period_match:
+        label = reporting_period_match.group(1).strip()
+        month_year_match = _MONTH_YEAR_LABEL.match(label)
+        if month_year_match:
+            month_key = month_year_match.group(1)[:3].lower()
+            year = int(month_year_match.group(2))
+            return date(year, _MONTH_NUMBERS[month_key], 1), label
+        # A period label exists but isn't a plain "Month YYYY" shape (e.g.
+        # "Q1 2026") — still a genuine document-stated label, just without
+        # a cheap deterministic sort key here; fall through to uploaded_at
+        # for ordering while a real per-document sort key remains missing.
+
+    uploaded_at_raw = info.get("uploaded_at")
+    if uploaded_at_raw:
+        try:
+            parsed_dt = datetime.fromisoformat(str(uploaded_at_raw).replace("Z", "+00:00"))
+            label = reporting_period_match.group(1).strip() if reporting_period_match else parsed_dt.strftime("%B %Y")
+            return parsed_dt, label
+        except ValueError:
+            pass
+
+    return None, None
+
+
+def _extract_from_prose_across_documents(
+    sources: list[dict[str, str]],
+    document_periods: dict[str, dict[str, Any]] | None,
+) -> list[MetricSeries]:
+    """Build MetricSeries by aggregating single-point prose observations
+    that share the SAME normalized label across MULTIPLE documents,
+    ordered by each document's resolved period (see
+    _document_period_info). This is the canonical "one monthly report per
+    period, one data point per metric per report" shape this product's
+    own onboarding describes (upload January/February/March reports to
+    produce a quarterly report) — extract_metric_tables()'s table-based
+    path alone never assembles a series from this shape at all.
+
+    Requires document_periods to be explicitly passed (even as an empty
+    dict) — every pre-existing extract_metric_tables() call site that
+    predates this phase omits the argument entirely (defaulting to
+    None), which keeps this whole path off for them rather than having
+    it activate itself purely from a document's own "Reporting period:"
+    text the first time such a document happens to flow through an
+    unrelated caller."""
+
+    if not QUANT_PROSE_EXTRACTION_ENABLED or document_periods is None:
+        return []
+
+    # label_key -> list of per-document observation dicts
+    by_label: dict[str, list[dict[str, Any]]] = {}
+
+    for source in sources:
+        filename = str(source.get("filename") or "")
+        text = str(source.get("excerpt") or "")
+        if not filename or not text:
+            continue
+
+        sort_key, period_label = _document_period_info(filename, text, document_periods)
+        if sort_key is None or not period_label:
+            continue
+
+        observations: list[dict[str, Any]] = []
+        for block in parse_markdown_blocks(text):
+            if block.block_type == "paragraph":
+                observations.extend(_extract_prose_observations(block.content))
+            elif block.block_type == "bullets":
+                for item in block.items:
+                    observations.extend(_extract_prose_observations(item))
+            elif block.block_type == "label_value" and block.value:
+                value, unit = _parse_prose_value(block.value)
+                if value is not None:
+                    observations.append(
+                        {"label": block.label.strip(), "value": value, "unit": unit, "reported_change": None}
+                    )
+
+        for observation in observations:
+            key = _normalize_metric_label(observation["label"])
+            if not key:
+                continue
+            by_label.setdefault(key, []).append(
+                {
+                    **observation,
+                    "sort_key": sort_key,
+                    "period_label": period_label,
+                    "source_document": filename,
+                }
+            )
+
+    series_list: list[MetricSeries] = []
+    for points in by_label.values():
+        # Only aggregate points that share the SAME unit under this label
+        # — never guess when the same label was used inconsistently
+        # (e.g. one document reporting a count, another a percentage).
+        # Deliberately includes "" (no detected unit) as its own distinct
+        # value here — an unsuffixed "12" and a "40%" under the same
+        # label are NOT safe to treat as the same metric just because
+        # one of them lacked a unit suffix.
+        units = {point["unit"] for point in points}
+        if len(units) > 1:
+            continue
+        unit = next(iter(units), "")
+
+        # One point per document: if a single document's text somehow
+        # yielded the same label twice, keep the first (already enforced
+        # by _extract_prose_observations' own seen_labels dedup, this is
+        # a second safety net across the paragraph/bullets/label_value
+        # blocks of the same document).
+        ordered_points: list[dict[str, Any]] = []
+        seen_documents: set[str] = set()
+        for point in sorted(points, key=lambda p: p["sort_key"]):
+            if point["source_document"] in seen_documents:
+                continue
+            seen_documents.add(point["source_document"])
+            ordered_points.append(point)
+
+        if len(ordered_points) < 2:
+            continue  # need at least 2 periods to form a temporal series
+
+        display_title = ordered_points[0]["label"]
+        rows = [{"label": p["period_label"], "value": p["value"]} for p in ordered_points]
+        reported_change = [
+            {"label": p["period_label"], "reported": p["reported_change"]}
+            for p in ordered_points
+            if p["reported_change"]
+        ]
+
+        series_list.append(
+            MetricSeries(
+                title=display_title,
+                source_document=", ".join(sorted(seen_documents)),
+                unit=unit,
+                rows=rows,
+                calculations=_compute_calculations(rows),
+                reported_change=reported_change,
+                dimension_type="temporal",
+            )
+        )
+
+    return series_list
+
+
 def _reported_change_by_identity(
     *,
     data_rows: list[list[str]],
@@ -708,11 +1141,88 @@ def _reported_change_by_identity(
     return by_group
 
 
+# ---------------------------------------------------------------------------
+# Phase 3 Step 4, Phase B: multi-period question detection.
+#
+# Shared by Intelligence Studio (services/intelligence_rag_service.py) to
+# decide when a question needs the SAME coverage-guaranteed retrieval
+# report generation already uses (report_retrieval_service.
+# retrieve_grouped_sources' documents= parameter) rather than trusting
+# plain top-K vector similarity to have surfaced every period a
+# comparison question needs. Lives here, not in intelligence_rag_service.py,
+# because it reuses the same month/quarter vocabulary the period-label
+# resolution above already defines — one place that knows what a
+# "period" looks like in text, for both extraction and detection.
+# ---------------------------------------------------------------------------
+
+_MONTH_MENTION_PATTERN = re.compile(
+    r"\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|"
+    r"aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b",
+    re.IGNORECASE,
+)
+_QUARTER_MENTION_PATTERN = re.compile(r"\bq[1-4]\b", re.IGNORECASE)
+
+# Phrases that imply the question spans more than one document/period even
+# without two explicit period names present (e.g. "which month had the
+# highest claims" names zero months but needs every month's figure to
+# answer). Mirrors report_retrieval_service.detect_all_documents_intent's
+# deliberately permissive design: a false positive here just costs a few
+# extra coverage-guarantee retrieval queries; a false negative risks
+# Qdrant's top-K silently excluding a period the question actually needs.
+_MULTI_PERIOD_PHRASES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\ball\b[^.!?\n]{0,25}\b(documents?|reports?|months?|periods?)\b", re.IGNORECASE),
+    re.compile(r"\bevery\b[^.!?\n]{0,25}\b(document|report|month|period)\b", re.IGNORECASE),
+    re.compile(r"\bcompare\b", re.IGNORECASE),
+    re.compile(r"\bacross\b[^.!?\n]{0,25}\b(months?|periods?|reports?|documents?)\b", re.IGNORECASE),
+    re.compile(r"\btrend\b|\bover time\b", re.IGNORECASE),
+    re.compile(r"\bhighest\b|\blowest\b|\bpeak\b|\btrough\b|\bmost\b|\bbiggest\b|\blargest\b", re.IGNORECASE),
+    re.compile(r"\bchang(?:e|ed|ing)\b", re.IGNORECASE),
+)
+
+
+def detect_multi_period_question(question: str) -> bool:
+    """Deterministic (not LLM-based) detection of a question that likely
+    needs evidence from more than one reporting period/document to
+    answer completely — e.g. "Compare January and March", "Which month
+    had the highest claims?", "How did performance change across the
+    three reports?". Two distinct month or quarter mentions is a direct
+    signal; the phrase list below covers questions that imply the same
+    need without naming two periods explicitly."""
+
+    if not question or not question.strip():
+        return False
+
+    text = question.strip()
+    month_mentions = {m.lower()[:3] for m in _MONTH_MENTION_PATTERN.findall(text)}
+    quarter_mentions = {m.lower() for m in _QUARTER_MENTION_PATTERN.findall(text)}
+    if len(month_mentions) >= 2 or len(quarter_mentions) >= 2:
+        return True
+
+    return any(pattern.search(text) for pattern in _MULTI_PERIOD_PHRASES)
+
+
 def extract_metric_tables(
-    sources: list[dict[str, str]], *, max_tables: int = 6
+    sources: list[dict[str, str]],
+    *,
+    max_tables: int = 6,
+    document_periods: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Detect numeric tables in retrieved source excerpts and compute
     deterministic period-over-period / total-change metrics for each.
+    Also aggregates single-point prose observations (e.g. "Gross premium:
+    $128.4m") that share the same metric label across MULTIPLE documents
+    into their own temporal series (Phase 3 Step 4, Phase A) — the two
+    extraction paths run independently and their results are merged
+    below, so a document that happens to contain both a real table and
+    prose figures contributes candidates from both.
+
+    `document_periods` is an optional `{filename: {"period_date":
+    ..., "uploaded_at": ...}}` map used only by the prose path to order
+    documents into a series and label each point — see
+    _document_period_info(). Omitting it (the default) disables prose
+    cross-document extraction entirely (no ordering signal is available),
+    which keeps every existing caller's behavior unchanged unless it
+    opts in by passing this new argument.
 
     Returns a list of MetricSeries dicts, deduplicated by normalized title
     + unit + granularity (keeping whichever candidate has the most rows —
@@ -735,6 +1245,8 @@ def extract_metric_tables(
             if block.block_type != "table":
                 continue
             candidates.extend(_extract_from_table(block.rows, source_document=filename))
+
+    candidates.extend(_extract_from_prose_across_documents(sources, document_periods))
 
     best_by_key: dict[tuple[str, str, str], MetricSeries] = {}
     for series in candidates:
@@ -871,6 +1383,16 @@ def format_metrics_for_evidence(tables: list[dict[str, Any]]) -> str:
                 f"{abs(total['percent'])}% relative {direction} "
                 f"({_absolute_label(total['absolute'])})"
             )
+
+        peak = calculations.get("peak")
+        if peak:
+            note = " — moderated by the end of the series" if calculations.get("recovered_after_peak") else ""
+            lines.append(f"- Peak: {peak['label']} at {peak['value']:,}{unit_suffix}{note}")
+
+        trough = calculations.get("trough")
+        if trough:
+            note = " — recovered by the end of the series" if calculations.get("recovered_after_trough") else ""
+            lines.append(f"- Trough: {trough['label']} at {trough['value']:,}{unit_suffix}{note}")
 
         cross_sectional = calculations.get("cross_sectional")
         if cross_sectional:
