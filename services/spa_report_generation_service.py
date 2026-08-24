@@ -100,12 +100,21 @@ PERIOD_WINDOW_DAYS: dict[str, int] = {
     "annual": 365,
 }
 
-# Which report types are analytical enough to warrant charts. Narrative
-# types (Executive Summary, Board Report, Management Report) render as
-# text-only reports; selecting one of these must not silently produce the
-# same chart-laden output as Financial Analysis / Risk Assessment / Full
-# Report.
-ANALYTICAL_TEMPLATE_IDS = {"financial_analysis", "risk_assessment", "full_report"}
+# Which report types are analytical enough to warrant charts. Executive
+# Summary is the one type that stays text-only by design — it's a 2-3
+# sentence, 1-3 priority brief a board member reads standalone, and a chart
+# would outweigh the prose it's meant to be. Every other type gets charts:
+# Board Report and Management Report both reference metric trends in their
+# own prose (governance decisions, operational performance) and benefit
+# from the same visual evidence Financial Analysis / Risk Assessment /
+# Full Report already get.
+ANALYTICAL_TEMPLATE_IDS = {
+    "financial_analysis",
+    "risk_assessment",
+    "full_report",
+    "management_report",
+    "board_report",
+}
 
 # Section structure per report type, in output order. This is what makes
 # each Report type option actually produce a differently-shaped document
@@ -116,8 +125,8 @@ TEMPLATE_SECTIONS: dict[str, list[str]] = {
     "executive_summary": [
         "executive_summary",
         "key_findings",
+        "risks_issues",
         "strategic_recommendations",
-        "conclusion",
     ],
     "board_report": [
         "executive_summary",
@@ -191,6 +200,88 @@ TEMPLATE_MAX_TOKENS: dict[str, int] = {
     "financial_analysis": 4096,
     "risk_assessment": 3200,
     "full_report": 4096,
+}
+
+# Who reads this report type and what they need it to do for them — the
+# report's actual differentiation comes from acting on this, not from
+# section headings alone. Injected near the top of the writer prompt.
+TEMPLATE_AUDIENCE_PURPOSE: dict[str, str] = {
+    "executive_summary": (
+        "Audience: a board member or senior executive with a minute to spend. Purpose: give "
+        "them only the 1-3 things that matter most right now and what to do about them — this "
+        "is the shortest, most selective report type, not a compressed version of every "
+        "finding.\n\n"
+    ),
+    "board_report": (
+        "Audience: the board of directors, who govern and oversee but do not run day-to-day "
+        "operations. Purpose: surface what the board specifically needs to decide, approve, or "
+        "be aware of at a governance level — frame findings in terms of oversight and "
+        "accountability, not operational detail a manager would already know.\n\n"
+    ),
+    "management_report": (
+        "Audience: operating managers responsible for day-to-day performance. Purpose: a "
+        "working review of performance, issues, and what needs to happen next inside the "
+        "business — write for someone who will act on this directly, not for a governance "
+        "body one level removed from operations.\n\n"
+    ),
+    "financial_analysis": (
+        "Audience: finance leadership and executives evaluating financial performance. "
+        "Purpose: explain WHY the numbers moved — margin, revenue, and variance drivers — not "
+        "just restate them; every finding should connect a figure to its underlying financial "
+        "driver wherever the evidence supports one.\n\n"
+    ),
+    "risk_assessment": (
+        "Audience: risk owners and leadership accountable for identifying and mitigating "
+        "exposure. Purpose: a risk-register-style account of what could go wrong, how material "
+        "it is, and what is being done about it — the report exists to surface and size risk, "
+        "not to give a balanced overview of performance.\n\n"
+    ),
+    "full_report": (
+        "Audience: readers who need the complete picture in one document — the comprehensive "
+        "reference version spanning financial, operational, and risk perspectives together. "
+        "Purpose: breadth and completeness, not a narrow focus on any single lens.\n\n"
+    ),
+}
+
+# Per-template guidance appended to the Strategic Recommendations section
+# block — what kind of action each report type's recommendations must be.
+TEMPLATE_RECOMMENDATION_STYLE: dict[str, str] = {
+    "executive_summary": (
+        "List at most 3 recommendations — only the highest-priority ones. Do not pad to fill "
+        "more; a short, sharp list is the point of this report type.\n\n"
+    ),
+    "board_report": (
+        "Each `**Action:**` must be phrased as the governance decision itself — start it with "
+        "'Approve', 'Authorize', 'Direct management to', or 'Formally note' — never as the "
+        "underlying operational task staff would carry out. For example, write 'Approve funding "
+        "to expand claims processing capacity in the Western region' rather than 'Enhance claims "
+        "processing capacity in the Western region' — the board approves the resourcing decision, "
+        "it does not itself perform the operational work.\n\n"
+    ),
+    "management_report": (
+        "Each recommendation must be something a manager can act on directly this reporting "
+        "cycle — tie it to a concrete operational lever (staffing, process, vendor, workflow), "
+        "not a strategic direction only executive leadership could set.\n\n"
+    ),
+    "financial_analysis": (
+        "Each `**Action:**` sentence must open by naming the financial lever it pulls — pricing "
+        "or rate adjustment, underwriting terms, cost/expense reduction, capital allocation, or "
+        "product/channel mix — e.g. 'Adjust underwriting terms for the Western region to...' or "
+        "'Reallocate claims-handling budget toward...'. A bare operational task with no named "
+        "financial lever (e.g. 'Enhance claims processing capacity') is NOT acceptable here, even "
+        "if the same finding also motivates the same action in another report type. The "
+        "`**Rationale:**` must state the expected effect on a financial metric (margin, loss "
+        "ratio, revenue, or cost) in addition to citing the finding.\n\n"
+    ),
+    "risk_assessment": (
+        "Every recommendation must be a mitigation tied to a specific named risk from the "
+        "Risks & Issues section above — never a general improvement with no corresponding "
+        "stated risk.\n\n"
+    ),
+    "full_report": (
+        "Cover the full range of priorities across findings, ordered by materiality — breadth "
+        "across the whole evidence set is the goal for this report type, not a narrow focus.\n\n"
+    ),
 }
 
 
@@ -563,6 +654,20 @@ class SpaReportGenerationService:
             "entry marked as a single observation is exactly this case — state the value plainly, "
             "never as a directional change.\n\n"
         )
+        polarity_requirement = (
+            "Whether a metric moving up or down is good or bad news is NOT something you may "
+            "infer from the number alone. Where a 'Verified Calculations' entry carries a "
+            "'Business direction' line, follow it exactly: it will tell you either that the "
+            "metric's direction is established (so you may say 'improved'/'deteriorated' when "
+            "that specific direction is met) or that it is NOT established by the evidence — in "
+            "that case describe the metric only as having increased/decreased/grown/declined, "
+            "and never as having improved, worsened, gotten better, or gotten worse, no matter "
+            "how the change looks on its face. A rising number is not inherently good news and a "
+            "falling number is not inherently bad news — e.g. rising claims or a rising loss "
+            "ratio is a deterioration, not an improvement, and rising premium or retention is an "
+            "improvement, not a deterioration; for any metric with no stated business direction, "
+            "increased/decreased is the only correct wording.\n\n"
+        )
         causal_language_requirement = (
             "Do not state that one trend is CAUSING another (e.g. 'operational inefficiencies are "
             "causing customer attrition') unless a source document explicitly states that causal "
@@ -770,7 +875,8 @@ class SpaReportGenerationService:
                 "a generic justification), and `**Measurement:**` (how success would be assessed — "
                 "reference a metric from the Verified Calculations or Report Plan above where one "
                 "exists, rather than inventing a target the evidence doesn't "
-                f"support).{recommendations_plan_clause}\n\n"
+                f"support).{recommendations_plan_clause}\n"
+                f"{TEMPLATE_RECOMMENDATION_STYLE.get(template_id, '')}\n"
             ),
             "changes_since_last": comparison_requirement,
             "conclusion": (
@@ -785,12 +891,14 @@ class SpaReportGenerationService:
             f"Write a {template_name} titled \"{title}\" covering the period '{period_name}', "
             "using only the evidence provided below.\n"
             f"{instructions_line}\n"
+            f"{TEMPLATE_AUDIENCE_PURPOSE.get(template_id, '')}"
             f"{synthesis_requirement}"
             f"{coverage_gap_requirement}"
             f"{calculated_metrics_requirement}"
             f"{growth_terminology_requirement}"
             f"{dimension_framing_requirement}"
             f"{single_observation_requirement}"
+            f"{polarity_requirement}"
             f"{causal_language_requirement}"
             f"{report_plan_requirement}"
             "Go beyond summarizing — synthesize. For every major point, explain not just what "
@@ -905,6 +1013,7 @@ class SpaReportGenerationService:
             build_report_plan(
                 metric_tables=metric_tables,
                 sources=sources,
+                template_id=template_id,
                 template_name=template["name"],
                 period_name=period["name"],
             )

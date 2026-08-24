@@ -116,6 +116,61 @@ def test_remove_empty_sections_keeps_placeholder_free_content():
     assert "Prompt and fair claims settlement" in cleaned
 
 
+def test_remove_empty_sections_drops_no_risks_identified_sentence():
+    """Phase 3 Step 4 Phase C: the report-writing prompt instructs the
+    model to write 'No risks were identified in the evidence reviewed.'
+    rather than fabricating a risk — that sentence must be recognized as a
+    placeholder and the whole section dropped, not shown to the reader as
+    an awkward one-line 'Risks & Issues' section."""
+
+    report = """
+## Key Findings
+- Premium grew 12% year-over-year.
+
+## Risks & Issues
+No risks were identified in the evidence reviewed.
+
+## Strategic Recommendations
+1. Continue current pricing strategy.
+"""
+
+    cleaned = remove_empty_sections(report)
+
+    assert "## Risks & Issues" not in cleaned
+    assert "## Key Findings" in cleaned
+    assert "## Strategic Recommendations" in cleaned
+
+
+def test_remove_empty_sections_drops_no_opportunities_identified_sentence():
+    report = """
+## Opportunities
+No opportunities were identified in the evidence reviewed.
+
+## Strategic Recommendations
+1. Continue current pricing strategy.
+"""
+
+    cleaned = remove_empty_sections(report)
+
+    assert "## Opportunities" not in cleaned
+    assert "## Strategic Recommendations" in cleaned
+
+
+def test_remove_empty_sections_keeps_a_real_risk_that_merely_starts_with_no():
+    """The placeholder match must stay narrow — a genuine finding that
+    happens to start with 'No' must never be swept up as a placeholder."""
+
+    report = """
+## Risks & Issues
+No mitigation plan currently exists for the claims backlog increase from 14 to 31 cases.
+"""
+
+    cleaned = remove_empty_sections(report)
+
+    assert "## Risks & Issues" in cleaned
+    assert "No mitigation plan currently exists" in cleaned
+
+
 def test_premium_pdf_has_no_raw_markdown_headings():
     report = f"""
 ## Executive Intelligence Dashboard

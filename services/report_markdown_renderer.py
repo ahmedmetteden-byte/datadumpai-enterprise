@@ -62,7 +62,8 @@ PLACEHOLDER_LINE = re.compile(
     r"n/?a|"
     r"not\s+(?:applicable|available|identified)|"
     r"no\s+(?:data|quotations?|quotes?|content|"
-    r"relevant\s+quotations?)(?:\s+(?:were\s+)?identified)?|"
+    r"relevant\s+quotations?|risks?|material\s+risks?|opportunities)"
+    r"(?:\s+(?:were\s+)?identified)?(?:\s+in\s+the\s+evidence\s+reviewed)?|"
     r"[—\-]"
     r")\.?$",
     re.IGNORECASE,

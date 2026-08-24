@@ -49,6 +49,14 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from services.quantitative_analysis_service import (
+    POLARITY_NEGATIVE,
+    POLARITY_NEUTRAL,
+    POLARITY_POSITIVE,
+    POLARITY_UNKNOWN,
+    classify_metric_polarity,
+)
+
 logger = logging.getLogger(__name__)
 
 CHAT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
@@ -245,16 +253,6 @@ _DECREASE_WORDS = (
     "dropping", "declined", "declining", "lost", "shrank", "slipped",
 )
 
-# A narrow, explicit list of metrics where "lower is better" is a
-# near-universal convention, used ONLY to check "improved"/"worsened"
-# sentiment words against the calculated sign for THESE specific metrics
-# — deliberately not a general business-polarity classifier (a distinct,
-# larger piece of work): this exists only to catch "Loss ratio improved"
-# stated against a positive (deteriorating) percentage-point change.
-_LOWER_IS_BETTER_RATIO_KEYWORDS = (
-    "loss ratio", "expense ratio", "combined ratio", "error rate",
-    "defect rate", "attrition rate", "churn rate", "delinquency rate",
-)
 _IMPROVEMENT_WORDS = ("improved", "improvement", "improving")
 _DETERIORATION_WORDS = ("worsened", "worsening", "deteriorated", "deterioration")
 
@@ -277,8 +275,20 @@ def _sentiment_issue(title: str, formatted: str, stated_word: str, actual: str) 
         category="direction_consistency",
         message=(
             f"The narrative describes {title!r} as having {stated_word} at {formatted}, but the "
-            f"verified calculation shows the figure {actual} — inconsistent for a metric where "
-            "a lower value is conventionally better."
+            f"verified calculation shows the figure {actual}."
+        ),
+        location=title,
+    )
+
+
+def _unclassified_sentiment_issue(title: str, formatted: str, stated_word: str) -> QCIssue:
+    return QCIssue(
+        severity="high",
+        category="direction_consistency",
+        message=(
+            f"The narrative describes {title!r} as having {stated_word} at {formatted}, but this "
+            "metric's business direction is not established by the evidence — it must be "
+            "described as an increase/decrease, never an improvement/deterioration."
         ),
         location=title,
     )
@@ -313,9 +323,7 @@ def check_direction_consistency(
             if change.get("percent") is not None:
                 signed_changes.append(float(change["percent"]))
 
-        is_lower_is_better_ratio = any(
-            keyword in title.lower() for keyword in _LOWER_IS_BETTER_RATIO_KEYWORDS
-        )
+        polarity = classify_metric_polarity(title)
 
         for percent in signed_changes:
             formatted = f"{abs(percent):.1f}%"
@@ -341,17 +349,30 @@ def check_direction_consistency(
                 elif found_decrease and not found_increase and percent >= 0:
                     issues.append(_direction_issue(title, formatted, "a decrease", "an increase"))
 
-                if is_lower_is_better_ratio:
-                    found_improved = any(word in context for word in _IMPROVEMENT_WORDS)
-                    found_worsened = any(word in context for word in _DETERIORATION_WORDS)
-                    if found_improved and not found_worsened and percent > 0:
+                found_improved = any(word in context for word in _IMPROVEMENT_WORDS)
+                found_worsened = any(word in context for word in _DETERIORATION_WORDS)
+                if found_improved and not found_worsened:
+                    if polarity == POLARITY_NEGATIVE and percent > 0:
                         issues.append(
-                            _sentiment_issue(title, formatted, "improved", "increased (a deterioration for this ratio)")
+                            _sentiment_issue(title, formatted, "improved", "increased (a deterioration for this metric)")
                         )
-                    elif found_worsened and not found_improved and percent < 0:
+                    elif polarity == POLARITY_POSITIVE and percent < 0:
                         issues.append(
-                            _sentiment_issue(title, formatted, "worsened", "decreased (an improvement for this ratio)")
+                            _sentiment_issue(title, formatted, "improved", "decreased (a deterioration for this metric)")
                         )
+                    elif polarity in (POLARITY_UNKNOWN, POLARITY_NEUTRAL):
+                        issues.append(_unclassified_sentiment_issue(title, formatted, "improved"))
+                elif found_worsened and not found_improved:
+                    if polarity == POLARITY_NEGATIVE and percent < 0:
+                        issues.append(
+                            _sentiment_issue(title, formatted, "worsened", "decreased (an improvement for this metric)")
+                        )
+                    elif polarity == POLARITY_POSITIVE and percent > 0:
+                        issues.append(
+                            _sentiment_issue(title, formatted, "worsened", "increased (an improvement for this metric)")
+                        )
+                    elif polarity in (POLARITY_UNKNOWN, POLARITY_NEUTRAL):
+                        issues.append(_unclassified_sentiment_issue(title, formatted, "worsened"))
 
     issues.extend(_check_endpoint_value_direction(narrative, metric_tables))
     return issues

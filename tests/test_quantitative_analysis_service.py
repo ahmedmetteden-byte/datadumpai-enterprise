@@ -8,6 +8,7 @@ figures itself.
 from __future__ import annotations
 
 from services.quantitative_analysis_service import (
+    classify_metric_polarity,
     extract_metric_tables,
     format_metrics_for_evidence,
 )
@@ -971,3 +972,90 @@ def test_indicator_column_with_multiple_distinct_values_and_no_time_splits_indep
     assert titles == {"Customer Satisfaction Index", "Employee Engagement Index"}
     for table in tables:
         assert table["dimension_type"] == "single_observation"
+
+
+# --- Phase 3 Step 4, Phase C: shared metric-polarity classification ---
+
+
+def test_classify_metric_polarity_positive_examples():
+    for title in ["Gross Premium", "Revenue", "Customer Retention", "Profit Margin"]:
+        assert classify_metric_polarity(title) == "positive"
+
+
+def test_classify_metric_polarity_negative_examples():
+    for title in ["Claims Incurred", "Customer Complaints", "Claims Backlog", "Loss Ratio", "Churn Rate"]:
+        assert classify_metric_polarity(title) == "negative"
+
+
+def test_classify_metric_polarity_unknown_for_unrecognized_metric():
+    """Never guess — an unrecognized metric must classify as unknown, not
+    default to positive or negative."""
+
+    assert classify_metric_polarity("Digital Sales Share") == "unknown"
+
+
+def test_classify_metric_polarity_neutral_for_categorical_dimension():
+    """A cross-sectional/categorical comparison has no inherent up/down
+    preference — highest-vs-lowest isn't a change over time at all."""
+
+    assert classify_metric_polarity("Premium Share", dimension_type="categorical") == "neutral"
+
+
+def test_extracted_temporal_series_carries_polarity_in_calculations():
+    """The polarity classification reaches the actual extracted
+    MetricSeries calculations dict, not just the standalone classifier
+    function — confirming the wiring, not only the pure function."""
+
+    source = {
+        "filename": "q1.xlsx",
+        "excerpt": (
+            "| Year | Gross Premium |\n"
+            "|------|--------------:|\n"
+            "| 2023 | 100 |\n"
+            "| 2024 | 110 |\n"
+        ),
+    }
+    tables = extract_metric_tables([source])
+    premium = next(t for t in tables if t["title"] == "Gross Premium")
+    assert premium["calculations"]["polarity"] == "positive"
+
+
+def test_format_metrics_for_evidence_renders_business_direction_for_known_polarity():
+    tables = [
+        {
+            "title": "Gross Premium",
+            "source_document": "q1.xlsx",
+            "unit": "$ million",
+            "dimension_type": "temporal",
+            "rows": [{"label": "2023", "value": 100.0}, {"label": "2024", "value": 110.0}],
+            "calculations": {
+                "period_over_period": [{"from": "2023", "to": "2024", "absolute": 10.0, "percent": 10.0}],
+                "total_change": {"from": "2023", "to": "2024", "absolute": 10.0, "percent": 10.0},
+                "polarity": "positive",
+            },
+            "reported_change": [],
+        }
+    ]
+    rendered = format_metrics_for_evidence(tables)
+    assert "POSITIVE" in rendered
+
+
+def test_format_metrics_for_evidence_warns_against_improvement_language_for_unknown_polarity():
+    tables = [
+        {
+            "title": "Digital Sales Share",
+            "source_document": "q1.xlsx",
+            "unit": "%",
+            "dimension_type": "temporal",
+            "rows": [{"label": "2023", "value": 20.0}, {"label": "2024", "value": 25.0}],
+            "calculations": {
+                "period_over_period": [{"from": "2023", "to": "2024", "absolute": 5.0, "percent": 25.0}],
+                "total_change": {"from": "2023", "to": "2024", "absolute": 5.0, "percent": 25.0},
+                "polarity": "unknown",
+            },
+            "reported_change": [],
+        }
+    ]
+    rendered = format_metrics_for_evidence(tables)
+    assert "not established by the evidence" in rendered
+    assert "do NOT call it an improvement" in rendered

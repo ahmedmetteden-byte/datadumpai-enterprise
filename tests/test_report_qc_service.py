@@ -306,6 +306,57 @@ def test_direction_consistency_still_allows_same_bullet_compound_transition():
     assert check_direction_consistency(narrative, [claims_table]) == []
 
 
+# --- Phase 3 Step 4, Phase C: generalized metric-polarity sentiment check ---
+
+RETENTION_TABLE = {
+    "title": "Customer retention",
+    "calculations": {
+        "total_change": {"from": "January 2026", "to": "March 2026", "absolute": -2.0, "percent": -2.4}
+    },
+}
+
+UNKNOWN_METRIC_TABLE = {
+    "title": "Digital Sales Share",
+    "calculations": {
+        "total_change": {"from": "January 2026", "to": "March 2026", "absolute": 3.0, "percent": 12.0}
+    },
+}
+
+
+def test_direction_consistency_flags_improved_against_a_declining_positive_metric():
+    """Customer retention (POSITIVE polarity) actually decreased but is
+    called "improved" — must be flagged, symmetric to the existing
+    lower-is-better-ratio case but for a higher-is-better metric."""
+
+    narrative = "Customer retention improved by 2.4% from January to March 2026."
+    issues = check_direction_consistency(narrative, [RETENTION_TABLE])
+    assert len(issues) == 1
+    assert issues[0].severity == "high"
+    assert "improved" in issues[0].message
+
+
+def test_direction_consistency_passes_when_worsened_matches_a_declining_positive_metric():
+    narrative = "Customer retention worsened by 2.4% from January to March 2026."
+    assert check_direction_consistency(narrative, [RETENTION_TABLE]) == []
+
+
+def test_direction_consistency_flags_any_sentiment_word_for_an_unclassified_metric():
+    """The core Phase C requirement: "increased" must never automatically
+    become "improved". A metric with no established business polarity
+    must never be described with "improved"/"worsened" at all, regardless
+    of which direction the number actually moved."""
+
+    narrative = "Digital Sales Share improved by 12.0% from January to March 2026."
+    issues = check_direction_consistency(narrative, [UNKNOWN_METRIC_TABLE])
+    assert len(issues) == 1
+    assert "business direction is not established" in issues[0].message
+
+
+def test_direction_consistency_passes_neutral_wording_for_an_unclassified_metric():
+    narrative = "Digital Sales Share increased by 12.0% from January to March 2026."
+    assert check_direction_consistency(narrative, [UNKNOWN_METRIC_TABLE]) == []
+
+
 # --- Phase 3: safety net for the 414.3%-style bug ---
 
 

@@ -16,9 +16,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from models.report_data import ReportData
 from services.project_service import ProjectService
-from services.spa_report_generation_service import SpaReportGenerationService
+from services.spa_report_generation_service import (
+    TEMPLATE_AUDIENCE_PURPOSE,
+    TEMPLATE_RECOMMENDATION_STYLE,
+    TEMPLATE_SECTIONS,
+    SpaReportGenerationService,
+)
 from tests.fixtures.fake_llm import fake_openai_client
 
 FIXTURE_PATH = (
@@ -249,3 +256,81 @@ def test_baseline_qc_pass_kill_switch_omits_qc_report(
 
     assert report is not None
     assert "qc_report" not in report.metadata
+
+
+# --- Phase 3 Step 4, Phase C: report types must be genuinely differentiated
+# in what the writer prompt actually asks for — not just in the section
+# headings the fake LLM happens to echo back. These assert against the real
+# prompt text sent to the model, for every report type. ---
+
+_SECTION_MARKER_PHRASE = {
+    "executive_summary": "a board member could read alone and understand the whole",
+    "key_findings": "as sub-headings, drawing across the full set of documents",
+    "detailed_analysis": "The narrative connective tissue between findings",
+    "risks_issues": "Concrete risks or open problems surfaced by the evidence",
+    "opportunities": "Positive openings, efficiencies, or strategic options",
+    "strategic_recommendations": "A markdown numbered list of specific, actionable next steps",
+    "conclusion": "closing the report and restating what should happen next",
+}
+_ALL_STRUCTURAL_SECTIONS = set(_SECTION_MARKER_PHRASE)
+
+
+@pytest.mark.parametrize("template_id", sorted(TEMPLATE_SECTIONS))
+def test_prompt_requests_exactly_this_templates_sections_and_no_others(
+    isolated_env, project_service: ProjectService, monkeypatch, template_id
+):
+    project = project_service.create_project(f"Section Differentiation {template_id}")
+
+    _record, prompt, _report = _generate_with_fake_llm(
+        project, monkeypatch=monkeypatch, template_id=template_id
+    )
+
+    expected_sections = set(TEMPLATE_SECTIONS[template_id])
+    for section_id, phrase in _SECTION_MARKER_PHRASE.items():
+        if section_id in expected_sections:
+            assert phrase in prompt, f"{template_id} is missing its {section_id} instructions"
+        else:
+            assert phrase not in prompt, f"{template_id} unexpectedly requests {section_id}"
+
+
+@pytest.mark.parametrize("template_id", sorted(TEMPLATE_SECTIONS))
+def test_prompt_includes_this_templates_audience_purpose_and_recommendation_style(
+    isolated_env, project_service: ProjectService, monkeypatch, template_id
+):
+    """Structural section lists alone don't prove differentiation — the
+    prompt must also tell the model WHO it's writing for and WHAT KIND of
+    recommendation this report type calls for, per template_id."""
+
+    project = project_service.create_project(f"Audience Differentiation {template_id}")
+
+    _record, prompt, _report = _generate_with_fake_llm(
+        project, monkeypatch=monkeypatch, template_id=template_id
+    )
+
+    assert TEMPLATE_AUDIENCE_PURPOSE[template_id].strip() in prompt
+    assert TEMPLATE_RECOMMENDATION_STYLE[template_id].strip() in prompt
+
+    # Every OTHER template's audience/recommendation text must be absent —
+    # differentiation, not just presence of some guidance.
+    for other_id in TEMPLATE_SECTIONS:
+        if other_id == template_id:
+            continue
+        if TEMPLATE_AUDIENCE_PURPOSE[other_id] != TEMPLATE_AUDIENCE_PURPOSE[template_id]:
+            assert TEMPLATE_AUDIENCE_PURPOSE[other_id].strip() not in prompt
+        if TEMPLATE_RECOMMENDATION_STYLE[other_id] != TEMPLATE_RECOMMENDATION_STYLE[template_id]:
+            assert TEMPLATE_RECOMMENDATION_STYLE[other_id].strip() not in prompt
+
+
+def test_prompt_carries_the_shared_business_direction_polarity_requirement(
+    isolated_env, project_service: ProjectService, monkeypatch
+):
+    """The polarity/business-direction instruction is shared across every
+    report type (it's about not inventing improved/deteriorated language),
+    unlike the per-template audience/recommendation guidance above."""
+
+    project = project_service.create_project("Polarity Requirement Project")
+
+    _record, prompt, _report = _generate_with_fake_llm(project, monkeypatch=monkeypatch)
+
+    assert "'Business direction' line" in prompt
+    assert "never as having improved, worsened" in prompt

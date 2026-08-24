@@ -297,3 +297,125 @@ def test_dashboard_kpi_to_dict_round_trips():
         "total_change_percent": 97.4,
         "direction": "increase",
     }
+
+
+# --- Phase 3 Step 4, Phase C: template-aware materiality weighting and
+# emphasis_sections, so different report types can genuinely surface
+# different evidence rather than only differing in section headings ---
+
+POSITIVE_METRIC_LARGER = {
+    "title": "Gross Premium",
+    "source_document": "report.pdf",
+    "unit": "₦ billion",
+    "rows": [{"label": "2023", "value": 100.0}, {"label": "2024", "value": 140.0}],
+    "calculations": {
+        "period_over_period": [{"from": "2023", "to": "2024", "absolute": 40.0, "percent": 40.0}],
+        "total_change": {"from": "2023", "to": "2024", "absolute": 40.0, "percent": 40.0},
+    },
+}
+
+NEGATIVE_METRIC_SMALLER = {
+    "title": "Claims Incurred",
+    "source_document": "report.pdf",
+    "unit": "₦ billion",
+    "rows": [{"label": "2023", "value": 100.0}, {"label": "2024", "value": 70.0}],
+    "calculations": {
+        "period_over_period": [{"from": "2023", "to": "2024", "absolute": -30.0, "percent": -30.0}],
+        "total_change": {"from": "2023", "to": "2024", "absolute": -30.0, "percent": -30.0},
+    },
+}
+
+POSITIVE_METRIC_SMALLER = {
+    "title": "Gross Premium",
+    "source_document": "report.pdf",
+    "unit": "₦ billion",
+    "rows": [{"label": "2023", "value": 100.0}, {"label": "2024", "value": 125.0}],
+    "calculations": {
+        "period_over_period": [{"from": "2023", "to": "2024", "absolute": 25.0, "percent": 25.0}],
+        "total_change": {"from": "2023", "to": "2024", "absolute": 25.0, "percent": 25.0},
+    },
+}
+
+NEGATIVE_METRIC_LARGER = {
+    "title": "Claims Incurred",
+    "source_document": "report.pdf",
+    "unit": "₦ billion",
+    "rows": [{"label": "2023", "value": 100.0}, {"label": "2024", "value": 65.0}],
+    "calculations": {
+        "period_over_period": [{"from": "2023", "to": "2024", "absolute": -35.0, "percent": -35.0}],
+        "total_change": {"from": "2023", "to": "2024", "absolute": -35.0, "percent": -35.0},
+    },
+}
+
+
+def test_default_ranking_favors_larger_magnitude_regardless_of_polarity():
+    plan = build_report_plan(metric_tables=[POSITIVE_METRIC_LARGER, NEGATIVE_METRIC_SMALLER])
+    assert plan.ranked_findings[0].label == "Gross Premium"
+
+
+def test_risk_assessment_emphasis_promotes_the_negative_pressure_finding():
+    """Even though Gross Premium (40%) has a larger magnitude than Claims
+    Incurred (30%), Risk Assessment exists to surface risk — its ranking
+    weight must let the smaller negative-pressure finding outrank the
+    larger positive one."""
+
+    plan = build_report_plan(
+        metric_tables=[POSITIVE_METRIC_LARGER, NEGATIVE_METRIC_SMALLER],
+        template_id="risk_assessment",
+    )
+    assert plan.ranked_findings[0].label == "Claims Incurred"
+    # The displayed materiality score is never inflated by the emphasis
+    # weight — only sort order changes.
+    assert plan.ranked_findings[0].materiality_score == 30.0
+
+
+def test_financial_analysis_emphasis_promotes_the_positive_finding():
+    """Claims Incurred (35%) outranks Gross Premium (25%) by magnitude
+    alone, but Financial Analysis emphasizes positive-polarity performance
+    metrics — the weight must be able to flip that ordering."""
+
+    plan = build_report_plan(
+        metric_tables=[POSITIVE_METRIC_SMALLER, NEGATIVE_METRIC_LARGER],
+        template_id="financial_analysis",
+    )
+    assert plan.ranked_findings[0].label == "Gross Premium"
+    assert plan.ranked_findings[0].materiality_score == 25.0
+
+
+def test_unrecognized_or_missing_template_id_applies_no_emphasis_weight():
+    plan_no_id = build_report_plan(metric_tables=[POSITIVE_METRIC_SMALLER, NEGATIVE_METRIC_LARGER])
+    plan_unknown_id = build_report_plan(
+        metric_tables=[POSITIVE_METRIC_SMALLER, NEGATIVE_METRIC_LARGER],
+        template_id="full_report",
+    )
+    assert plan_no_id.ranked_findings[0].label == "Claims Incurred"
+    assert plan_unknown_id.ranked_findings[0].label == "Claims Incurred"
+
+
+def test_emphasis_sections_are_populated_per_template_id():
+    assert build_report_plan(metric_tables=[], template_id="risk_assessment").emphasis_sections == [
+        "risks_issues"
+    ]
+    assert build_report_plan(metric_tables=[], template_id="board_report").emphasis_sections == [
+        "risks_issues",
+        "strategic_recommendations",
+    ]
+    assert build_report_plan(metric_tables=[], template_id="full_report").emphasis_sections == []
+    assert build_report_plan(metric_tables=[]).emphasis_sections == []
+
+
+def test_render_plan_for_prompt_surfaces_emphasis_guidance():
+    plan = ReportPlan(emphasis_sections=["risks_issues"])
+    rendered = render_plan_for_prompt(plan)
+    assert "risks_issues" in rendered
+    assert "most weight" in rendered
+
+
+def test_report_plan_with_only_emphasis_sections_is_not_empty():
+    """A template_id with no metric tables to rank must still surface its
+    emphasis guidance — an empty ranked_findings list shouldn't suppress
+    the whole plan when there's real per-template guidance to give."""
+
+    plan = build_report_plan(metric_tables=[], template_id="risk_assessment")
+    assert not plan.is_empty()
+    assert render_plan_for_prompt(plan) != ""

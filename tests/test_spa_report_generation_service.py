@@ -8,12 +8,52 @@ from services.project_service import ProjectService
 from services.report_plan_service import RankedFinding, ReportPlan
 from services.report_service import ReportService
 from services.spa_report_generation_service import (
+    ANALYTICAL_TEMPLATE_IDS,
+    TEMPLATE_SECTIONS,
     SpaReportGenerationService,
     _clip,
     _strip_wrapping_code_fence,
     period_by_id,
     template_by_id,
 )
+
+ALL_TEMPLATE_IDS = {
+    "executive_summary",
+    "board_report",
+    "management_report",
+    "financial_analysis",
+    "risk_assessment",
+    "full_report",
+}
+
+
+def test_template_sections_defined_for_every_report_type():
+    assert set(TEMPLATE_SECTIONS) == ALL_TEMPLATE_IDS
+
+
+def test_executive_summary_sections_are_short_and_omit_conclusion():
+    """Executive Summary is the shortest report type — 1-3 priorities a
+    board member reads standalone — so it drops the closing Conclusion
+    section (redundant at this length) in favor of Risks & Issues, which
+    the prior structure omitted entirely."""
+
+    assert TEMPLATE_SECTIONS["executive_summary"] == [
+        "executive_summary",
+        "key_findings",
+        "risks_issues",
+        "strategic_recommendations",
+    ]
+    assert "conclusion" not in TEMPLATE_SECTIONS["executive_summary"]
+    assert "detailed_analysis" not in TEMPLATE_SECTIONS["executive_summary"]
+    assert "opportunities" not in TEMPLATE_SECTIONS["executive_summary"]
+
+
+def test_analytical_template_ids_cover_every_type_except_executive_summary():
+    """Executive Summary is the one report type that stays text-only —
+    every other type (including Management Report and Board Report, which
+    reference metric trends in their own prose) gets charts."""
+
+    assert ANALYTICAL_TEMPLATE_IDS == ALL_TEMPLATE_IDS - {"executive_summary"}
 
 
 def test_strip_wrapping_code_fence_removes_markdown_fence():

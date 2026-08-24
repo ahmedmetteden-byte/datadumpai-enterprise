@@ -337,7 +337,59 @@ class MetricSeries:
         }
 
 
-def _compute_calculations(rows: list[dict[str, Any]]) -> dict[str, Any]:
+# ---------------------------------------------------------------------------
+# Phase 3 Step 4, Phase C: metric-polarity classification.
+#
+# One shared classifier, reused (not duplicated) everywhere a report or
+# answer needs to decide whether a movement in a metric is good news, bad
+# news, or simply not known — report generation (this module's own
+# format_metrics_for_evidence, consumed by spa_report_generation_service.py)
+# and report QC (report_qc_service.py's check_direction_consistency) both
+# call this same function directly on a metric's title, rather than each
+# keeping their own keyword list. The core rule this exists to enforce:
+# "increased" must never automatically become "improved" — an unclassified
+# metric gets NEUTRAL wording only, never an invented value judgment.
+# ---------------------------------------------------------------------------
+
+POLARITY_POSITIVE = "positive"    # higher is generally good news
+POLARITY_NEGATIVE = "negative"    # higher is generally concerning
+POLARITY_NEUTRAL = "neutral"      # no inherent up/down preference (e.g. a
+                                   # cross-sectional/categorical comparison)
+POLARITY_UNKNOWN = "unknown"      # business meaning not confidently known —
+                                   # never guess; use neutral increase/decrease
+                                   # wording only, never improved/deteriorated
+
+_POSITIVE_POLARITY_KEYWORDS = ("premium", "revenue", "retention", "margin", "profit")
+_NEGATIVE_POLARITY_KEYWORDS = (
+    "claim", "complaint", "backlog",
+    "loss ratio", "expense ratio", "combined ratio",
+    "error rate", "defect rate", "attrition rate", "churn rate", "delinquency rate",
+)
+
+
+def classify_metric_polarity(title: str, *, dimension_type: str = "temporal") -> str:
+    """Classify whether a HIGHER value of this metric is generally good
+    news, generally concerning, or not confidently known either way.
+    Deliberately conservative: only the explicit keyword lists above
+    yield POSITIVE/NEGATIVE — anything else is POLARITY_UNKNOWN, never
+    guessed. A categorical/cross-sectional metric (dimension_type
+    "categorical") is POLARITY_NEUTRAL — "highest vs lowest" isn't a
+    change over time at all, so positive/negative pressure doesn't apply
+    (see format_metrics_for_evidence's existing categorical guardrail,
+    which already tells the model never to call it a change)."""
+
+    if dimension_type == "categorical":
+        return POLARITY_NEUTRAL
+
+    title_lower = title.lower()
+    if any(keyword in title_lower for keyword in _POSITIVE_POLARITY_KEYWORDS):
+        return POLARITY_POSITIVE
+    if any(keyword in title_lower for keyword in _NEGATIVE_POLARITY_KEYWORDS):
+        return POLARITY_NEGATIVE
+    return POLARITY_UNKNOWN
+
+
+def _compute_calculations(rows: list[dict[str, Any]], *, title: str = "") -> dict[str, Any]:
     """Absolute/percent change between adjacent rows and start-to-end —
     only meaningful when row labels are temporal (see _looks_temporal),
     since "period-over-period" implies a time order between rows."""
@@ -373,6 +425,7 @@ def _compute_calculations(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "percent": round(total_percent, 1) if total_percent is not None else None,
         },
         "direction": _trend_direction(period_over_period),
+        "polarity": classify_metric_polarity(title),
     }
     result.update(_compute_temporal_shape(rows))
     return result
@@ -645,13 +698,14 @@ def _extract_from_table(rows: list[list[str]], *, source_document: str) -> list[
                 if len(group_rows) < 2:
                     continue
                 group_temporal = all(_looks_temporal(r["label"]) for r in group_rows)
+                group_title = _compose_category_title(identity, column_header)
                 series_list.append(
                     MetricSeries(
-                        title=_compose_category_title(identity, column_header),
+                        title=group_title,
                         source_document=source_document,
                         unit=unit,
                         rows=group_rows,
-                        calculations=_compute_calculations(group_rows) if group_temporal else {},
+                        calculations=_compute_calculations(group_rows, title=group_title) if group_temporal else {},
                         reported_change=reported_change_by_group.get(identity, []),
                         dimension_type="temporal_by_category",
                         category_value=identity or None,
@@ -673,7 +727,7 @@ def _extract_from_table(rows: list[list[str]], *, source_document: str) -> list[
                     source_document=source_document,
                     unit=unit,
                     rows=parsed_rows,
-                    calculations=_compute_calculations(parsed_rows),
+                    calculations=_compute_calculations(parsed_rows, title=title),
                     reported_change=reported_change_by_group.get(
                         aligned_identities[0] if aligned_identities else "", []
                     ),
@@ -1106,7 +1160,7 @@ def _extract_from_prose_across_documents(
                 source_document=", ".join(sorted(seen_documents)),
                 unit=unit,
                 rows=rows,
-                calculations=_compute_calculations(rows),
+                calculations=_compute_calculations(rows, title=display_title),
                 reported_change=reported_change,
                 dimension_type="temporal",
             )
@@ -1347,6 +1401,27 @@ def format_metrics_for_evidence(tables: list[dict[str, Any]]) -> str:
 
         lines.append(f"**{display_title}{unit_suffix}** — source: {table['source_document']}")
 
+        calculations = table.get("calculations") or {}
+        polarity = calculations.get("polarity")
+        if polarity == "positive":
+            lines.append(
+                "_(Business direction: a higher value is generally POSITIVE for this metric — "
+                "an increase may be described as an improvement, a decrease as a "
+                "deterioration, if the evidence supports it.)_"
+            )
+        elif polarity == "negative":
+            lines.append(
+                "_(Business direction: a higher value is generally NEGATIVE PRESSURE for this "
+                "metric — an increase may be described as a deterioration, a decrease as an "
+                "improvement, if the evidence supports it.)_"
+            )
+        elif polarity == "unknown":
+            lines.append(
+                "_(Business direction: not established by the evidence — describe this metric's "
+                "movement as an increase/decrease/rose/fell only; do NOT call it an improvement "
+                "or a deterioration.)_"
+            )
+
         dimension_type = str(table.get("dimension_type") or "")
         if dimension_type == "categorical":
             lines.append(
@@ -1364,7 +1439,6 @@ def format_metrics_for_evidence(tables: list[dict[str, Any]]) -> str:
         for row in table["rows"]:
             lines.append(f"- {row['label']}: {row['value']:,}")
 
-        calculations = table.get("calculations") or {}
         for change in calculations.get("period_over_period", []):
             if change["percent"] is None:
                 continue
