@@ -175,6 +175,9 @@ export class HttpKnowledgeService implements KnowledgeService {
     if (input.title?.trim()) {
       form.append('title', input.title.trim());
     }
+    if (input.periodDate?.trim()) {
+      form.append('period_date', input.periodDate.trim());
+    }
     return apiUpload<KnowledgeListItem>(
       `/api/v1/workspaces/${workspaceId}/knowledge/upload`,
       form,

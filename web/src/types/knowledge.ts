@@ -130,6 +130,8 @@ export interface KnowledgeListQuery {
 export interface KnowledgeUploadInput {
   file: File;
   title?: string;
+  /** ISO date (YYYY-MM-DD) the document's content covers, for period-scoped reports */
+  periodDate?: string;
   /** Transfer progress 0–100 while posting to the API */
   onProgress?: (percent: number) => void;
 }

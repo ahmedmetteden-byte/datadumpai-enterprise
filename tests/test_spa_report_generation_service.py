@@ -151,7 +151,7 @@ def test_gather_sources_uses_retrieval_when_available(monkeypatch):
 
     sources = svc._gather_sources(
         "ws1",
-        {"documents": [{"filename": "a.pdf"}]},
+        [{"filename": "a.pdf"}],
         template=template_by_id("executive_summary"),
         period=period_by_id("custom"),
     )
@@ -170,7 +170,7 @@ def test_gather_sources_falls_back_when_retrieval_raises(monkeypatch):
 
     sources = svc._gather_sources(
         "ws1",
-        {"documents": [{"filename": "a.pdf"}]},
+        [{"filename": "a.pdf"}],
         template=template_by_id("executive_summary"),
         period=period_by_id("custom"),
     )
@@ -189,7 +189,7 @@ def test_gather_sources_falls_back_when_retrieval_returns_nothing(monkeypatch):
 
     sources = svc._gather_sources(
         "ws1",
-        {"documents": [{"filename": "a.pdf"}]},
+        [{"filename": "a.pdf"}],
         template=template_by_id("executive_summary"),
         period=period_by_id("custom"),
     )
@@ -213,7 +213,7 @@ def test_gather_sources_skips_retrieval_when_disabled(monkeypatch):
 
     sources = svc._gather_sources(
         "ws1",
-        {"documents": [{"filename": "a.pdf"}]},
+        [{"filename": "a.pdf"}],
         template=template_by_id("executive_summary"),
         period=period_by_id("custom"),
     )
@@ -232,7 +232,7 @@ def test_gather_sources_returns_empty_immediately_for_zero_documents(monkeypatch
 
     sources = svc._gather_sources(
         "ws1",
-        {"documents": []},
+        [],
         template=template_by_id("executive_summary"),
         period=period_by_id("custom"),
     )
@@ -592,6 +592,7 @@ def test_generate_markdown_prompt_unchanged_when_no_previous_report():
     svc._generate_markdown(
         title="Test Report",
         period_name="Custom / Ad hoc",
+        template_id="full_report",
         template_name="Executive Summary",
         sources=sources,
     )
@@ -600,6 +601,7 @@ def test_generate_markdown_prompt_unchanged_when_no_previous_report():
     svc._generate_markdown(
         title="Test Report",
         period_name="Custom / Ad hoc",
+        template_id="full_report",
         template_name="Executive Summary",
         sources=sources,
         previous_report=None,
@@ -623,6 +625,7 @@ def test_generate_markdown_requires_fact_analysis_implication_and_basis_tag():
     svc._generate_markdown(
         title="Test Report",
         period_name="Custom / Ad hoc",
+        template_id="full_report",
         template_name="Executive Summary",
         sources=sources,
     )
@@ -648,6 +651,7 @@ def test_generate_markdown_requires_evidence_tags_on_their_own_separate_lines():
     svc._generate_markdown(
         title="Test Report",
         period_name="Custom / Ad hoc",
+        template_id="full_report",
         template_name="Executive Summary",
         sources=sources,
     )
@@ -673,6 +677,7 @@ def test_generate_markdown_prohibits_cagr_mislabeling():
     svc._generate_markdown(
         title="Test Report",
         period_name="Custom / Ad hoc",
+        template_id="full_report",
         template_name="Executive Summary",
         sources=sources,
     )
@@ -701,6 +706,7 @@ def test_generate_markdown_names_every_source_document_regardless_of_relevance()
     svc._generate_markdown(
         title="Test Report",
         period_name="Custom / Ad hoc",
+        template_id="full_report",
         template_name="Executive Summary",
         sources=sources,
     )
@@ -726,6 +732,7 @@ def test_generate_markdown_includes_coverage_gap_note_when_a_document_could_not_
     svc._generate_markdown(
         title="Test Report",
         period_name="Custom / Ad hoc",
+        template_id="full_report",
         template_name="Executive Summary",
         sources=sources,
         coverage_gaps=[{"filename": "Minutes - 14th Meeting.pdf", "reason": "no_matching_evidence"}],
@@ -748,6 +755,7 @@ def test_generate_markdown_omits_coverage_gap_note_when_no_gaps():
     svc._generate_markdown(
         title="Test Report",
         period_name="Custom / Ad hoc",
+        template_id="full_report",
         template_name="Executive Summary",
         sources=sources,
         coverage_gaps=None,
@@ -766,6 +774,7 @@ def test_generate_markdown_instructs_restraint_against_unearned_adjectives():
     svc._generate_markdown(
         title="Test Report",
         period_name="Custom / Ad hoc",
+        template_id="full_report",
         template_name="Executive Summary",
         sources=sources,
     )
@@ -793,6 +802,7 @@ def test_generate_markdown_includes_categorical_vs_temporal_guardrail():
     svc._generate_markdown(
         title="Test Report",
         period_name="Custom / Ad hoc",
+        template_id="full_report",
         template_name="Executive Summary",
         sources=sources,
     )
@@ -812,6 +822,7 @@ def test_generate_markdown_includes_causal_language_guardrail():
     svc._generate_markdown(
         title="Test Report",
         period_name="Custom / Ad hoc",
+        template_id="full_report",
         template_name="Executive Summary",
         sources=sources,
     )
@@ -837,6 +848,7 @@ def test_generate_markdown_includes_single_observation_guardrail():
     svc._generate_markdown(
         title="Test Report",
         period_name="Custom / Ad hoc",
+        template_id="full_report",
         template_name="Executive Summary",
         sources=sources,
     )
@@ -862,6 +874,7 @@ def test_generate_markdown_warns_against_conflating_different_metrics():
     svc._generate_markdown(
         title="Test Report",
         period_name="Custom / Ad hoc",
+        template_id="full_report",
         template_name="Executive Summary",
         sources=sources,
     )
@@ -880,6 +893,7 @@ def test_generate_markdown_basis_tag_includes_observation_value():
     svc._generate_markdown(
         title="Test Report",
         period_name="Custom / Ad hoc",
+        template_id="full_report",
         template_name="Executive Summary",
         sources=sources,
     )
@@ -899,6 +913,7 @@ def test_generate_markdown_opportunities_section_warns_against_unsupported_impro
     svc._generate_markdown(
         title="Test Report",
         period_name="Custom / Ad hoc",
+        template_id="full_report",
         template_name="Executive Summary",
         sources=sources,
     )
@@ -918,6 +933,7 @@ def test_generate_markdown_grounds_risks_and_opportunities_with_basis_tag():
     svc._generate_markdown(
         title="Test Report",
         period_name="Custom / Ad hoc",
+        template_id="full_report",
         template_name="Executive Summary",
         sources=sources,
     )
@@ -946,6 +962,7 @@ def test_generate_markdown_requires_bulleted_risks_and_opportunities():
     svc._generate_markdown(
         title="Test Report",
         period_name="Custom / Ad hoc",
+        template_id="full_report",
         template_name="Executive Summary",
         sources=sources,
     )
@@ -971,6 +988,7 @@ def test_generate_markdown_forbids_padding_in_detailed_analysis_and_risks():
     svc._generate_markdown(
         title="Test Report",
         period_name="Custom / Ad hoc",
+        template_id="full_report",
         template_name="Executive Summary",
         sources=sources,
     )
@@ -989,6 +1007,7 @@ def test_generate_markdown_recommendations_require_action_rationale_measurement(
     svc._generate_markdown(
         title="Test Report",
         period_name="Custom / Ad hoc",
+        template_id="full_report",
         template_name="Executive Summary",
         sources=sources,
     )
@@ -1016,6 +1035,7 @@ def test_generate_markdown_recommendations_trace_to_plan_when_present():
     svc._generate_markdown(
         title="Test Report",
         period_name="Custom / Ad hoc",
+        template_id="full_report",
         template_name="Executive Summary",
         sources=sources,
         report_plan=plan,
@@ -1035,6 +1055,7 @@ def test_generate_markdown_recommendations_omit_plan_trace_clause_when_no_plan()
     svc._generate_markdown(
         title="Test Report",
         period_name="Custom / Ad hoc",
+        template_id="full_report",
         template_name="Executive Summary",
         sources=sources,
         report_plan=None,
@@ -1061,6 +1082,7 @@ def test_generate_markdown_executive_summary_anchors_to_report_plan_when_present
     svc._generate_markdown(
         title="Test Report",
         period_name="Custom / Ad hoc",
+        template_id="full_report",
         template_name="Executive Summary",
         sources=sources,
         report_plan=plan,
@@ -1081,6 +1103,7 @@ def test_generate_markdown_executive_summary_omits_plan_reference_when_no_plan()
     svc._generate_markdown(
         title="Test Report",
         period_name="Custom / Ad hoc",
+        template_id="full_report",
         template_name="Executive Summary",
         sources=sources,
         report_plan=None,
@@ -1106,6 +1129,7 @@ def test_generate_markdown_includes_changes_section_when_previous_report_present
     svc._generate_markdown(
         title="Test Report",
         period_name="Custom / Ad hoc",
+        template_id="full_report",
         template_name="Executive Summary",
         sources=sources,
         previous_report=previous_report,
@@ -1130,6 +1154,7 @@ def test_generate_markdown_omits_changes_section_when_previous_report_has_no_con
     svc._generate_markdown(
         title="Test Report",
         period_name="Custom / Ad hoc",
+        template_id="full_report",
         template_name="Executive Summary",
         sources=sources,
         previous_report={"content": "", "createdAt": "2026-01-01T00:00:00+00:00"},

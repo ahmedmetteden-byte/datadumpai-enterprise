@@ -46,6 +46,7 @@ def test_upload_blocked_when_over_free_limit(
                 BackgroundTasks(),
                 _upload_file(),
                 None,
+                None,
                 principal,
                 TEST_USER,
             )
@@ -63,6 +64,7 @@ def test_upload_allowed_under_free_limit(
             project["id"],
             BackgroundTasks(),
             _upload_file(),
+            None,
             None,
             principal,
             TEST_USER,

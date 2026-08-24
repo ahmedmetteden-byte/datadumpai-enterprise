@@ -60,6 +60,7 @@ export function KnowledgeUploadDialog({
   const fileRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState('');
+  const [periodDate, setPeriodDate] = useState('');
   const [phase, setPhase] = useState<Phase>('pick');
   const [transferPercent, setTransferPercent] = useState(0);
   const [created, setCreated] = useState<KnowledgeListItem | null>(null);
@@ -70,6 +71,7 @@ export function KnowledgeUploadDialog({
     if (!open) {
       setFile(null);
       setTitle('');
+      setPeriodDate('');
       setPhase('pick');
       setTransferPercent(0);
       setCreated(null);
@@ -144,6 +146,7 @@ export function KnowledgeUploadDialog({
         {
           file,
           title: title.trim() || undefined,
+          periodDate: periodDate.trim() || undefined,
           onProgress: (percent) => setTransferPercent(percent),
         },
         { accessToken },
@@ -252,6 +255,23 @@ export function KnowledgeUploadDialog({
               onChange={(event) => setTitle(event.target.value)}
               placeholder={UI_COPY.knowledgeUploadTitlePlaceholder}
             />
+          </div>
+          <div>
+            <label
+              htmlFor="knowledge-upload-period"
+              className="mb-1 block text-caption font-medium text-ink-muted"
+            >
+              {UI_COPY.knowledgeUploadPeriodField}
+            </label>
+            <Input
+              id="knowledge-upload-period"
+              type="date"
+              value={periodDate}
+              onChange={(event) => setPeriodDate(event.target.value)}
+            />
+            <p className="mt-1 text-caption text-ink-faint">
+              {UI_COPY.knowledgeUploadPeriodHint}
+            </p>
           </div>
           {!file ? <EmptyKnowledge variant="uploads" /> : null}
           {error ? (

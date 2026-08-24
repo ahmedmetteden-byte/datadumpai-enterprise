@@ -8,7 +8,7 @@ import logging
 import os
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from openai import OpenAI
@@ -89,9 +89,158 @@ PERIODS: list[dict[str, str]] = [
     {"id": "custom", "name": "Custom / Ad hoc"},
 ]
 
+# Rolling window (relative to generation time) each named period scopes
+# source documents to, using upload time as the only period signal that
+# exists — documents carry no metadata about which period their content
+# covers. "custom" is intentionally absent: ad hoc reports are not windowed.
+PERIOD_WINDOW_DAYS: dict[str, int] = {
+    "weekly": 7,
+    "monthly": 30,
+    "quarterly": 90,
+    "annual": 365,
+}
+
+# Which report types are analytical enough to warrant charts. Narrative
+# types (Executive Summary, Board Report, Management Report) render as
+# text-only reports; selecting one of these must not silently produce the
+# same chart-laden output as Financial Analysis / Risk Assessment / Full
+# Report.
+ANALYTICAL_TEMPLATE_IDS = {"financial_analysis", "risk_assessment", "full_report"}
+
+# Section structure per report type, in output order. This is what makes
+# each Report type option actually produce a differently-shaped document
+# instead of the same 7-section report with only the title sentence
+# changed. "changes_since_last" is inserted dynamically (see
+# _generate_markdown) only when a comparable previous report exists.
+TEMPLATE_SECTIONS: dict[str, list[str]] = {
+    "executive_summary": [
+        "executive_summary",
+        "key_findings",
+        "strategic_recommendations",
+        "conclusion",
+    ],
+    "board_report": [
+        "executive_summary",
+        "key_findings",
+        "risks_issues",
+        "strategic_recommendations",
+        "conclusion",
+    ],
+    "management_report": [
+        "executive_summary",
+        "key_findings",
+        "detailed_analysis",
+        "risks_issues",
+        "strategic_recommendations",
+        "conclusion",
+    ],
+    "financial_analysis": [
+        "executive_summary",
+        "key_findings",
+        "detailed_analysis",
+        "risks_issues",
+        "opportunities",
+        "strategic_recommendations",
+        "conclusion",
+    ],
+    "risk_assessment": [
+        "executive_summary",
+        "key_findings",
+        "detailed_analysis",
+        "risks_issues",
+        "strategic_recommendations",
+        "conclusion",
+    ],
+    "full_report": [
+        "executive_summary",
+        "key_findings",
+        "detailed_analysis",
+        "risks_issues",
+        "opportunities",
+        "strategic_recommendations",
+        "conclusion",
+    ],
+}
+
+SECTION_HEADINGS: dict[str, str] = {
+    "executive_summary": "## Executive Summary",
+    "key_findings": "## Key Findings",
+    "detailed_analysis": "## Detailed Analysis",
+    "risks_issues": "## Risks & Issues",
+    "opportunities": "## Opportunities",
+    "strategic_recommendations": "## Strategic Recommendations",
+    "changes_since_last": "## Changes Since Last Report",
+    "conclusion": "## Conclusion",
+}
+
+# Executive Summary and Board Report are meant to be genuinely brief, not
+# just differently-sectioned — shrink the two length-bearing sections and
+# the completion budget accordingly. Other types keep the original ranges.
+EXEC_SUMMARY_LENGTH: dict[str, str] = {
+    "executive_summary": "2-3 sentences",
+    "board_report": "3-4 sentences",
+}
+KEY_FINDINGS_COUNT: dict[str, str] = {
+    "executive_summary": "2-4 findings",
+    "board_report": "3-5 findings",
+}
+TEMPLATE_MAX_TOKENS: dict[str, int] = {
+    "executive_summary": 1600,
+    "board_report": 2400,
+    "management_report": 3200,
+    "financial_analysis": 4096,
+    "risk_assessment": 3200,
+    "full_report": 4096,
+}
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_uploaded_at(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _document_period_timestamp(doc: dict[str, Any]) -> datetime | None:
+    """The best available signal for which period a document belongs to:
+    the user-tagged period_date (the date its content actually covers)
+    when present, else uploaded_at as a fallback for untagged documents."""
+
+    tagged = _parse_uploaded_at(str(doc.get("period_date") or ""))
+    if tagged is not None:
+        return tagged
+    return _parse_uploaded_at(str(doc.get("uploaded_at") or ""))
+
+
+def filter_documents_by_period(
+    docs: list[dict[str, Any]], period_id: str
+) -> list[dict[str, Any]]:
+    """Narrow a workspace's documents to those whose period_date (or,
+    absent that, uploaded_at) falls within the selected period's rolling
+    window. Falls back to the full document set whenever the window would
+    otherwise leave nothing to report on — a period filter must narrow
+    evidence, never turn a report into an empty one."""
+
+    window_days = PERIOD_WINDOW_DAYS.get(period_id)
+    if window_days is None:  # "custom" / ad hoc, or an unrecognized id
+        return docs
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
+    in_window = [
+        doc
+        for doc in docs
+        if (parsed := _document_period_timestamp(doc)) is not None and parsed >= cutoff
+    ]
+    return in_window or docs
 
 
 _TABLE_ROW = re.compile(r"^\|.*\|$")
@@ -258,13 +407,12 @@ class SpaReportGenerationService:
     def _gather_sources(
         self,
         workspace_id: str,
-        project: dict[str, Any],
+        docs: list[dict[str, Any]],
         *,
         template: dict[str, str],
         period: dict[str, str],
         instructions: str | None = None,
     ) -> list[dict[str, str]]:
-        docs = list(project.get("documents") or [])
         if not docs:
             return []
 
@@ -330,6 +478,7 @@ class SpaReportGenerationService:
         *,
         title: str,
         period_name: str,
+        template_id: str,
         template_name: str,
         sources: list[dict[str, str]],
         instructions: str | None = None,
@@ -506,6 +655,125 @@ class SpaReportGenerationService:
                 "a difference. Do not use this section to introduce findings that belong in "
                 "Key Findings — its purpose is strictly the delta between the two reports.\n\n"
             )
+
+        section_ids = list(TEMPLATE_SECTIONS.get(template_id, TEMPLATE_SECTIONS["full_report"]))
+        if comparison_requirement:
+            if "conclusion" in section_ids:
+                section_ids.insert(section_ids.index("conclusion"), "changes_since_last")
+            else:
+                section_ids.append("changes_since_last")
+
+        exec_summary_length = EXEC_SUMMARY_LENGTH.get(template_id, "3-5 sentences")
+        key_findings_count = KEY_FINDINGS_COUNT.get(template_id, "4-8 findings")
+
+        section_blocks: dict[str, str] = {
+            "executive_summary": (
+                "## Executive Summary\n"
+                f"{executive_summary_requirement}"
+                f"{exec_summary_length} a board member could read alone and understand the whole "
+                "picture: the overall situation, the most important finding, and the headline "
+                "recommendation. Do not restate sentences that will also appear in Key Findings — "
+                "compress and reframe at a higher altitude instead; a reader who reads only this "
+                "section and skips the rest should still walk away informed.\n\n"
+            ),
+            "key_findings": (
+                "## Key Findings\n"
+                f"{key_findings_count} as sub-headings, drawing across the full set of documents "
+                "(not clustered from just one). For each: a bolded one-line finding, then 2-4 "
+                "sentences moving from FACT (what the evidence actually shows) to ANALYSIS (what "
+                "pattern or relationship it reveals) to IMPLICATION (why it matters for "
+                "decision-makers) — do not stop at restating the fact. After that paragraph, on "
+                "their OWN separate lines — each starting a brand-new line, never appended to the "
+                "end of the paragraph or to each other — write exactly three evidence tags, in "
+                "this order:\n"
+                "`**Basis:** <value>` where <value> is EXACTLY one of these four literal phrases — "
+                "not a paraphrase, not a different label such as 'Verified Calculations' — `Source "
+                "fact` (stated directly by a source document), `Calculated result` (computed in the "
+                "Verified Calculations block above), `Observation` (a non-causal comparison between "
+                "two DIFFERENT measured things, e.g. 'claims grew faster than premium' — describes "
+                "a relationship without claiming one caused the other or interpreting what it "
+                "means), or `Analytical inference` (your own interpretation of what a fact, "
+                "calculation, or observation means — not itself stated or computed anywhere in the "
+                "evidence) — never present an inference as if it were a stated fact, and never "
+                "present a plain observation as if it were an interpretation.\n"
+                "`**Confidence:** High/Medium/Low — <one-clause reason>` on its own line, reflecting "
+                "how well-supported the finding is by the evidence (a Calculated-result finding "
+                "grounded in the Verified Calculations block is High by default; an inference "
+                "resting on a single ambiguous mention is Low).\n"
+                "`**Source:** <filename(s), plural if more than one document supports it>` on its "
+                "own line.\n"
+                "These three tags are metadata, not part of the narrative — never fold them into "
+                "the same sentence or line as the FACT/ANALYSIS/IMPLICATION prose above them.\n\n"
+            ),
+            "detailed_analysis": (
+                "## Detailed Analysis\n"
+                "The narrative connective tissue between findings — trends across documents, "
+                "recurring themes, contradictions or inconsistencies between sources, what changed "
+                "over time if the documents span a period, and context a reader needs to interpret "
+                "the findings correctly. This section is where cross-document synthesis should be "
+                "most visible. Do not restate findings from Key Findings to lengthen this section — "
+                "every sentence here should add something Key Findings didn't already say. If the "
+                "evidence doesn't support a particular analytical thread (e.g. no time-series data "
+                "to discuss a trend), omit it rather than speculating.\n\n"
+            ),
+            "risks_issues": (
+                "## Risks & Issues\n"
+                "Concrete risks or open problems surfaced by the evidence — never a generic category "
+                "label like 'Operational Bottlenecks' or 'Customer Dissatisfaction'; name the "
+                "specific metric or figure behind it instead, e.g. 'Claims backlog escalation — "
+                "backlog increased from 14 to 31 cases (+121.4%), concentrated in the West region.' "
+                f"{risk_plan_clause}"
+                "Format each one as its own markdown bullet — `- **<specific title>:** <brief note "
+                "on likely impact>` — one risk per bullet, never combined into a single paragraph. "
+                "Immediately after each bullet, on its own line, add `**Basis:** <value>` using "
+                "exactly the same four literal values as Key Findings (`Source fact`, `Calculated "
+                "result`, `Observation`, or `Analytical inference`) — never assert a likely cause as "
+                "if it were a proven one. If the evidence surfaces no material risks, write one "
+                "sentence starting with 'No risks were identified in the evidence reviewed' — not "
+                "'no risks exist', which is a stronger claim the absence of evidence doesn't support "
+                "— rather than manufacturing a generic risk.\n\n"
+            ),
+            "opportunities": (
+                "## Opportunities\n"
+                "Positive openings, efficiencies, or strategic options the evidence points to — "
+                "grounded the same way as Risks & Issues above: a specific metric or figure, never a "
+                "generic label, and with the same restraint against overclaiming — a cross-sectional "
+                "observation (one category ranks highest among several) is not itself an "
+                "'improvement' unless the evidence also shows a prior comparable observation of that "
+                "SAME thing. Prefer: 'Direct Digital recorded the highest reported retention rate "
+                "among the channels at 86%, indicating an opportunity to investigate and potentially "
+                "replicate the practices associated with stronger digital retention' — never 'Direct "
+                "Digital retention improved to 86%' when no prior Direct Digital figure exists in "
+                "the evidence. Format each one as its own markdown bullet — `- **<specific title>:** "
+                "<detail>` — one opportunity per bullet, never combined into a single paragraph, "
+                "with a `**Basis:**` line immediately after each bullet using the same convention as "
+                "Risks & Issues. If the evidence contains none, write one sentence starting with 'No "
+                "opportunities were identified in the evidence reviewed' rather than inventing "
+                "one.\n\n"
+            ),
+            "strategic_recommendations": (
+                "## Strategic Recommendations\n"
+                "A markdown numbered list of specific, actionable next steps, ordered by priority — "
+                "not generic advice, but recommendations that follow directly from the findings "
+                "above. Each recommendation MUST start a new line with '1. ', '2. ', etc. — never "
+                "run multiple recommendations together in one paragraph. Within each numbered item, "
+                "structure it as three clauses: `**Action:**` (what should be done, specific enough "
+                "to act on — never a bare instruction like 'invest in technology'), `**Rationale:**` "
+                "(why — must cite a specific finding, metric, or figure from the evidence above, not "
+                "a generic justification), and `**Measurement:**` (how success would be assessed — "
+                "reference a metric from the Verified Calculations or Report Plan above where one "
+                "exists, rather than inventing a target the evidence doesn't "
+                f"support).{recommendations_plan_clause}\n\n"
+            ),
+            "changes_since_last": comparison_requirement,
+            "conclusion": (
+                "## Conclusion\n"
+                "2-3 sentences closing the report and restating what should happen next.\n\n"
+            ),
+        }
+        sections_text = "".join(section_blocks[sid] for sid in section_ids if section_blocks.get(sid))
+        first_heading = SECTION_HEADINGS.get(section_ids[0], "## Executive Summary")
+
         prompt = (
             f"Write a {template_name} titled \"{title}\" covering the period '{period_name}', "
             "using only the evidence provided below.\n"
@@ -529,104 +797,20 @@ class SpaReportGenerationService:
             "adjective describing it. Do not draw a conclusion the evidence doesn't support (e.g. "
             "two metrics both rising does not by itself mean profitability improved) — state what "
             "the data shows and stop there unless the evidence explicitly supports going further.\n\n"
-            "Structure the report in GitHub-flavoured markdown with exactly these sections, in order. "
-            "Do not include a top-level title heading — start directly at the first section below; "
-            "the document title is rendered separately by the export layer.\n\n"
-            "## Executive Summary\n"
-            f"{executive_summary_requirement}"
-            "3-5 sentences a board member could read alone and understand the whole picture: "
-            "the overall situation, the most important finding, and the headline recommendation. "
-            "Do not restate sentences that will also appear in Key Findings — compress and reframe "
-            "at a higher altitude instead; a reader who reads only this section and skips the rest "
-            "should still walk away informed.\n\n"
-            "## Key Findings\n"
-            "4-8 findings as sub-headings, drawing across the full set of documents (not "
-            "clustered from just one). For each: a bolded one-line finding, then 2-4 sentences "
-            "moving from FACT (what the evidence actually shows) to ANALYSIS (what pattern or "
-            "relationship it reveals) to IMPLICATION (why it matters for decision-makers) — do not "
-            "stop at restating the fact. After that paragraph, on their OWN separate lines — each "
-            "starting a brand-new line, never appended to the end of the paragraph or to each "
-            "other — write exactly three evidence tags, in this order:\n"
-            "`**Basis:** <value>` where <value> is EXACTLY one of these four literal phrases — not "
-            "a paraphrase, not a different label such as 'Verified Calculations' — `Source fact` "
-            "(stated directly by a source document), `Calculated result` (computed in the Verified "
-            "Calculations block above), `Observation` (a non-causal comparison between two "
-            "DIFFERENT measured things, e.g. 'claims grew faster than premium' — describes a "
-            "relationship without claiming one caused the other or interpreting what it means), or "
-            "`Analytical inference` (your own interpretation of what a fact, calculation, or "
-            "observation means — not itself stated or computed anywhere in the evidence) — never "
-            "present an inference as if it were a stated fact, and never present a plain "
-            "observation as if it were an interpretation.\n"
-            "`**Confidence:** High/Medium/Low — <one-clause reason>` on its own line, reflecting how "
-            "well-supported the finding is by the evidence (a Calculated-result finding grounded in "
-            "the Verified Calculations block is High by default; an inference resting on a single "
-            "ambiguous mention is Low).\n"
-            "`**Source:** <filename(s), plural if more than one document supports it>` on its own "
-            "line.\n"
-            "These three tags are metadata, not part of the narrative — never fold them into the "
-            "same sentence or line as the FACT/ANALYSIS/IMPLICATION prose above them.\n\n"
-            "## Detailed Analysis\n"
-            "The narrative connective tissue between findings — trends across documents, recurring "
-            "themes, contradictions or inconsistencies between sources, what changed over time if "
-            "the documents span a period, and context a reader needs to interpret the findings "
-            "correctly. This section is where cross-document synthesis should be most visible. Do "
-            "not restate findings from Key Findings to lengthen this section — every sentence here "
-            "should add something Key Findings didn't already say. If the evidence doesn't support "
-            "a particular analytical thread (e.g. no time-series data to discuss a trend), omit it "
-            "rather than speculating.\n\n"
-            "## Risks & Issues\n"
-            "Concrete risks or open problems surfaced by the evidence — never a generic category "
-            "label like 'Operational Bottlenecks' or 'Customer Dissatisfaction'; name the specific "
-            "metric or figure behind it instead, e.g. 'Claims backlog escalation — backlog "
-            "increased from 14 to 31 cases (+121.4%), concentrated in the West region.' "
-            f"{risk_plan_clause}"
-            "Format each one as its own markdown bullet — `- **<specific title>:** <brief note on "
-            "likely impact>` — one risk per bullet, never combined into a single paragraph. "
-            "Immediately after each bullet, on its own line, add `**Basis:** <value>` using "
-            "exactly the same four literal values as Key Findings (`Source fact`, `Calculated "
-            "result`, `Observation`, or `Analytical inference`) — never assert a likely cause as "
-            "if it were a proven one. If the evidence surfaces no material risks, write one "
-            "sentence starting with 'No risks were identified in the evidence reviewed' — not 'no "
-            "risks exist', which is a stronger claim the absence of evidence doesn't support — "
-            "rather than manufacturing a generic risk.\n\n"
-            "## Opportunities\n"
-            "Positive openings, efficiencies, or strategic options the evidence points to — "
-            "grounded the same way as Risks & Issues above: a specific metric or figure, never a "
-            "generic label, and with the same restraint against overclaiming — a cross-sectional "
-            "observation (one category ranks highest among several) is not itself an "
-            "'improvement' unless the evidence also shows a prior comparable observation of that "
-            "SAME thing. Prefer: 'Direct Digital recorded the highest reported retention rate "
-            "among the channels at 86%, indicating an opportunity to investigate and potentially "
-            "replicate the practices associated with stronger digital retention' — never 'Direct "
-            "Digital retention improved to 86%' when no prior Direct Digital figure exists in the "
-            "evidence. Format each one as its own markdown bullet — `- **<specific title>:** "
-            "<detail>` — one opportunity per bullet, never combined into a single paragraph, with "
-            "a `**Basis:**` line immediately after each bullet using the same convention as Risks "
-            "& Issues. If the evidence contains none, write one sentence starting with 'No "
-            "opportunities were identified in the evidence reviewed' rather than inventing one.\n\n"
-            "## Strategic Recommendations\n"
-            "A markdown numbered list of specific, actionable next steps, ordered by priority — not "
-            "generic advice, but recommendations that follow directly from the findings above. Each "
-            "recommendation MUST start a new line with '1. ', '2. ', etc. — never run multiple "
-            "recommendations together in one paragraph. Within each numbered item, structure it as "
-            "three clauses: `**Action:**` (what should be done, specific enough to act on — never a "
-            "bare instruction like 'invest in technology'), `**Rationale:**` (why — must cite a "
-            "specific finding, metric, or figure from the evidence above, not a generic "
-            "justification), and `**Measurement:**` (how success would be assessed — reference a "
-            "metric from the Verified Calculations or Report Plan above where one exists, rather "
-            f"than inventing a target the evidence doesn't support).{recommendations_plan_clause}\n\n"
-            f"{comparison_requirement}"
-            "## Conclusion\n"
-            "2-3 sentences closing the report and restating what should happen next.\n\n"
+            "Structure the report in GitHub-flavoured markdown with exactly these sections, in order "
+            f"— a {template_name} must contain ONLY these sections, no others. Do not include a "
+            "top-level title heading — start directly at the first section below; the document "
+            "title is rendered separately by the export layer.\n\n"
+            f"{sections_text}"
             "Do not wrap your answer in a code fence. Output raw markdown starting directly with the "
-            "## Executive Summary heading.\n\n"
+            f"{first_heading} heading.\n\n"
             f"Evidence:\n{evidence}{calculated_metrics_context}{report_plan_context}{comparison_context}"
         )
         try:
             response = self._client.chat.completions.create(
                 model=CHAT_MODEL,
                 temperature=0.3,
-                max_tokens=4096,
+                max_tokens=TEMPLATE_MAX_TOKENS.get(template_id, 4096),
                 messages=[
                     {
                         "role": "system",
@@ -680,9 +864,12 @@ class SpaReportGenerationService:
         workspace_name = str(project.get("name") or "Workspace")
         report_title = (title or "").strip() or f"{template['name']} — {period['name']}"
         previous_report = self._find_previous_report(workspace_id, template_id, period_id)
+
+        all_docs = list(project.get("documents") or [])
+        scoped_docs = filter_documents_by_period(all_docs, period_id)
         sources = self._gather_sources(
             workspace_id,
-            project,
+            scoped_docs,
             template=template,
             period=period,
             instructions=instructions,
@@ -690,11 +877,10 @@ class SpaReportGenerationService:
 
         source_coverage: dict[str, Any] = {}
         if detect_all_documents_intent(instructions):
-            all_workspace_docs = list(project.get("documents") or [])
-            gaps = compute_coverage_gaps(sources, all_workspace_docs)
+            gaps = compute_coverage_gaps(sources, scoped_docs)
             source_coverage = {
                 "all_documents_requested": True,
-                "documents_in_scope": len(all_workspace_docs),
+                "documents_in_scope": len(scoped_docs),
                 "documents_covered": len(sources),
                 "gaps": gaps,
             }
@@ -716,6 +902,7 @@ class SpaReportGenerationService:
         markdown = self._generate_markdown(
             title=report_title,
             period_name=period["name"],
+            template_id=template_id,
             template_name=template["name"],
             sources=sources,
             instructions=instructions,
@@ -735,6 +922,8 @@ class SpaReportGenerationService:
                 "template_id": template_id,
                 "template_name": template["name"],
                 "workspace_name": workspace_name,
+                "documents_in_workspace": len(all_docs),
+                "documents_in_period": len(scoped_docs),
                 **(
                     {"report_plan": report_plan.to_dict()}
                     if report_plan and not report_plan.is_empty()
@@ -751,12 +940,14 @@ class SpaReportGenerationService:
             executive_summary={"text": _clip(markdown, 500)},
         )
 
+        is_analytical_template = template_id in ANALYTICAL_TEMPLATE_IDS
         report = apply_visualizations(
             report,
             user_report_type=template["name"],
             document_text=markdown,
             reporting_period=period["name"],
-            force_generate=True,
+            include_charts=is_analytical_template,
+            force_generate=is_analytical_template,
         )
 
         qc_report = run_qc_pass(

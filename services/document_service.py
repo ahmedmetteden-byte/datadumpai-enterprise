@@ -67,12 +67,14 @@ class DocumentService:
         storage_path: str,
         size: int,
         uploaded_at: str | None = None,
+        period_date: str | None = None,
     ) -> dict[str, Any]:
         return {
             "filename": filename,
             "size": size,
             "uploaded_at": uploaded_at or self._utc_now(),
             "path": storage_path,
+            "period_date": period_date or None,
         }
 
     def create_project_folders(self, project_id: str) -> None:
@@ -84,6 +86,7 @@ class DocumentService:
         uploaded_file: Any,
         *,
         overwrite: bool = False,
+        period_date: str | None = None,
     ) -> dict[str, Any]:
         assert_project_access(
             project_id,
@@ -140,6 +143,7 @@ class DocumentService:
             storage_path=storage_path,
             size=len(content),
             uploaded_at=uploaded_at,
+            period_date=period_date,
         )
 
         try:

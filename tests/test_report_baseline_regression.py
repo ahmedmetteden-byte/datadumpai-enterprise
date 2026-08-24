@@ -58,7 +58,11 @@ def _fixture_sources() -> list[dict[str, str]]:
 
 
 def _generate_with_fake_llm(
-    project, *, monkeypatch, report_plan_enabled: bool | None = None
+    project,
+    *,
+    monkeypatch,
+    report_plan_enabled: bool | None = None,
+    template_id: str = "executive_summary",
 ):
     if report_plan_enabled is not None:
         monkeypatch.setattr(
@@ -87,7 +91,7 @@ def _generate_with_fake_llm(
     record = svc.generate(
         workspace_id=project["id"],
         project=project,
-        template_id="executive_summary",
+        template_id=template_id,
         period_id="annual",
     )
 
@@ -180,10 +184,16 @@ def test_baseline_metric_derived_chart_survives_markdown_round_trip_and_exports(
 
     project = project_service.create_project("Baseline Chart Round Trip Project")
 
-    record, _prompt, _report = _generate_with_fake_llm(project, monkeypatch=monkeypatch)
+    # Charts are only generated for analytical report types (see
+    # ANALYTICAL_TEMPLATE_IDS in spa_report_generation_service.py) — this
+    # test is about chart persistence round-tripping, not report-type
+    # gating, so it needs a template that actually produces charts.
+    record, _prompt, _report = _generate_with_fake_llm(
+        project, monkeypatch=monkeypatch, template_id="financial_analysis"
+    )
 
     reconstructed = report_data_from_markdown(
-        record["content"], report_type="Executive Summary", title=record["name"]
+        record["content"], report_type="Financial Analysis", title=record["name"]
     )
     visualizations = reconstructed.charts.get("visualizations") or []
     premium_blocks = [v for v in visualizations if v.get("title") == "Gross Premium"]

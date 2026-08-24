@@ -324,6 +324,9 @@ export const UI_COPY = {
   knowledgeChooseFile: 'Choose a file',
   knowledgeUploadTitleField: 'Title',
   knowledgeUploadTitlePlaceholder: 'Optional display title',
+  knowledgeUploadPeriodField: 'Period covered',
+  knowledgeUploadPeriodHint:
+    "Optional — the date this document's content covers. Used to scope it into the right Weekly, Monthly, Quarterly, or Annual report.",
   knowledgeUploadStart: 'Upload & index',
   knowledgeUploading: 'Uploading…',
   knowledgeUploadingPercent: 'Uploading… {percent}%',

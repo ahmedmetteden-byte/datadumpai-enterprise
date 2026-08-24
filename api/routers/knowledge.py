@@ -7,6 +7,7 @@ from __future__ import annotations
 import io
 import logging
 import uuid
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -260,6 +261,7 @@ async def upload_knowledge(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     title: str | None = Form(default=None),
+    period_date: str | None = Form(default=None),
     principal: AuthenticatedPrincipal = Depends(get_principal),
     _current_user: User = Depends(get_current_user),
 ) -> KnowledgeListItemOut:
@@ -275,6 +277,16 @@ async def upload_knowledge(
     if not content:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Empty file.")
 
+    period_date = (period_date or "").strip() or None
+    if period_date is not None:
+        try:
+            date.fromisoformat(period_date)
+        except ValueError as exc:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail="period_date must be an ISO date (YYYY-MM-DD).",
+            ) from exc
+
     with user_request_scope(principal):
         try:
             UsageService(access_token=principal.access_token).check_can_upload()
@@ -288,6 +300,7 @@ async def upload_knowledge(
                 workspace_id,
                 _UploadAdapter(filename, content),
                 overwrite=False,
+                period_date=period_date,
             )
         except ValueError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
