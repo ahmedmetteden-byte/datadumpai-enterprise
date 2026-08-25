@@ -5,6 +5,7 @@ Reports routes — generate, save, export (Word / PDF / PowerPoint).
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Literal
 
 import config
@@ -72,12 +73,25 @@ def _reports(
     ]
 
 
+_FIND_REPORT_RETRY_DELAYS_SECONDS = (0.3, 0.6, 1.0)
+
+
 def _find_report(
     workspace_id: str, principal: AuthenticatedPrincipal, report_id: str
 ) -> dict[str, Any]:
-    for report in _reports(workspace_id, principal):
-        if str(report.get("id")) == report_id:
-            return report
+    """The frontend's golden path calls save (this helper) immediately
+    after generate() returns. Both reads go through a fresh storage
+    listing (ReportService.get_reports -> FileStore.list_files), which on
+    an eventually-consistent storage backend can briefly lag behind a
+    write that already succeeded — retry a few times before surfacing a
+    404, rather than failing a report that was, in fact, just created."""
+
+    for delay in (0.0, *_FIND_REPORT_RETRY_DELAYS_SECONDS):
+        if delay:
+            time.sleep(delay)
+        for report in _reports(workspace_id, principal):
+            if str(report.get("id")) == report_id:
+                return report
     raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Report not found.")
 
 
