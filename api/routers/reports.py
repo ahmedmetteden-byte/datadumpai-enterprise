@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 
 from api.auth_jwt import AuthenticatedPrincipal
+from models.report_data import ReportData
 from models.user import User
 from api.deps import get_current_user, get_principal, user_request_scope
 from api.schemas import (
@@ -280,11 +281,20 @@ def export_report(
     if not content:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Report has no content.")
 
+    # Phase C.1: reload the full ReportData saved at generation time
+    # (metrics["tables"], charts, metadata["report_plan"]) rather than
+    # reconstructing a bare-bones one from markdown text alone — without
+    # this, export-time chart/data logic saw an empty report.metrics and
+    # could fall back to less trustworthy narrative-derived chart data.
+    # Older reports saved before this field existed simply have no
+    # "reportData" key, so `stored` is None and behavior is unchanged.
+    stored = ReportData.from_dict(report.get("reportData")) if report.get("reportData") else None
     report_data = report_data_from_markdown(
         content,
         report_type=str(report.get("reportType") or report.get("name") or "Report"),
         title=str(report.get("name") or "Report"),
         source_documents=list(report.get("sourceDocuments") or []),
+        stored=stored,
     )
 
     with user_request_scope(principal):

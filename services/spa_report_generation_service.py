@@ -26,7 +26,7 @@ from services.report_plan_service import (
     render_plan_for_prompt,
     select_dashboard_items,
 )
-from services.report_qc_service import run_qc_pass
+from services.report_qc_service import apply_deterministic_corrections, run_qc_pass
 from services.report_retrieval_service import (
     build_facet_queries,
     compute_coverage_gaps,
@@ -100,21 +100,15 @@ PERIOD_WINDOW_DAYS: dict[str, int] = {
     "annual": 365,
 }
 
-# Which report types are analytical enough to warrant charts. Executive
-# Summary is the one type that stays text-only by design — it's a 2-3
-# sentence, 1-3 priority brief a board member reads standalone, and a chart
-# would outweigh the prose it's meant to be. Every other type gets charts:
-# Board Report and Management Report both reference metric trends in their
-# own prose (governance decisions, operational performance) and benefit
-# from the same visual evidence Financial Analysis / Risk Assessment /
-# Full Report already get.
-ANALYTICAL_TEMPLATE_IDS = {
-    "financial_analysis",
-    "risk_assessment",
-    "full_report",
-    "management_report",
-    "board_report",
-}
+# Which report types are analytical enough to warrant charts (Phase C.1:
+# corrects a Phase C regression that had incorrectly added Board Report and
+# Management Report here). Executive Summary, Board Report, and Management
+# Report are narrative types by design — a 1-3 priority brief, a
+# governance-decision memo, and an operational review respectively — none
+# of which is meant to carry chart images; selecting one of these must not
+# silently produce the same chart-laden output as Financial Analysis / Risk
+# Assessment / Full Report.
+ANALYTICAL_TEMPLATE_IDS = {"financial_analysis", "risk_assessment", "full_report"}
 
 # Section structure per report type, in output order. This is what makes
 # each Report type option actually produce a differently-shaped document
@@ -1074,6 +1068,20 @@ class SpaReportGenerationService:
             force_generate=is_analytical_template,
         )
 
+        # Phase C.1: correct a detected direction/sentiment contradiction
+        # BEFORE the reader ever sees it, rather than only flagging it in
+        # qc_report below — "deterministic result -> grounded narrative",
+        # never "LLM answer -> verification warning" left for the reader
+        # to notice on their own (Section 7). A surgical word-level fix
+        # using the same detection check_direction_consistency already
+        # runs; run_qc_pass below therefore sees the CORRECTED narrative.
+        corrected_narrative, _correction_remaining = apply_deterministic_corrections(
+            report.narrative, metric_tables
+        )
+        if corrected_narrative != report.narrative:
+            report.narrative = corrected_narrative
+            report.metadata["narrative_auto_corrected"] = True
+
         qc_report = run_qc_pass(
             report.narrative,
             report.source_documents,
@@ -1119,6 +1127,15 @@ class SpaReportGenerationService:
             "content": markdown,
             "sourceDocuments": report.source_documents,
             "instructions": instructions,
+            # Phase C.1: the narrower SPA-shaped fields above are what
+            # get_report()/list_reports() need, but this record OVERWRITES
+            # the metadata sidecar save_report() just wrote (see comment
+            # below) — without this field, everything save_report() put in
+            # report.to_dict() (metrics["tables"], the deterministic metric
+            # series; charts; metadata["report_plan"]) was silently lost
+            # the moment this second write landed, leaving export-time
+            # chart/data access with nothing but the bare markdown text.
+            "reportData": report.to_dict(),
         }
 
         # Persist the full SPA-shaped record into the report's metadata

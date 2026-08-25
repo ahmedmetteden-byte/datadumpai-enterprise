@@ -53,6 +53,14 @@ class ReportExportContext:
     def source_documents(self) -> list[str] | None:
         return self.report.source_documents or None
 
+    @property
+    def metric_tables(self) -> list[dict[str, Any]] | None:
+        return self.report.metrics.get("tables") or None
+
+    @property
+    def report_plan(self) -> dict[str, Any] | None:
+        return self.report.metadata.get("report_plan") or None
+
 
 class PremiumExportService:
     def __init__(self, base_service: ExportService | None = None) -> None:
@@ -74,6 +82,8 @@ class PremiumExportService:
                     source_documents=context.source_documents,
                     pack_type="executive",
                     show_watermark=context.show_watermark,
+                    metric_tables=context.metric_tables,
+                    report_plan=context.report_plan,
                 ),
             )
             filename = f"{self._slugify(context.report_name, 'executive')}.pdf"
@@ -104,6 +114,8 @@ class PremiumExportService:
                     source_documents=context.source_documents,
                     pack_type="board_pack",
                     show_watermark=context.show_watermark,
+                    metric_tables=context.metric_tables,
+                    report_plan=context.report_plan,
                 ),
             )
             filename = f"{self._slugify(context.report_name, 'board_pack')}.pdf"

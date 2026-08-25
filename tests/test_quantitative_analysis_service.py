@@ -8,9 +8,13 @@ figures itself.
 from __future__ import annotations
 
 from services.quantitative_analysis_service import (
+    build_structured_comparison,
     classify_metric_polarity,
+    classify_metrics_by_movement,
+    detect_movement_classification_question,
     extract_metric_tables,
     format_metrics_for_evidence,
+    render_movement_classification_answer,
 )
 
 PREMIUM_TABLE_SOURCE = {
@@ -1059,3 +1063,262 @@ def test_format_metrics_for_evidence_warns_against_improvement_language_for_unkn
     rendered = format_metrics_for_evidence(tables)
     assert "not established by the evidence" in rendered
     assert "do NOT call it an improvement" in rendered
+
+
+# --- Phase C.1: structured comparison metadata (Section 1) — every exact
+# number from the user's regression-test spec (Section 15) ---
+
+
+def test_structured_comparison_claims_incurred_first_to_latest():
+    rows = [
+        {"label": "January 2026", "value": 82.1},
+        {"label": "February 2026", "value": 91.8},
+        {"label": "March 2026", "value": 89.7},
+    ]
+    comparison = build_structured_comparison(rows, title="Claims incurred", unit="$ million")
+
+    assert comparison["first_period"] == "January 2026"
+    assert comparison["first_value"] == 82.1
+    assert comparison["latest_period"] == "March 2026"
+    assert comparison["latest_value"] == 89.7
+    assert comparison["first_to_latest_absolute_change"] == 7.6
+    assert comparison["first_to_latest_percentage_change"] == 9.3
+    assert comparison["direction"] == "increase"
+    assert comparison["polarity"] == "negative"
+    assert comparison["first_to_latest_interpretation"] == "deterioration"
+    assert "increased" in comparison["first_to_latest_sentence"]
+    assert "decreased" not in comparison["first_to_latest_sentence"]
+    assert "deterioration" in comparison["first_to_latest_sentence"]
+
+
+def test_structured_comparison_claims_incurred_previous_to_latest_is_an_improvement():
+    """82.1 -> 91.8 -> 89.7: the LATEST leg (Feb->Mar) is a decrease, which
+    for a negative-polarity metric is an improvement — distinct from the
+    first-to-latest leg's deterioration verdict above."""
+
+    rows = [
+        {"label": "January 2026", "value": 82.1},
+        {"label": "February 2026", "value": 91.8},
+        {"label": "March 2026", "value": 89.7},
+    ]
+    comparison = build_structured_comparison(rows, title="Claims incurred", unit="$ million")
+
+    assert comparison["previous_period"] == "February 2026"
+    assert comparison["previous_value"] == 91.8
+    assert comparison["previous_to_latest_absolute_change"] == -2.1
+    assert comparison["previous_to_latest_percentage_change"] == -2.3
+    assert comparison["previous_to_latest_interpretation"] == "improvement"
+    assert "decreased" in comparison["previous_to_latest_sentence"]
+    assert "improvement" in comparison["previous_to_latest_sentence"]
+
+
+def test_structured_comparison_claims_backlog_both_legs():
+    rows = [
+        {"label": "January 2026", "value": 418},
+        {"label": "February 2026", "value": 452},
+        {"label": "March 2026", "value": 431},
+    ]
+    comparison = build_structured_comparison(rows, title="Claims backlog", unit="cases")
+
+    assert comparison["first_to_latest_absolute_change"] == 13
+    assert comparison["first_to_latest_percentage_change"] == 3.1
+    assert comparison["first_to_latest_interpretation"] == "deterioration"
+    assert comparison["previous_to_latest_absolute_change"] == -21
+    assert comparison["previous_to_latest_percentage_change"] == -4.6
+    assert comparison["previous_to_latest_interpretation"] == "improvement"
+    # The exact bug this schema prevents: a sentence must never combine
+    # the first-to-latest MAGNITUDE with the previous-to-latest DIRECTION.
+    assert "increased" in comparison["first_to_latest_sentence"]
+    assert "3.1%" in comparison["first_to_latest_sentence"]
+    assert "decreased" in comparison["previous_to_latest_sentence"]
+    assert "4.6%" in comparison["previous_to_latest_sentence"]
+
+
+def test_structured_comparison_customer_complaints():
+    rows = [{"label": "January 2026", "value": 74}, {"label": "March 2026", "value": 94}]
+    comparison = build_structured_comparison(rows, title="Customer complaints", unit="")
+    assert comparison["first_to_latest_percentage_change"] == 27.0
+    assert comparison["first_to_latest_interpretation"] == "deterioration"
+
+
+def test_structured_comparison_customer_retention():
+    rows = [{"label": "January 2026", "value": 84.2}, {"label": "March 2026", "value": 85.1}]
+    comparison = build_structured_comparison(rows, title="Customer retention", unit="%")
+    assert comparison["first_to_latest_percentage_change"] == 1.1
+    assert comparison["first_to_latest_percentage_point_change"] == 0.9
+    assert comparison["first_to_latest_interpretation"] == "improvement"
+
+
+def test_structured_comparison_loss_ratio_percentage_point_vs_percentage():
+    """The user's exact worked example: 64.0% -> 64.3% is +0.3 percentage
+    points (~+0.47% relative), never described as "-0.5%" or similar."""
+
+    rows = [
+        {"label": "January 2026", "value": 64.0},
+        {"label": "February 2026", "value": 68.2},
+        {"label": "March 2026", "value": 64.3},
+    ]
+    comparison = build_structured_comparison(rows, title="Loss ratio", unit="%")
+
+    assert comparison["first_to_latest_percentage_point_change"] == 0.3
+    assert comparison["first_to_latest_percentage_change"] == 0.5
+    assert comparison["first_to_latest_interpretation"] == "deterioration"
+
+    assert comparison["previous_to_latest_percentage_point_change"] == -3.9
+    assert comparison["previous_to_latest_percentage_change"] == -5.7
+    assert comparison["previous_to_latest_interpretation"] == "improvement"
+
+    assert "percentage points" in comparison["first_to_latest_sentence"]
+    assert "0.3 percentage points" in comparison["first_to_latest_sentence"]
+    assert "improvement" in comparison["previous_to_latest_sentence"]
+    assert "-3.9 percentage points" in comparison["previous_to_latest_sentence"]
+
+
+def test_structured_comparison_gross_premium():
+    rows = [
+        {"label": "January 2026", "value": 128.4},
+        {"label": "February 2026", "value": 134.7},
+        {"label": "March 2026", "value": 139.6},
+    ]
+    comparison = build_structured_comparison(rows, title="Gross premium", unit="$ million")
+    assert comparison["first_to_latest_percentage_change"] == 8.7
+    assert comparison["first_to_latest_interpretation"] == "improvement"
+
+
+def test_structured_comparison_peak_and_trough_always_populated():
+    """Unlike _compute_temporal_shape's peak/trough (only set for an
+    INTERIOR extremum), the structured comparison's peak/trough are
+    always populated, even when the peak sits at an endpoint."""
+
+    rows = [{"label": "January 2026", "value": 10}, {"label": "March 2026", "value": 20}]
+    comparison = build_structured_comparison(rows, title="Some metric", unit="")
+    assert comparison["peak_period"] == "March 2026"
+    assert comparison["peak_value"] == 20
+    assert comparison["trough_period"] == "January 2026"
+    assert comparison["trough_value"] == 10
+
+
+def test_structured_comparison_two_point_series_has_no_separate_previous_leg():
+    """With only 2 rows, "previous" and "first" are the same period —
+    no separate previous_to_latest_sentence should be emitted (it would
+    be a verbatim duplicate of the first_to_latest one)."""
+
+    rows = [{"label": "January 2026", "value": 10}, {"label": "March 2026", "value": 15}]
+    comparison = build_structured_comparison(rows, title="Some metric", unit="")
+    assert comparison["previous_period"] == comparison["first_period"]
+    assert "previous_to_latest_sentence" not in comparison
+
+
+def test_structured_comparison_unknown_polarity_never_says_improved_or_deteriorated():
+    rows = [{"label": "January 2026", "value": 20}, {"label": "March 2026", "value": 25}]
+    comparison = build_structured_comparison(rows, title="Digital Sales Share", unit="%")
+    assert comparison["polarity"] == "unknown"
+    assert comparison["first_to_latest_interpretation"] == "increase"
+    assert "improvement" not in comparison["first_to_latest_sentence"]
+    assert "deterioration" not in comparison["first_to_latest_sentence"]
+    assert "increased" in comparison["first_to_latest_sentence"]
+
+
+def test_structured_comparison_currency_formatting_reads_naturally():
+    rows = [{"label": "January 2026", "value": 82.1}, {"label": "March 2026", "value": 89.7}]
+    comparison = build_structured_comparison(rows, title="Claims incurred", unit="$ million")
+    assert "$82.1 million" in comparison["first_to_latest_sentence"]
+    assert "$89.7 million" in comparison["first_to_latest_sentence"]
+
+
+def test_extracted_series_calculations_carry_the_comparison_object():
+    """Confirms the wiring: build_structured_comparison's output reaches
+    the real extract_metric_tables() -> calculations["comparison"] path,
+    not just the standalone function."""
+
+    source = {
+        "filename": "q.xlsx",
+        "excerpt": (
+            "| Year | Claims incurred |\n"
+            "|------|--------------:|\n"
+            "| 2023 | 82.1 |\n"
+            "| 2024 | 89.7 |\n"
+        ),
+    }
+    tables = extract_metric_tables([source])
+    claims = next(t for t in tables if t["title"] == "Claims incurred")
+    comparison = claims["calculations"]["comparison"]
+    assert comparison["first_to_latest_percentage_change"] == 9.3
+    assert comparison["first_to_latest_interpretation"] == "deterioration"
+
+
+# --- Phase C.1: movement-classification Q&A archetype (Section 6, example
+# question 1: "Compare January and March. Which metrics improved and
+# which deteriorated?") ---
+
+
+def test_detect_movement_classification_question_matches_the_example():
+    assert detect_movement_classification_question(
+        "Compare January and March 2026. Which metrics improved and which deteriorated?"
+    )
+
+
+def test_detect_movement_classification_question_rejects_unrelated_questions():
+    assert not detect_movement_classification_question("What changed in claims incurred?")
+    assert not detect_movement_classification_question("")
+
+
+def _table(title: str, unit: str, first: float, last: float) -> dict:
+    rows = [{"label": "January 2026", "value": first}, {"label": "March 2026", "value": last}]
+    return {
+        "title": title,
+        "unit": unit,
+        "dimension_type": "temporal",
+        "rows": rows,
+        "calculations": {
+            "total_change": {
+                "from": "January 2026", "to": "March 2026",
+                "absolute": round(last - first, 2),
+                "percent": round((last - first) / first * 100, 1) if first else None,
+            },
+            "comparison": build_structured_comparison(rows, title=title, unit=unit),
+        },
+    }
+
+
+def test_classify_metrics_by_movement_matches_the_users_worked_example():
+    """The user's exact Section 6 expected classification for the real
+    Jan/Mar 2026 test data."""
+
+    tables = [
+        _table("Gross premium", "$ million", 128.4, 139.6),
+        _table("Customer retention", "%", 84.2, 85.1),
+        _table("Claims incurred", "$ million", 82.1, 89.7),
+        _table("Customer complaints", "", 74, 94),
+        _table("Claims backlog", "cases", 418, 431),
+        _table("Loss ratio", "%", 64.0, 64.3),
+    ]
+
+    buckets = classify_metrics_by_movement(tables)
+
+    assert buckets["improved"] == ["Gross premium", "Customer retention"]
+    assert buckets["deteriorated"] == [
+        "Claims incurred", "Customer complaints", "Claims backlog", "Loss ratio",
+    ]
+    assert buckets["unclear"] == []
+
+
+def test_classify_metrics_by_movement_buckets_unknown_polarity_as_unclear():
+    tables = [_table("Digital Sales Share", "%", 20.0, 25.0)]
+    buckets = classify_metrics_by_movement(tables)
+    assert buckets["unclear"] == ["Digital Sales Share"]
+    assert buckets["improved"] == []
+    assert buckets["deteriorated"] == []
+
+
+def test_render_movement_classification_answer_matches_expected_shape():
+    buckets = {
+        "improved": ["Gross premium", "Customer retention"],
+        "deteriorated": ["Claims incurred", "Customer complaints"],
+        "unclear": [],
+    }
+    rendered = render_movement_classification_answer(buckets)
+    assert rendered == (
+        "Improved: Gross premium, Customer retention.\n"
+        "Deteriorated: Claims incurred, Customer complaints."
+    )

@@ -151,6 +151,59 @@ def test_line_chart_uses_block_provided_axis_labels():
     assert list(figure.data[0].text) == ["$1,043.10bn", "$1,558.70bn"]
 
 
+def test_line_chart_abbreviates_full_month_name_period_labels():
+    """Phase C.1 (Section 10): "January 2026" style tick labels are
+    abbreviated to "Jan 2026" so a handful of period ticks don't crowd
+    the chart — an explicit requirement ("dates/months displayed
+    cleanly"), not just a styling nicety."""
+
+    block = {
+        "type": "LINE_CHART",
+        "title": "Claims Incurred",
+        "data": {
+            "points": [
+                {"label": "January 2026", "value": 82.1},
+                {"label": "February 2026", "value": 91.8},
+                {"label": "March 2026", "value": 89.7},
+            ]
+        },
+        "x_label": "Period",
+        "unit": "$ million",
+    }
+    _title, figure = _figure_from_visualization_block(block)
+    assert list(figure.data[0].x) == ["Jan 2026", "Feb 2026", "Mar 2026"]
+
+
+def test_bar_chart_abbreviates_full_month_name_labels_too():
+    block = {
+        "type": "BAR_CHART",
+        "title": "Claims Backlog",
+        "data": {
+            "series": [
+                {"label": "January 2026", "value": 418},
+                {"label": "March 2026", "value": 431},
+            ]
+        },
+        "x_label": "Period",
+        "unit": "cases",
+    }
+    _title, figure = _figure_from_visualization_block(block)
+    assert list(figure.data[0].x) == ["Jan 2026", "Mar 2026"]
+
+
+def test_chart_axis_label_leaves_non_period_category_names_unchanged():
+    """The abbreviation must never touch a label it doesn't recognize as
+    a full-month-name period — a category name, a channel name, or a
+    filename that leaked in must pass through byte-for-byte."""
+
+    from services.report_chart_figures import _chart_axis_label
+
+    assert _chart_axis_label("Digital") == "Digital"
+    assert _chart_axis_label("Q1 2026") == "Q1 2026"
+    assert _chart_axis_label("Western Region") == "Western Region"
+    assert _chart_axis_label("2026") == "2026"
+
+
 def test_line_chart_three_period_series_shows_every_period_on_the_x_axis():
     """Regression test for the confirmed chart x-axis bug: a 3-period
     series must show ALL THREE periods as their own x-axis positions,

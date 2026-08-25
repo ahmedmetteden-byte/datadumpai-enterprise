@@ -613,6 +613,21 @@ def _parse_numeric_cell(cell: str) -> float | None:
         return None
 
 
+_BARE_YEAR_CELL = re.compile(r"^(19|20)\d{2}$")
+
+
+def _looks_like_bare_year(raw_cell: str, value: float) -> bool:
+    """A cell that parses as a plain 4-digit 1900-2100 number with no
+    currency, percent, or scale suffix — almost certainly a reporting
+    year that leaked into a value column, never a genuine financial
+    figure (Phase C.1: found in production charting a "Financial
+    Performance" bar chart where Revenue/Profit/Growth all showed
+    "2,026" — the LLM-authored table's value column held the report's
+    own year, not real figures)."""
+
+    return bool(_BARE_YEAR_CELL.match(raw_cell.strip().replace(",", ""))) and value == int(value)
+
+
 def _table_financial_series(text: str) -> list[dict[str, Any]]:
     """Extract a (label, value) series from a markdown table whose header
     names a recognizable financial/quantitative column.
@@ -622,6 +637,14 @@ def _table_financial_series(text: str) -> list[dict[str, Any]]:
     "1" in a "Q1" row label immediately following a "Revenue" table
     header), producing a chart with a fabricated-looking single value
     instead of the real per-row figures.
+
+    Two plausibility guards reject the whole series rather than risk a
+    second flavor of the same fabrication (Phase C.1): every value being
+    a bare calendar year (the LLM padded a table it had no real figures
+    for with the report's own year), or every value being identical
+    (genuine Revenue/Profit/Growth figures are never exactly equal) —
+    both signal a table the model invented rather than one grounded in
+    real per-row figures.
     """
 
     from services.report_markdown_renderer import parse_markdown_blocks
@@ -643,17 +666,27 @@ def _table_financial_series(text: str) -> list[dict[str, Any]]:
             continue
 
         series: list[dict[str, Any]] = []
+        all_bare_years = True
         for row in block.rows[1:]:
             if len(row) <= value_col:
                 continue
-            value = _parse_numeric_cell(row[value_col])
+            raw_cell = row[value_col]
+            value = _parse_numeric_cell(raw_cell)
             label = row[0].strip()
             if value is None or value <= 0 or not label:
                 continue
+            if not _looks_like_bare_year(raw_cell, value):
+                all_bare_years = False
             series.append({"label": label, "value": value})
 
-        if series:
-            return series
+        if not series:
+            continue
+        if all_bare_years:
+            continue
+        if len({item["value"] for item in series}) == 1 and len(series) > 1:
+            continue
+
+        return series
 
     return []
 

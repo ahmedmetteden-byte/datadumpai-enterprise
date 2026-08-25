@@ -7,6 +7,7 @@ turns structured visualization blocks (or legacy chart metadata) into Plotly fig
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import plotly.express as px
@@ -91,6 +92,32 @@ def _axis_tick_format(unit: str, values: list[float]) -> dict[str, Any]:
     return {}
 
 
+_MONTH_YEAR_LABEL = re.compile(
+    r"^(January|February|March|April|May|June|July|August|September|October|November|"
+    r"December)\s+(\d{4})$",
+    re.IGNORECASE,
+)
+_MONTH_ABBREVIATIONS = {
+    "january": "Jan", "february": "Feb", "march": "Mar", "april": "Apr",
+    "may": "May", "june": "Jun", "july": "Jul", "august": "Aug",
+    "september": "Sep", "october": "Oct", "november": "Nov", "december": "Dec",
+}
+
+
+def _chart_axis_label(label: str) -> str:
+    """A concise x-axis tick label — "January 2026" -> "Jan 2026" — so a
+    handful of period ticks don't crowd a 280px-tall chart. Only touches
+    a recognized full-month-name label; anything else (a category name,
+    a filename that leaked in, an already-short label) passes through
+    unchanged rather than risk mangling text this function doesn't
+    understand the shape of."""
+
+    match = _MONTH_YEAR_LABEL.match(label.strip())
+    if not match:
+        return label
+    return f"{_MONTH_ABBREVIATIONS[match.group(1).lower()]} {match.group(2)}"
+
+
 def _format_value_label(unit: str, value: float) -> str:
     """Human-readable value label matching `_axis_tick_format`'s scale
     assumptions, used for on-chart data-point/bar annotations."""
@@ -119,7 +146,7 @@ def _figure_from_visualization_block(block: dict[str, Any]) -> tuple[str, go.Fig
         series = data.get("series") or []
         if not series:
             return None
-        labels = [item.get("label", "") for item in series]
+        labels = [_chart_axis_label(str(item.get("label", ""))) for item in series]
         values = [float(item.get("value", 0)) for item in series]
         unit = str(block.get("unit") or "")
         x_label = str(block.get("x_label") or "Category")
@@ -170,7 +197,7 @@ def _figure_from_visualization_block(block: dict[str, Any]) -> tuple[str, go.Fig
             ]
         if not points:
             return None
-        labels = [p.get("label", "") for p in points]
+        labels = [_chart_axis_label(str(p.get("label", ""))) for p in points]
         values = [float(p.get("value", 0) or 0) for p in points]
         # Defensive guard (Phase 3 Step 2, still applies to the new
         # shape): if 2+ points collapse onto the same x-axis label (e.g.
@@ -252,7 +279,7 @@ def _figure_from_visualization_block(block: dict[str, Any]) -> tuple[str, go.Fig
         series = data.get("series") or []
         if not series:
             return None
-        labels = [item.get("label", "") for item in series]
+        labels = [_chart_axis_label(str(item.get("label", ""))) for item in series]
         values = [float(item.get("value", 0)) for item in series]
         figure = px.pie(
             names=labels,

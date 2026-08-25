@@ -59,8 +59,14 @@ export function ConversationMessage({
         </h3>
         <div className="flex items-center gap-3">
           {message.calculationVerified === true ? (
-            <span className="inline-flex items-center rounded-full bg-surface-alt px-2 py-0.5 text-caption font-medium text-success">
+            <span className="inline-flex items-center gap-1 rounded-full bg-surface-alt px-2 py-0.5 text-caption font-medium text-success">
+              <span aria-hidden>✓</span>
               {UI_COPY.studioCalculationVerified}
+            </span>
+          ) : message.calculationVerified === false ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-surface-alt px-2 py-0.5 text-caption font-medium text-warning">
+              <span aria-hidden>⚠</span>
+              {UI_COPY.studioCalculationNotVerified}
             </span>
           ) : null}
           {typeof message.confidence === 'number' ? (

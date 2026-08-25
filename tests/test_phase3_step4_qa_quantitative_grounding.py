@@ -269,11 +269,13 @@ def test_calculation_verified_true_for_a_correct_answer(monkeypatch):
     assert result["notice"] is None
 
 
-def test_calculation_verified_false_for_the_exact_reproduced_contradiction(monkeypatch):
-    """The exact live-reproduced bug: the model states claims incurred
-    'decreased' against a verified +9.3% (increase). calculationVerified
-    must be False and a clear notice must be surfaced — the answer is
-    still returned, not silently discarded."""
+def test_calculation_verified_true_after_correcting_the_exact_reproduced_contradiction(monkeypatch):
+    """Phase C.1: the exact live-reproduced bug — the model states claims
+    incurred 'decreased' against a verified +9.3% (increase) — is now
+    CORRECTED in place rather than shipped alongside a warning.
+    calculationVerified becomes True once the answer is actually
+    consistent with the verified calculation ("deterministic result ->
+    grounded narrative", not "LLM answer -> verification warning")."""
 
     service, _completions = _service(
         monkeypatch,
@@ -294,16 +296,16 @@ def test_calculation_verified_false_for_the_exact_reproduced_contradiction(monke
         documents=_fake_documents(),
     )
 
-    assert result["calculationVerified"] is False
-    assert result["notice"] is not None
-    assert "could not be fully verified" in result["notice"]
-    # The answer itself is retained, not discarded or blanked out.
-    assert "decreased" in result["answer"]
+    assert result["calculationVerified"] is True
+    assert result["notice"] is None
+    assert "increased" in result["answer"]
+    assert "decreased" not in result["answer"]
 
 
-def test_calculation_verified_false_for_loss_ratio_improved_contradiction(monkeypatch):
+def test_calculation_verified_true_after_correcting_loss_ratio_improved_contradiction(monkeypatch):
     """Second exact reproduced bug: "64.0% ... decreased to 64.3%" (a
-    higher number claimed as a decrease), concluded as "improved"."""
+    higher number claimed as a decrease) — corrected to "increased" in
+    place, same as report generation's correction pass would do."""
 
     service, _completions = _service(
         monkeypatch,
@@ -327,8 +329,10 @@ def test_calculation_verified_false_for_loss_ratio_improved_contradiction(monkey
         documents=_fake_documents(),
     )
 
-    assert result["calculationVerified"] is False
-    assert result["notice"] is not None
+    assert result["calculationVerified"] is True
+    assert result["notice"] is None
+    assert "increased" in result["answer"]
+    assert "decreased to 64.3" not in result["answer"]
 
 
 def test_calculation_verified_none_when_answer_never_engages_the_verified_metrics(monkeypatch):
@@ -359,11 +363,12 @@ def test_calculation_verified_none_when_answer_never_engages_the_verified_metric
     assert result["notice"] is None
 
 
-def test_confidence_is_not_overridden_by_calculation_verified(monkeypatch):
-    """Confidence and calculationVerified are independent signals per the
-    approved design — a high self-reported confidence on a contradicted
-    answer must be left as the model reported it; calculationVerified
-    alone carries the correctness signal."""
+def test_confidence_is_independent_of_calculation_verified(monkeypatch):
+    """Confidence and calculationVerified are independent signals — a
+    high self-reported confidence is left as the model reported it
+    regardless of whether a correction was needed; calculationVerified
+    alone carries the numerical-correctness signal, and Phase C.1 makes
+    that signal True once the contradiction is actually fixed."""
 
     service, _completions = _service(
         monkeypatch,
@@ -385,7 +390,47 @@ def test_confidence_is_not_overridden_by_calculation_verified(monkeypatch):
     )
 
     assert result["confidence"] == pytest.approx(0.97, abs=0.01)
-    assert result["calculationVerified"] is False
+    assert result["calculationVerified"] is True
+
+
+# --- Phase C.1: movement-classification questions get a deterministic
+# answer, not the LLM's own (possibly wrong) sorting of metrics ---
+
+
+def test_movement_classification_question_overrides_the_llm_answer_entirely(monkeypatch):
+    """The user's exact Question 1: 'Compare January and March 2026.
+    Which metrics improved and which deteriorated?' — the LLM's own
+    answer (deliberately given a WRONG classification here) must be
+    replaced with the deterministic bucketing, not merged with it or
+    left as-is."""
+
+    service, _completions = _service(
+        monkeypatch,
+        hits=_fake_hits(),
+        response_json={
+            "answer": "Everything improved across the board this quarter.",
+            "evidence": "Narrative synthesis.",
+            "confidence": 0.9,
+            "followUps": [],
+            "citationIndexes": [1, 2, 3],
+        },
+    )
+
+    result = service.answer(
+        workspace_id="ws_test",
+        question="Compare January and March 2026. Which metrics improved and which deteriorated?",
+        web_research_enabled=False,
+        documents=_fake_documents(),
+    )
+
+    assert "Everything improved across the board" not in result["answer"]
+    assert "Improved: Gross premium, Customer retention." in result["answer"]
+    assert "Deteriorated:" in result["answer"]
+    assert "Claims incurred" in result["answer"]
+    assert "Loss ratio" in result["answer"]
+    assert "Claims backlog" in result["answer"]
+    assert result["calculationVerified"] is True
+    assert result["notice"] is None
 
 
 # --- Citations must cover every document a verified metric drew on ---

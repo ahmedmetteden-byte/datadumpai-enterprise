@@ -16,11 +16,14 @@ from models.web_source import WebSource
 from services.embedding_service import EmbeddingService
 from services.qdrant_service import QdrantService
 from services.quantitative_analysis_service import (
+    classify_metrics_by_movement,
+    detect_movement_classification_question,
     detect_multi_period_question,
     extract_metric_tables,
     format_metrics_for_evidence,
+    render_movement_classification_answer,
 )
-from services.report_qc_service import check_direction_consistency
+from services.report_qc_service import apply_deterministic_corrections
 from services.report_retrieval_service import retrieve_grouped_sources
 from services.web_search_service import WebSearchService
 
@@ -191,30 +194,37 @@ class IntelligenceRagService:
         }
 
     @staticmethod
-    def _verify_calculation_usage(
+    def _verify_and_correct_answer(
         answer_text: str, metric_tables: list[dict[str, Any]]
-    ) -> tuple[bool | None, str | None]:
+    ) -> tuple[str, bool | None, str | None]:
         """Whether the answer's numerical claims are consistent with the
-        Verified Quantitative Evidence it was given — reuses Phase A's
-        report_qc_service.check_direction_consistency() unchanged (the
-        same check report generation's QC pass runs), rather than a
-        second verification mechanism for Q&A.
+        Verified Quantitative Evidence it was given — and, per Section 7's
+        "deterministic result -> grounded narrative" requirement, corrects
+        a detected direction/sentiment contradiction in place BEFORE
+        returning it, rather than shipping the wrong answer next to a
+        warning the reader has to notice and reconcile themselves. Reuses
+        report_qc_service.apply_deterministic_corrections() unchanged —
+        the same correction pass report generation's QC step runs — so
+        there is exactly one place that knows how to fix this class of
+        error, not a second implementation for Q&A.
 
-        Returns (calculation_verified, notice):
-        - (None, None): no metric table's distinctive words appear
-          anywhere in the answer — the deterministic evidence wasn't
-          engaged, so there is nothing to verify (a purely qualitative
-          answer, or a quantitative answer that didn't end up using the
+        Returns (answer_text, calculation_verified, notice):
+        - (unchanged, None, None): no metric table's distinctive words
+          appear anywhere in the answer — the deterministic evidence
+          wasn't engaged, so there is nothing to verify (a purely
+          qualitative answer, or one that didn't end up using the
           supplied figures).
-        - (True, None): at least one verified figure was engaged and no
-          contradiction was found.
-        - (False, notice): a direction/sign contradiction was found — the
-          answer is retained (still potentially useful), but must not be
-          presented as numerically verified.
+        - (unchanged or corrected, True, None): every contradiction found
+          was corrected — the returned answer is now numerically
+          consistent with the verified calculations.
+        - (corrected as far as possible, False, notice): a contradiction
+          survived correction (e.g. a paraphrase with no literal figure
+          or direction word to rewrite) — must not be presented as
+          numerically verified.
         """
 
         if not metric_tables:
-            return None, None
+            return answer_text, None, None
 
         lowered = answer_text.lower()
         engaged = any(
@@ -223,12 +233,14 @@ class IntelligenceRagService:
             if str(table.get("title") or "").strip()
         )
         if not engaged:
-            return None, None
+            return answer_text, None, None
 
-        issues = check_direction_consistency(answer_text, metric_tables)
-        high_severity = [issue for issue in issues if issue.severity == "high"]
+        corrected_text, remaining_issues = apply_deterministic_corrections(
+            answer_text, metric_tables
+        )
+        high_severity = [issue for issue in remaining_issues if issue.severity == "high"]
         if not high_severity:
-            return True, None
+            return corrected_text, True, None
 
         summary = "; ".join(issue.message for issue in high_severity)
         notice = (
@@ -236,7 +248,7 @@ class IntelligenceRagService:
             f"deterministic calculations ({summary}). Treat the specific figures with "
             "caution and consider asking again or checking the source documents directly."
         )
-        return False, notice
+        return corrected_text, False, notice
 
     @staticmethod
     def _supplement_citations_for_verified_metrics(
@@ -524,6 +536,27 @@ class IntelligenceRagService:
                     }
                 )
 
+        # Phase C.1: a question shaped like "Compare January and March.
+        # Which metrics improved and which deteriorated?" asks for a
+        # SORTING of metrics into buckets — a mistake there is a wrong
+        # bucket assignment, not a wrong word a text correction pass can
+        # fix in place. Answered directly from classify_metrics_by_
+        # movement()'s deterministic buckets rather than trusting the
+        # LLM's own classification.
+        movement_buckets = (
+            classify_metrics_by_movement(metric_tables)
+            if metric_tables and detect_movement_classification_question(question)
+            else None
+        )
+        if movement_buckets and (movement_buckets["improved"] or movement_buckets["deteriorated"]):
+            answer = render_movement_classification_answer(movement_buckets)
+            calculation_verified: bool | None = True
+            verification_notice: str | None = None
+        else:
+            answer, calculation_verified, verification_notice = self._verify_and_correct_answer(
+                answer, metric_tables
+            )
+
         if metric_tables:
             self._supplement_citations_for_verified_metrics(
                 answer_text=answer,
@@ -532,10 +565,6 @@ class IntelligenceRagService:
                 sources=sources,
                 linked_by_doc=linked_by_doc,
             )
-
-        calculation_verified, verification_notice = self._verify_calculation_usage(
-            answer, metric_tables
-        )
 
         notice = None
         if web_notice and not web_sources:

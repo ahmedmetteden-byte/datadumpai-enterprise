@@ -187,6 +187,82 @@ def test_no_chart_generated_when_no_real_financial_data_exists_in_prose():
     ]
     assert not bar_blocks, f"expected no fabricated Financial Performance chart, got {bar_blocks}"
 
+
+# Phase C.1: reproduces a second, distinct flavor of the same fabrication —
+# found in a real generated Financial Analysis PDF export. Here the model
+# DID write a real markdown table (not scraped prose), but with no genuine
+# Revenue/Profit/Growth figures available, it padded the value column with
+# the report's own reporting year, producing a "Financial Performance"
+# chart with three identical, meaningless "2,026" bars.
+FABRICATED_TABLE_DOCUMENT = """
+=== SOURCE DOCUMENT: Quarterly_Business_Report_2026.pdf ===
+
+## Executive Summary
+
+Financial performance for the quarter is summarized below.
+
+| Category | Value |
+|----------|------:|
+| Revenue  | 2,026 |
+| Profit   | 2,026 |
+| Growth   | 2,026 |
+"""
+
+
+def test_no_chart_generated_when_table_values_are_all_a_bare_year():
+    report_data = _base_report_data(FABRICATED_TABLE_DOCUMENT, report_type="Financial Analysis")
+    enriched = apply_visualizations(
+        report_data,
+        user_report_type="Financial Analysis",
+        document_text=FABRICATED_TABLE_DOCUMENT,
+        include_charts=True,
+        force_generate=True,
+    )
+
+    bar_blocks = [
+        block
+        for block in enriched.charts.get("visualizations", [])
+        if block["type"] == VisualizationStrategy.BAR_CHART.value
+        and block.get("title") == "Financial Performance"
+    ]
+    assert not bar_blocks, f"expected no fabricated Financial Performance chart, got {bar_blocks}"
+
+
+IDENTICAL_VALUES_DOCUMENT = """
+=== SOURCE DOCUMENT: Quarterly_Business_Report_2026.pdf ===
+
+## Executive Summary
+
+| Category | Value |
+|----------|------:|
+| Revenue  | 500.0 |
+| Profit   | 500.0 |
+| Growth   | 500.0 |
+"""
+
+
+def test_no_chart_generated_when_every_table_value_is_identical():
+    """A second, narrower guard: even when a value isn't a bare year, three
+    genuinely different financial figures are never exactly equal — this
+    is still a plausibility signal the table has no real per-row data."""
+
+    report_data = _base_report_data(IDENTICAL_VALUES_DOCUMENT, report_type="Financial Analysis")
+    enriched = apply_visualizations(
+        report_data,
+        user_report_type="Financial Analysis",
+        document_text=IDENTICAL_VALUES_DOCUMENT,
+        include_charts=True,
+        force_generate=True,
+    )
+
+    bar_blocks = [
+        block
+        for block in enriched.charts.get("visualizations", [])
+        if block["type"] == VisualizationStrategy.BAR_CHART.value
+        and block.get("title") == "Financial Performance"
+    ]
+    assert not bar_blocks, f"expected no fabricated Financial Performance chart, got {bar_blocks}"
+
     # Specifically confirm the bogus "2026" value never appears in ANY
     # chart data — the year must never be picked up as a metric value.
     for block in enriched.charts.get("visualizations", []):

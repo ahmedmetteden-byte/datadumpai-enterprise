@@ -389,7 +389,9 @@ def classify_metric_polarity(title: str, *, dimension_type: str = "temporal") ->
     return POLARITY_UNKNOWN
 
 
-def _compute_calculations(rows: list[dict[str, Any]], *, title: str = "") -> dict[str, Any]:
+def _compute_calculations(
+    rows: list[dict[str, Any]], *, title: str = "", unit: str = ""
+) -> dict[str, Any]:
     """Absolute/percent change between adjacent rows and start-to-end —
     only meaningful when row labels are temporal (see _looks_temporal),
     since "period-over-period" implies a time order between rows."""
@@ -428,7 +430,229 @@ def _compute_calculations(rows: list[dict[str, Any]], *, title: str = "") -> dic
         "polarity": classify_metric_polarity(title),
     }
     result.update(_compute_temporal_shape(rows))
+    result["comparison"] = build_structured_comparison(rows, title=title, unit=unit)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 Step 4, Phase C.1: structured comparison metadata.
+#
+# _compute_calculations()/_compute_temporal_shape() above already carry
+# every number a narrative or Q&A answer needs — but as several *separate*
+# dict shapes (total_change, period_over_period[-1], an interior peak/
+# trough) an LLM has to correctly pick between and recombine. That
+# recombination is exactly where production bugs happened: a narrative
+# citing a magnitude from one comparison paired with a direction word from
+# a DIFFERENT one (e.g. the total Jan->Mar percent stated alongside the
+# Feb->Mar direction). This section computes one flat, unambiguous object
+# per metric with EVERY field explicitly labeled by which two periods it
+# spans, plus a pre-composed, ready-to-cite sentence for each of the two
+# canonical comparisons — so consuming code (the writer prompt, Q&A, QC)
+# never has to reconstruct a comparison from parts that could be mismatched.
+# ---------------------------------------------------------------------------
+
+INTERPRETATION_IMPROVEMENT = "improvement"
+INTERPRETATION_DETERIORATION = "deterioration"
+INTERPRETATION_INCREASE = "increase"
+INTERPRETATION_DECREASE = "decrease"
+INTERPRETATION_FLAT = "flat"
+
+
+def _interpret_movement(direction: str, polarity: str) -> str:
+    """Combine a raw direction ("increase"/"decrease"/"flat") with a
+    metric's polarity into the one word that may be used as a VALUE
+    JUDGMENT ("improvement"/"deterioration") — kept strictly separate
+    from the raw direction word a narrative states as fact, so "a
+    deterioration" can never be misread/miswritten as "decreased" (the
+    exact confusion behind the "claims incurred decreased by 9.3%" bug,
+    where the correct judgment — deterioration, since claims are
+    negative-polarity — was seemingly conflated with the raw direction,
+    which was actually an INCREASE)."""
+
+    if direction == "flat":
+        return INTERPRETATION_FLAT
+    if polarity == POLARITY_POSITIVE:
+        return INTERPRETATION_IMPROVEMENT if direction == "increase" else INTERPRETATION_DETERIORATION
+    if polarity == POLARITY_NEGATIVE:
+        return INTERPRETATION_DETERIORATION if direction == "increase" else INTERPRETATION_IMPROVEMENT
+    return INTERPRETATION_INCREASE if direction == "increase" else INTERPRETATION_DECREASE
+
+
+def _direction_of(absolute: float) -> str:
+    if absolute > 0:
+        return "increase"
+    if absolute < 0:
+        return "decrease"
+    return "flat"
+
+
+def _leg(
+    *, from_period: str, from_value: float, to_period: str, to_value: float, unit: str, polarity: str
+) -> dict[str, Any]:
+    """One atomic (start period, start value) -> (end period, end value)
+    comparison leg — absolute/percent/percentage-point change and
+    direction/interpretation all computed from THIS SAME pair, never
+    borrowed from a different leg. This is the unit build_structured_
+    comparison()'s first_to_latest/previous_to_latest fields are made
+    from, and what _render_authoritative_sentence() renders verbatim."""
+
+    absolute = round(to_value - from_value, 2)
+    percent = round(absolute / from_value * 100, 1) if from_value else None
+    direction = _direction_of(absolute)
+    return {
+        "from_period": from_period,
+        "from_value": from_value,
+        "to_period": to_period,
+        "to_value": to_value,
+        "absolute_change": absolute,
+        "percentage_change": percent,
+        "percentage_point_change": absolute if unit == "%" else None,
+        "direction": direction,
+        "interpretation": _interpret_movement(direction, polarity),
+    }
+
+
+_CURRENCY_SYMBOLS = ("$", "€", "£", "₦")
+
+
+def _format_leg_value(value: float, unit: str) -> str:
+    if unit == "%":
+        return f"{value:g}%"
+    if unit and unit.startswith(_CURRENCY_SYMBOLS):
+        # "$ million" -> "$82.1 million"; a bare "$" -> "$82.1" — the
+        # symbol prefixes the number, any scale word trails it, matching
+        # ordinary currency notation rather than _infer_unit()'s raw
+        # "symbol space scale" internal representation.
+        symbol, _, scale = unit.partition(" ")
+        return f"{symbol}{value:g}" + (f" {scale}" if scale else "")
+    if unit:
+        return f"{value:g} {unit}"
+    return f"{value:g}"
+
+
+def _render_authoritative_sentence(metric: str, leg: dict[str, Any], unit: str) -> str:
+    """A grammatically complete, ready-to-cite sentence for one comparison
+    leg — the writer prompt and Q&A are told to use this verbatim (or a
+    close paraphrase that preserves every number and word) rather than
+    recomposing the same facts themselves, which is where a correct
+    number and a correct direction word have previously ended up
+    mismatched with each other."""
+
+    from_str = _format_leg_value(leg["from_value"], unit)
+    to_str = _format_leg_value(leg["to_value"], unit)
+    direction_verb = {"increase": "increased", "decrease": "decreased", "flat": "remained flat"}[
+        leg["direction"]
+    ]
+
+    sentence = f"{metric} {direction_verb} from {from_str} in {leg['from_period']} to {to_str} in {leg['to_period']}"
+
+    if leg["direction"] == "flat":
+        return sentence + "."
+
+    if unit == "%":
+        pp = leg["percentage_point_change"]
+        sentence += f", {pp:+g} percentage points"
+        if leg["percentage_change"] is not None:
+            sentence += f" ({leg['percentage_change']:+g}% relative change)"
+    elif leg["percentage_change"] is not None:
+        sentence += f", {leg['percentage_change']:+g}%"
+
+    interpretation = leg["interpretation"]
+    if interpretation in (INTERPRETATION_IMPROVEMENT, INTERPRETATION_DETERIORATION):
+        article = "an" if interpretation == INTERPRETATION_IMPROVEMENT else "a"
+        sentence += f" — {article} {interpretation} for this metric"
+
+    return sentence + "."
+
+
+def build_structured_comparison(
+    rows: list[dict[str, Any]], *, title: str = "", unit: str = ""
+) -> dict[str, Any]:
+    """The full first/previous/latest/peak/trough comparison object for one
+    temporal metric series — every field explicitly labeled by which
+    period(s) it spans, so a consumer never has to infer or recombine.
+    Returns {} for a series with fewer than 2 rows (nothing to compare)."""
+
+    if len(rows) < 2:
+        return {}
+
+    polarity = classify_metric_polarity(title)
+    first, last = rows[0], rows[-1]
+    previous = rows[-2]
+
+    first_to_latest = _leg(
+        from_period=first["label"], from_value=first["value"],
+        to_period=last["label"], to_value=last["value"],
+        unit=unit, polarity=polarity,
+    )
+    previous_to_latest = _leg(
+        from_period=previous["label"], from_value=previous["value"],
+        to_period=last["label"], to_value=last["value"],
+        unit=unit, polarity=polarity,
+    )
+
+    peak_row = max(rows, key=lambda r: r["value"])
+    trough_row = min(rows, key=lambda r: r["value"])
+
+    comparison: dict[str, Any] = {
+        "metric": title,
+        "unit": unit,
+        "first_period": first["label"],
+        "first_value": first["value"],
+        "previous_period": previous["label"],
+        "previous_value": previous["value"],
+        "latest_period": last["label"],
+        "latest_value": last["value"],
+        "first_to_latest_absolute_change": first_to_latest["absolute_change"],
+        "first_to_latest_percentage_change": first_to_latest["percentage_change"],
+        "previous_to_latest_absolute_change": previous_to_latest["absolute_change"],
+        "previous_to_latest_percentage_change": previous_to_latest["percentage_change"],
+        "first_to_latest_percentage_point_change": first_to_latest["percentage_point_change"],
+        "previous_to_latest_percentage_point_change": previous_to_latest["percentage_point_change"],
+        "peak_period": peak_row["label"],
+        "peak_value": peak_row["value"],
+        "trough_period": trough_row["label"],
+        "trough_value": trough_row["value"],
+        "direction": first_to_latest["direction"],
+        "polarity": polarity,
+        "first_to_latest_interpretation": first_to_latest["interpretation"],
+        "previous_to_latest_interpretation": previous_to_latest["interpretation"],
+        "first_to_latest_sentence": _render_authoritative_sentence(title, first_to_latest, unit),
+    }
+    if previous["label"] != first["label"]:
+        comparison["previous_to_latest_sentence"] = _render_authoritative_sentence(
+            title, previous_to_latest, unit
+        )
+    return comparison
+
+
+def classify_metrics_by_movement(metric_tables: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """Deterministically bucket every temporal metric by its first-to-
+    latest interpretation — "improved" / "deteriorated" / "unclear"
+    (flat, or a metric whose polarity isn't confidently known). Built for
+    exactly the Q&A pattern "Compare January and March. Which metrics
+    improved and which deteriorated?" — a question where the model's job
+    is to correctly SORT metrics into buckets, not just get one number
+    right; text-level correction can fix a wrong word in a sentence but
+    can't move an item from the wrong bucket to the right one, so this
+    function is the deterministic bucketing itself, not just a check
+    against it."""
+
+    buckets: dict[str, list[str]] = {"improved": [], "deteriorated": [], "unclear": []}
+    for table in metric_tables:
+        calculations = table.get("calculations") or {}
+        comparison = calculations.get("comparison")
+        if not comparison:
+            continue
+        interpretation = comparison.get("first_to_latest_interpretation")
+        title = comparison.get("metric") or str(table.get("title") or "")
+        if interpretation == INTERPRETATION_IMPROVEMENT:
+            buckets["improved"].append(title)
+        elif interpretation == INTERPRETATION_DETERIORATION:
+            buckets["deteriorated"].append(title)
+        else:
+            buckets["unclear"].append(title)
+    return buckets
 
 
 def _compute_temporal_shape(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -705,7 +929,7 @@ def _extract_from_table(rows: list[list[str]], *, source_document: str) -> list[
                         source_document=source_document,
                         unit=unit,
                         rows=group_rows,
-                        calculations=_compute_calculations(group_rows, title=group_title) if group_temporal else {},
+                        calculations=_compute_calculations(group_rows, title=group_title, unit=unit) if group_temporal else {},
                         reported_change=reported_change_by_group.get(identity, []),
                         dimension_type="temporal_by_category",
                         category_value=identity or None,
@@ -727,7 +951,7 @@ def _extract_from_table(rows: list[list[str]], *, source_document: str) -> list[
                     source_document=source_document,
                     unit=unit,
                     rows=parsed_rows,
-                    calculations=_compute_calculations(parsed_rows, title=title),
+                    calculations=_compute_calculations(parsed_rows, title=title, unit=unit),
                     reported_change=reported_change_by_group.get(
                         aligned_identities[0] if aligned_identities else "", []
                     ),
@@ -1160,7 +1384,7 @@ def _extract_from_prose_across_documents(
                 source_document=", ".join(sorted(seen_documents)),
                 unit=unit,
                 rows=rows,
-                calculations=_compute_calculations(rows, title=display_title),
+                calculations=_compute_calculations(rows, title=display_title, unit=unit),
                 reported_change=reported_change,
                 dimension_type="temporal",
             )
@@ -1253,6 +1477,46 @@ def detect_multi_period_question(question: str) -> bool:
         return True
 
     return any(pattern.search(text) for pattern in _MULTI_PERIOD_PHRASES)
+
+
+# Phase C.1: "Compare January and March. Which metrics improved and which
+# deteriorated?" — a question whose correct answer is a SORTING of metrics
+# into buckets, not a single number. An LLM sorting mistake can't be fixed
+# by correcting a word in a sentence, so this question shape gets its own
+# deterministic answer builder (classify_metrics_by_movement) rather than
+# relying on post-hoc text correction.
+_MOVEMENT_CLASSIFICATION_PATTERN = re.compile(
+    r"which\b[^.!?\n]{0,60}\b(improved|deteriorat|worsen|declin|got\s+(?:better|worse))",
+    re.IGNORECASE,
+)
+
+
+def detect_movement_classification_question(question: str) -> bool:
+    """True for a question asking WHICH metrics moved in which direction
+    ("which improved, which deteriorated") — as opposed to a question
+    about one specific metric's change."""
+
+    if not question or not question.strip():
+        return False
+    return bool(_MOVEMENT_CLASSIFICATION_PATTERN.search(question))
+
+
+def render_movement_classification_answer(buckets: dict[str, list[str]]) -> str:
+    """A grounded, ready-to-present answer for a movement-classification
+    question, built entirely from classify_metrics_by_movement()'s
+    deterministic buckets — no LLM sorting involved."""
+
+    lines: list[str] = []
+    if buckets.get("improved"):
+        lines.append("Improved: " + ", ".join(buckets["improved"]) + ".")
+    if buckets.get("deteriorated"):
+        lines.append("Deteriorated: " + ", ".join(buckets["deteriorated"]) + ".")
+    if buckets.get("unclear"):
+        lines.append(
+            "No established business direction (reported as increase/decrease only): "
+            + ", ".join(buckets["unclear"]) + "."
+        )
+    return "\n".join(lines)
 
 
 def extract_metric_tables(

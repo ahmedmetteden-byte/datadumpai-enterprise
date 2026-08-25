@@ -226,6 +226,55 @@ def test_baseline_metric_derived_chart_survives_markdown_round_trip_and_exports(
         assert chart_export.images[0][1].startswith(b"\x89PNG")
 
 
+WRONG_DIRECTION_REPORT = "\n\n".join(
+    [
+        "## Executive Summary\nGross Premium decreased by 97.4% between 2022 and 2024.",
+        "## Key Findings\n### Gross Premium fell sharply\nGross Premium decreased by 97.4% "
+        "over the period.\n**Confidence:** High — verified calculations.\n**Source:** "
+        "annual_statistical_market_report.md",
+        "## Detailed Analysis\nGrowth was broad-based.",
+        "## Risks & Issues\nClaims growth outpaced premium growth in the final year.",
+        "## Opportunities\nNone material beyond continued expansion.",
+        "## Strategic Recommendations\n1. Monitor claims trend.",
+        "## Conclusion\nMomentum should be sustained.",
+    ]
+)
+
+
+def test_generate_auto_corrects_a_direction_contradiction_before_saving(
+    isolated_env, project_service: ProjectService, monkeypatch
+):
+    """Phase C.1 end-to-end: generate() must not merely flag a direction
+    contradiction in qc_report metadata — it must correct the narrative
+    itself before the report is saved. Gross Premium's verified total
+    change is a +97.4% INCREASE; the canned LLM output here wrongly says
+    'decreased' twice (Executive Summary and Key Findings)."""
+
+    project = project_service.create_project("Auto-Correction Project")
+
+    svc = SpaReportGenerationService()
+    client, _completions = fake_openai_client(WRONG_DIRECTION_REPORT)
+    svc._client = client
+    monkeypatch.setattr(svc, "_gather_sources", lambda *a, **kw: _fixture_sources())
+
+    record = svc.generate(
+        workspace_id=project["id"],
+        project=project,
+        template_id="executive_summary",
+        period_id="annual",
+    )
+
+    assert "increased by 97.4%" in record["content"]
+    assert "decreased by 97.4%" not in record["content"]
+    assert record["reportData"]["metadata"].get("narrative_auto_corrected") is True
+
+    qc_report = record["reportData"]["metadata"].get("qc_report")
+    if qc_report is not None:
+        assert not any(
+            issue["category"] == "direction_consistency" for issue in qc_report["issues"]
+        )
+
+
 def test_baseline_qc_pass_flags_uncited_figures_without_blocking_generation(
     isolated_env, project_service: ProjectService, monkeypatch
 ):
@@ -334,3 +383,38 @@ def test_prompt_carries_the_shared_business_direction_polarity_requirement(
 
     assert "'Business direction' line" in prompt
     assert "never as having improved, worsened" in prompt
+
+
+def test_generate_persists_full_report_data_for_export_time_reuse(
+    isolated_env, project_service: ProjectService, monkeypatch
+):
+    """Phase C.1: the record generate() returns (and persists) must carry
+    the full ReportData — metrics["tables"], charts, metadata["report_plan"]
+    — under "reportData", not just the narrower SPA display fields. Without
+    this, export_report() had nothing but bare markdown text to work with,
+    silently losing deterministic chart/metric data at export time."""
+
+    project = project_service.create_project("Export Persistence Project")
+
+    record, _prompt, report = _generate_with_fake_llm(project, monkeypatch=monkeypatch)
+
+    assert "reportData" in record
+    stored = record["reportData"]
+    assert stored["metrics"]["tables"], "expected the deterministic metric tables to be persisted"
+    assert stored["metrics"]["tables"][0]["title"] == "Gross Premium"
+    assert stored["metadata"]["report_plan"]["ranked_findings"][0]["label"] == "Gross Premium"
+
+    # And a fresh reconstruction from that stored payload must round-trip
+    # the metrics — this is exactly what export_report() now does.
+    from models.report_data import ReportData
+    from services.report_document import report_data_from_markdown
+
+    reloaded = report_data_from_markdown(
+        record["content"],
+        report_type=record["reportType"],
+        title=record["name"],
+        source_documents=record["sourceDocuments"],
+        stored=ReportData.from_dict(stored),
+    )
+    assert reloaded.metrics.get("tables"), "metrics must survive the export-time reload"
+    assert reloaded.metrics["tables"][0]["title"] == "Gross Premium"

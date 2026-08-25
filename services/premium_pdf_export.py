@@ -130,6 +130,15 @@ class PremiumExportMetadata:
     # caller that doesn't explicitly resolve the account's plan never
     # accidentally ships an unwatermarked PDF.
     show_watermark: bool = True
+    # Phase C.1 (Section 12): the same deterministic metric series and
+    # ranked findings report generation already computed
+    # (quantitative_analysis_service.py / report_plan_service.py) — used
+    # by _at_a_glance_page() to surface real "most significant movement"
+    # items instead of only a document count and a reading-time estimate.
+    # Optional and additive: a report saved before this field existed
+    # simply renders "At a Glance" without these rows, same as before.
+    metric_tables: list[dict[str, Any]] | None = None
+    report_plan: dict[str, Any] | None = None
 
 
 class PremiumPDFBuilder:
@@ -241,6 +250,22 @@ class PremiumPDFBuilder:
                 textColor=COLOR_SLATE,
                 spaceBefore=8,
                 spaceAfter=4,
+            ),
+            # At a Glance's label column (Phase C.1): some labels ("Most
+            # Significant Positive Movement") are longer than the column
+            # is wide. A plain string table cell does not wrap in
+            # reportlab — it overflows into the adjacent cell instead —
+            # so the label column uses a wrapping Paragraph in this style
+            # rather than a bare string.
+            "glance_label": ParagraphStyle(
+                "GlanceLabel",
+                parent=base["Normal"],
+                fontName=HEADING_FONT,
+                fontSize=11,
+                leading=13,
+                textColor=COLOR_MUTED,
+                spaceBefore=0,
+                spaceAfter=0,
             ),
             "bullet": ParagraphStyle(
                 "Bullet",
@@ -530,6 +555,62 @@ class PremiumPDFBuilder:
 
         return TableStyle(commands)
 
+    def _first_bullet_title(self, parsed: ParsedIntelligenceReport, section_title: str) -> str:
+        """The bolded title of a section's first bullet — '- **Title:**
+        detail...' -> 'Title' — used for the At a Glance "highest-priority
+        risk" / "strongest opportunity" rows. Empty if the section is
+        missing, empty, or doesn't follow the bolded-bullet format the
+        report-writing prompt asks for."""
+
+        section = next(
+            (s for s in parsed.sections if s.title.strip().lower() == section_title.lower()), None
+        )
+        if not section:
+            return ""
+        match = re.search(r"^[-*]\s+\*\*(.+?)\*\*", section.body, re.MULTILINE)
+        return match.group(1).strip().rstrip(":") if match else ""
+
+    def _significant_movement_rows(self) -> list[tuple[str, str]]:
+        """Deterministic "most significant positive/negative movement"
+        rows (Phase C.1, Section 12) — built from the same ranked
+        findings and metric-series polarity/interpretation report
+        generation already computed, never re-derived or guessed here."""
+
+        metric_tables = self.metadata.metric_tables or []
+        ranked_labels = [
+            str(f.get("label") or "")
+            for f in (self.metadata.report_plan or {}).get("ranked_findings") or []
+        ]
+        by_title = {str(t.get("title") or ""): t for t in metric_tables}
+
+        best_positive: tuple[str, float] | None = None
+        best_negative: tuple[str, float] | None = None
+        for label in ranked_labels:
+            table = by_title.get(label)
+            comparison = ((table or {}).get("calculations") or {}).get("comparison")
+            if not comparison:
+                continue
+            interpretation = comparison.get("first_to_latest_interpretation")
+            percent = comparison.get("first_to_latest_percentage_change")
+            if percent is None:
+                continue
+            summary = f"{label} {percent:+g}%"
+            if interpretation == "improvement" and (
+                best_positive is None or abs(percent) > best_positive[1]
+            ):
+                best_positive = (summary, abs(percent))
+            elif interpretation == "deterioration" and (
+                best_negative is None or abs(percent) > best_negative[1]
+            ):
+                best_negative = (summary, abs(percent))
+
+        rows: list[tuple[str, str]] = []
+        if best_positive:
+            rows.append(("Most Significant Positive Movement", best_positive[0]))
+        if best_negative:
+            rows.append(("Most Significant Negative Movement", best_negative[0]))
+        return rows
+
     def _at_a_glance_page(self, parsed: ParsedIntelligenceReport, report_text: str) -> list[Any]:
         metrics = dashboard_metrics(parsed)
         story: list[Any] = []
@@ -541,13 +622,32 @@ class PremiumPDFBuilder:
             ("Overall Status", metrics.get("outlook", "—")),
             ("Health Score", f"{metrics['health_score']}/100" if is_available(metrics.get("health_score")) else ""),
             ("Confidence", metrics.get("confidence", "—")),
+            (
+                "Reporting Period",
+                self.metadata.reporting_period
+                if self.metadata.reporting_period.strip().lower() not in ("", "not specified")
+                else "",
+            ),
             ("Documents", metrics.get("documents", "—")),
+            *self._significant_movement_rows(),
+            ("Highest-Priority Risk", self._first_bullet_title(parsed, "Risks & Issues")),
+            ("Strongest Opportunity", self._first_bullet_title(parsed, "Opportunities")),
             ("Critical Risks", metrics.get("key_risks", "—")),
             ("Top Recommendation", metrics.get("priority", "—")),
             ("Estimated Reading Time", f"{estimated_reading_minutes(report_text)} minutes"),
             ("AI Insight", first_ai_insight(parsed)),
         ]
-        glance_rows = [[label, value] for label, value in candidate_rows if is_available(value)]
+        available_rows = [(label, value) for label, value in candidate_rows if is_available(value)]
+        glance_label_white = ParagraphStyle(
+            "GlanceLabelWhite", parent=self.styles["glance_label"], textColor=colors.white
+        )
+        glance_rows = [
+            # The first row is styled as a highlighted "hero" row (white
+            # text on a blue background, set via TableStyle below) — its
+            # label needs the white variant, not the standard muted one.
+            [Paragraph(escape_xml(label), glance_label_white if index == 0 else self.styles["glance_label"]), value]
+            for index, (label, value) in enumerate(available_rows)
+        ]
 
         table = Table(glance_rows, colWidths=[2.0 * inch, 4.3 * inch])
         table.setStyle(

@@ -8,11 +8,13 @@ from __future__ import annotations
 
 from services.report_qc_service import (
     QCIssue,
+    apply_deterministic_corrections,
     _check_chart_consistency,
     _check_citation_consistency,
     check_direction_consistency,
     _check_document_coverage,
     _check_duplicate_content,
+    _check_endpoint_value_sentiment,
     _check_evidence_leaks_into_narrative,
     _check_growth_terminology,
     _check_no_generic_metric_titles,
@@ -718,3 +720,202 @@ def test_qc_issue_to_dict():
         "message": "msg",
         "location": "loc",
     }
+
+
+# --- Phase C.1: endpoint-value-anchored sentiment check (the gap that let
+# "Loss ratio improved from 64.0% to 64.3%" ship uncaught in production —
+# check_direction_consistency's percent-anchored sentiment pass never
+# fires when no restated delta percentage appears near the sentence, only
+# the two raw endpoint values) ---
+
+LOSS_RATIO_TABLE_WITH_ROWS = {
+    "title": "Loss ratio",
+    "rows": [
+        {"label": "January 2026", "value": 64.0},
+        {"label": "February 2026", "value": 68.2},
+        {"label": "March 2026", "value": 64.3},
+    ],
+    "calculations": {
+        "total_change": {"from": "January 2026", "to": "March 2026", "absolute": 0.3, "percent": 0.5},
+        "period_over_period": [
+            {"from": "January 2026", "to": "February 2026", "absolute": 4.2, "percent": 6.6},
+            {"from": "February 2026", "to": "March 2026", "absolute": -3.9, "percent": -5.7},
+        ],
+    },
+}
+
+
+def test_endpoint_value_sentiment_catches_the_real_production_bug():
+    """The exact real bug found in a generated Financial Analysis PDF:
+    'improved' stated with only the raw endpoint values restated, no
+    delta percentage — the negative-polarity loss ratio actually rose,
+    a deterioration, not an improvement."""
+
+    narrative = "The loss ratio improved from 64.0% in January to 64.3% in March."
+    issues = _check_endpoint_value_sentiment(narrative, [LOSS_RATIO_TABLE_WITH_ROWS])
+    assert len(issues) == 1
+    assert issues[0].severity == "high"
+    assert "improved" in issues[0].message
+    assert "increased" in issues[0].message
+
+
+def test_endpoint_value_sentiment_passes_when_correctly_describing_improvement():
+    narrative = "The loss ratio improved from 68.2% in February to 64.3% in March."
+    assert _check_endpoint_value_sentiment(narrative, [LOSS_RATIO_TABLE_WITH_ROWS]) == []
+
+
+def test_endpoint_value_sentiment_flags_unclassified_metric():
+    table = {
+        "title": "Digital Sales Share",
+        "rows": [{"label": "January 2026", "value": 20.0}, {"label": "March 2026", "value": 25.0}],
+        "calculations": {},
+    }
+    narrative = "Digital Sales Share improved from 20.0 in January to 25.0 in March."
+    issues = _check_endpoint_value_sentiment(narrative, [table])
+    assert len(issues) == 1
+    assert "not established" in issues[0].message
+
+
+# --- Phase C.1: apply_deterministic_corrections — the correction half of
+# Section 7's "deterministic result -> grounded narrative" requirement.
+# Detecting a contradiction is not enough; it must be fixed before the
+# reader sees it, not shipped with a passive diagnostic alongside it. ---
+
+
+def test_corrections_fix_the_real_claims_incurred_bug():
+    """The exact real bug: '...decreased by 9.3%... dropped from $82.1m
+    in January to $89.7m in March' against a verified +9.3% increase."""
+
+    narrative = (
+        "Claims incurred decreased by 9.3% over the same period. Claims incurred "
+        "dropped from $82.1m in January to $89.7m in March, following a peak in "
+        "February at $91.8m."
+    )
+    corrected, remaining = apply_deterministic_corrections(narrative, [CLAIMS_TABLE])
+
+    assert "increased by 9.3%" in corrected
+    assert "decreased by 9.3%" not in corrected
+    assert "rose from $82.1m" in corrected
+    assert "dropped from $82.1m" not in corrected
+    assert remaining == []
+
+
+def test_corrections_fix_the_real_loss_ratio_bug_including_the_heading_sentence():
+    """The exact real production text: a bolded finding heading and its
+    explanatory sentence both wrongly say 'improved' — both must be
+    corrected, not just whichever happens to be nearest the numbers."""
+
+    narrative = (
+        "Loss ratio improved from 64.0% in January to 64.3% in March, despite a "
+        "temporary increase to 68.2% in February."
+    )
+    corrected, remaining = apply_deterministic_corrections(narrative, [LOSS_RATIO_TABLE_WITH_ROWS])
+
+    assert "worsened" in corrected or "deteriorated" in corrected
+    assert "improved from 64.0" not in corrected
+    assert remaining == []
+
+
+def test_corrections_fix_the_claims_backlog_period_mismatch_bug():
+    """Section 5's exact scenario: a sentence must never combine one
+    period pair's magnitude with a DIFFERENT period pair's direction."""
+
+    backlog_table = {
+        "title": "Claims backlog",
+        "rows": [
+            {"label": "January 2026", "value": 418.0},
+            {"label": "February 2026", "value": 452.0},
+            {"label": "March 2026", "value": 431.0},
+        ],
+        "calculations": {
+            "total_change": {"from": "January 2026", "to": "March 2026", "absolute": 13.0, "percent": 3.1},
+            "period_over_period": [
+                {"from": "January 2026", "to": "February 2026", "absolute": 34.0, "percent": 8.1},
+                {"from": "February 2026", "to": "March 2026", "absolute": -21.0, "percent": -4.6},
+            ],
+        },
+    }
+    narrative = "Claims backlog decreased by 3.1% to 431 cases."
+    corrected, remaining = apply_deterministic_corrections(narrative, [backlog_table])
+
+    assert "increased by 3.1%" in corrected
+    assert "decreased by 3.1%" not in corrected
+    assert remaining == []
+
+
+def test_corrections_leave_already_correct_narrative_unchanged():
+    narrative = "Claims incurred increased by 9.3% between January and March 2026."
+    corrected, remaining = apply_deterministic_corrections(narrative, [CLAIMS_TABLE])
+    assert corrected == narrative
+    assert remaining == []
+
+
+def test_corrections_rewrite_unclassified_metric_to_neutral_wording():
+    table = {
+        "title": "Digital Sales Share",
+        "rows": [{"label": "January 2026", "value": 20.0}, {"label": "March 2026", "value": 25.0}],
+        "calculations": {
+            "total_change": {"from": "January 2026", "to": "March 2026", "absolute": 5.0, "percent": 25.0},
+        },
+    }
+    narrative = "Digital Sales Share improved by 25.0% between January and March."
+    corrected, remaining = apply_deterministic_corrections(narrative, [table])
+
+    assert "increased by 25.0%" in corrected
+    assert "improved" not in corrected
+    assert remaining == []
+
+
+def test_corrections_do_not_touch_unrelated_text():
+    narrative = "Overall performance across the business was mixed this quarter."
+    corrected, remaining = apply_deterministic_corrections(narrative, [CLAIMS_TABLE, LOSS_RATIO_TABLE_WITH_ROWS])
+    assert corrected == narrative
+    assert remaining == []
+
+
+# --- Phase C.1: direction/sentiment word matching must be word-bounded,
+# not a substring check — found via real generated output where "a need
+# for operational improvements" (an unrelated noun) falsely tripped the
+# sentiment word "improvement" for a nearby, correctly-worded figure ---
+
+
+def test_direction_consistency_does_not_false_positive_on_a_containing_word():
+    complaints_table = {
+        "title": "Customer complaints",
+        "calculations": {
+            "total_change": {"from": "January 2026", "to": "March 2026", "absolute": 20.0, "percent": 27.0},
+        },
+    }
+    narrative = (
+        "Customer complaints increased by 27.0% over the quarter. This aligns with the "
+        "27.0% increase in customer complaints, indicating a need for operational "
+        "improvements."
+    )
+    assert check_direction_consistency(narrative, [complaints_table]) == []
+
+
+def test_corrections_do_not_misfire_on_a_containing_word():
+    complaints_table = {
+        "title": "Customer complaints",
+        "calculations": {
+            "total_change": {"from": "January 2026", "to": "March 2026", "absolute": 20.0, "percent": 27.0},
+        },
+    }
+    narrative = (
+        "Customer complaints increased by 27.0% over the quarter. This aligns with the "
+        "27.0% increase in customer complaints, indicating a need for operational "
+        "improvements."
+    )
+    corrected, remaining = apply_deterministic_corrections(narrative, [complaints_table])
+    assert corrected == narrative
+    assert remaining == []
+
+
+def test_contains_word_matches_whole_word_not_substring():
+    from services.report_qc_service import _contains_word
+
+    assert _contains_word("a need for operational improvements", ("improvement",)) is False
+    assert _contains_word("the loss ratio improved slightly", ("improved",)) is True
+    assert _contains_word("this trend is increasingly common", ("increase",)) is False
+    assert _contains_word("claims incurred increased sharply", ("increase",)) is False
+    assert _contains_word("claims incurred increased sharply", ("increased",)) is True

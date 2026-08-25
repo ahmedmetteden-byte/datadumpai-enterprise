@@ -48,12 +48,14 @@ def test_executive_summary_sections_are_short_and_omit_conclusion():
     assert "opportunities" not in TEMPLATE_SECTIONS["executive_summary"]
 
 
-def test_analytical_template_ids_cover_every_type_except_executive_summary():
-    """Executive Summary is the one report type that stays text-only —
-    every other type (including Management Report and Board Report, which
-    reference metric trends in their own prose) gets charts."""
+def test_analytical_template_ids_are_exactly_the_three_data_heavy_types():
+    """Phase C.1: Executive Summary, Board Report, and Management Report
+    are narrative types by design and must never get chart images —
+    only Financial Analysis, Risk Assessment, and Full Report do."""
 
-    assert ANALYTICAL_TEMPLATE_IDS == ALL_TEMPLATE_IDS - {"executive_summary"}
+    assert ANALYTICAL_TEMPLATE_IDS == {"financial_analysis", "risk_assessment", "full_report"}
+    for narrative_type in ("executive_summary", "board_report", "management_report"):
+        assert narrative_type not in ANALYTICAL_TEMPLATE_IDS
 
 
 def test_strip_wrapping_code_fence_removes_markdown_fence():

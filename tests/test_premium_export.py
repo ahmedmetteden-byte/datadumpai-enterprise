@@ -506,6 +506,101 @@ def test_build_premium_docx_handles_real_spa_format_report_without_crashing():
     assert docx_bytes.startswith(b"PK")
 
 
+def test_build_premium_pdf_at_a_glance_shows_deterministic_movement_and_risk_rows():
+    """Phase C.1, Section 12: At a Glance must surface real deterministic
+    content (most significant positive/negative movement, the top risk
+    and opportunity bullet) when the export layer is given the metric
+    tables and report plan report generation already computed — not just
+    a document count and a reading-time estimate."""
+
+    import io
+
+    from PyPDF2 import PdfReader
+
+    metric_tables = [
+        {
+            "title": "Gross Premium",
+            "calculations": {
+                "comparison": {
+                    "first_to_latest_interpretation": "improvement",
+                    "first_to_latest_percentage_change": 97.4,
+                }
+            },
+        },
+        {
+            "title": "Gross Claims",
+            "calculations": {
+                "comparison": {
+                    "first_to_latest_interpretation": "deterioration",
+                    "first_to_latest_percentage_change": 51.3,
+                }
+            },
+        },
+    ]
+    report_plan = {
+        "ranked_findings": [
+            {"label": "Gross Premium"},
+            {"label": "Gross Claims"},
+        ]
+    }
+
+    pdf_bytes = build_premium_pdf(
+        report_text=SPA_REPORT,
+        metadata=PremiumExportMetadata(
+            project_name="Q4 Revenue Review",
+            report_name="Q4 Revenue Report",
+            reporting_period="Q4 2024",
+            source_documents=["report.xlsx"],
+            pack_type="executive",
+            metric_tables=metric_tables,
+            report_plan=report_plan,
+        ),
+    )
+    raw_pdf_text = "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(pdf_bytes)).pages)
+    # A long At a Glance label now wraps onto two lines inside its table
+    # cell (Phase C.1 fix for the overlap this test caught originally) —
+    # extracted text carries a newline at the wrap point, so compare
+    # against a whitespace-normalized copy rather than the raw text.
+    pdf_text = " ".join(raw_pdf_text.split())
+
+    assert "Most Significant Positive Movement" in pdf_text
+    assert "Gross Premium +97.4%" in pdf_text
+    assert "Most Significant Negative Movement" in pdf_text
+    assert "Gross Claims +51.3%" in pdf_text
+    assert "Highest-Priority Risk" in pdf_text
+    assert "Rising Claims Costs" in pdf_text
+    assert "Strongest Opportunity" in pdf_text
+    assert "Enhanced Claims Management" in pdf_text
+    assert "Reporting Period" in pdf_text
+    assert "Q4 2024" in pdf_text
+
+
+def test_build_premium_pdf_at_a_glance_omits_rows_with_no_deterministic_data():
+    """Without metric_tables/report_plan (a report saved before this
+    field existed), At a Glance must render without crashing and without
+    a placeholder row for the data that isn't available."""
+
+    import io
+
+    from PyPDF2 import PdfReader
+
+    pdf_bytes = build_premium_pdf(
+        report_text=SPA_REPORT,
+        metadata=PremiumExportMetadata(
+            project_name="Q4 Revenue Review",
+            report_name="Q4 Revenue Report",
+            reporting_period="Custom / Ad hoc",
+            source_documents=["report.xlsx"],
+            pack_type="executive",
+        ),
+    )
+    pdf_text = "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(pdf_bytes)).pages)
+
+    assert pdf_bytes.startswith(b"%PDF")
+    assert "Most Significant Positive Movement" not in pdf_text
+    assert "Most Significant Negative Movement" not in pdf_text
+
+
 def test_build_premium_pdf_renders_recommendation_action_clause_not_just_rationale():
     """Report Output Quality Upgrade Step C: a numbered recommendation's
     **Action:** clause was silently dropped by _render_block() (no

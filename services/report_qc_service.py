@@ -238,6 +238,22 @@ def _has_nearby_word(narrative: str, needle: str, words: list[str], window: int 
     return False
 
 
+def _contains_word(text: str, words: tuple[str, ...]) -> bool:
+    """Whether any of `words` appears in `text` as a genuine standalone
+    word — never as a substring of a longer, unrelated word. A plain `in`
+    substring check would let "operational improvements" (a generic noun
+    in a recommendation, nothing to do with any metric's sentiment) trip
+    a check for the sentiment word "improvement" purely because one
+    contains the other as characters — confirmed to produce exactly this
+    false positive against real generated output. Used for the direction/
+    sentiment word lists specifically; the coarser metric-title-word
+    proximity check elsewhere in this module keeps its substring
+    semantics deliberately, since a title word is a much rarer,
+    lower-false-positive-risk string than a common English verb root."""
+
+    return any(re.search(rf"\b{re.escape(word)}\b", text) for word in words)
+
+
 # Phase 3 Step 4, Phase A: direction/sign consistency.
 #
 # Pure direction vocabulary — no business-meaning judgment involved.
@@ -336,8 +352,8 @@ def check_direction_consistency(
                     # already flagged by _check_numerical_consistency.
                     continue
 
-                found_increase = any(word in context for word in _INCREASE_WORDS)
-                found_decrease = any(word in context for word in _DECREASE_WORDS)
+                found_increase = _contains_word(context, _INCREASE_WORDS)
+                found_decrease = _contains_word(context, _DECREASE_WORDS)
                 # Only flag when the window contains ONE direction signal,
                 # not both — a compound sentence describing two different
                 # transitions ("rose 11.8% in February, but decreased in
@@ -349,8 +365,8 @@ def check_direction_consistency(
                 elif found_decrease and not found_increase and percent >= 0:
                     issues.append(_direction_issue(title, formatted, "a decrease", "an increase"))
 
-                found_improved = any(word in context for word in _IMPROVEMENT_WORDS)
-                found_worsened = any(word in context for word in _DETERIORATION_WORDS)
+                found_improved = _contains_word(context, _IMPROVEMENT_WORDS)
+                found_worsened = _contains_word(context, _DETERIORATION_WORDS)
                 if found_improved and not found_worsened:
                     if polarity == POLARITY_NEGATIVE and percent > 0:
                         issues.append(
@@ -375,7 +391,304 @@ def check_direction_consistency(
                         issues.append(_unclassified_sentiment_issue(title, formatted, "worsened"))
 
     issues.extend(_check_endpoint_value_direction(narrative, metric_tables))
+    issues.extend(_check_endpoint_value_sentiment(narrative, metric_tables))
     return issues
+
+
+# ---------------------------------------------------------------------------
+# Phase C.1: deterministic correction (not just detection).
+#
+# check_direction_consistency() above only FLAGS a direction/sentiment
+# contradiction. Section 7's explicit requirement — "deterministic result
+# -> grounded narrative", never "LLM answer -> verification warning" — means
+# a detected contradiction must be corrected before the reader ever sees it,
+# not recorded as a side-channel diagnostic next to the still-wrong text.
+# This section locates the exact offending word (reusing the same
+# proximity/window logic above) and rewrites it in place with the verified
+# value — a surgical single-word substitution, never a rewritten sentence,
+# so there is no new opportunity to introduce a different error.
+# ---------------------------------------------------------------------------
+
+_DIRECTION_WORD_OPPOSITE: dict[str, str] = {
+    "increased": "decreased", "decreased": "increased",
+    "increase": "decrease", "decrease": "increase",
+    "increasing": "decreasing", "decreasing": "increasing",
+    "rose": "fell", "fell": "rose",
+    "rising": "falling", "falling": "rising",
+    "grew": "fell", "growing": "declining",
+    "climbed": "fell", "climbing": "falling",
+    "gained": "lost", "lost": "gained",
+    "surged": "fell", "jumped": "fell",
+    "dropped": "rose", "dropping": "rising",
+    "declined": "rose", "declining": "rising",
+    "shrank": "grew", "slipped": "rose",
+}
+
+_SENTIMENT_WORD_OPPOSITE: dict[str, str] = {
+    "improved": "worsened", "worsened": "improved",
+    "improvement": "deterioration", "deterioration": "improvement",
+    "improving": "worsening", "worsening": "improving",
+    "deteriorated": "improved",
+}
+
+
+def _neutral_word_for_percent(stated_word: str, percent: float) -> str:
+    """The correct neutral increase/decrease word (matching the stated
+    word's grammatical form) for an unclassified-polarity metric, where
+    'improved'/'worsened' language is never allowed regardless of sign."""
+
+    increase = percent >= 0
+    if stated_word in ("improvement", "deterioration"):
+        return "increase" if increase else "decrease"
+    if stated_word in ("improving", "worsening"):
+        return "increasing" if increase else "decreasing"
+    return "increased" if increase else "decreased"
+
+
+def _swap_case(replacement: str, original: str) -> str:
+    """Preserve a sentence-leading capital on the replacement word — a
+    correction must never silently lowercase the start of a sentence."""
+
+    if original[:1].isupper():
+        return replacement[:1].upper() + replacement[1:]
+    return replacement
+
+
+def _find_word_span(
+    text: str, start: int, end: int, words: tuple[str, ...]
+) -> tuple[int, int] | None:
+    """The first occurrence (by position) of any of `words` within
+    text[start:end], word-bounded and case-insensitive, as an absolute
+    (start, end) span in `text` — not a slice, so \\b still sees the real
+    surrounding characters at the window's edges."""
+
+    spans = _find_all_word_spans(text, start, end, words)
+    return spans[0] if spans else None
+
+
+def _find_all_word_spans(
+    text: str, start: int, end: int, words: tuple[str, ...]
+) -> list[tuple[int, int]]:
+    """Every occurrence of any of `words` within text[start:end] — a
+    bolded finding heading immediately followed by an explanatory
+    sentence commonly restates the same (possibly wrong) claim twice in
+    one window ("**Loss ratio improved slightly...** The loss ratio
+    improved from 64.0%..."); once the window is confirmed to contain
+    only one semantic class of word (the caller's job), every occurrence
+    of it is making the same claim and must be corrected, not just
+    whichever one happens to come first."""
+
+    pattern = re.compile(
+        "|".join(rf"\b{re.escape(word)}\b" for word in words), re.IGNORECASE
+    )
+    return [(m.start(), m.end()) for m in pattern.finditer(text, start, end)]
+
+
+def _apply_text_corrections(text: str, corrections: list[tuple[int, int, str]]) -> str:
+    """Apply a batch of (start, end, replacement) substitutions right-to-
+    left so earlier offsets stay valid, dropping any span that overlaps
+    one already kept (a second correction landing on the same word means
+    the same contradiction was found via two different routes, not two
+    separate fixes needed)."""
+
+    if not corrections:
+        return text
+
+    kept: list[tuple[int, int, str]] = []
+    kept_spans: list[tuple[int, int]] = []
+    for start, end, replacement in sorted(corrections, key=lambda item: item[0]):
+        if any(start < s_end and end > s_start for s_start, s_end in kept_spans):
+            continue
+        kept_spans.append((start, end))
+        kept.append((start, end, replacement))
+
+    result = text
+    for start, end, replacement in sorted(kept, key=lambda item: item[0], reverse=True):
+        result = result[:start] + replacement + result[end:]
+    return result
+
+
+def apply_deterministic_corrections(
+    narrative: str, metric_tables: list[dict[str, Any]]
+) -> tuple[str, list[QCIssue]]:
+    """Rewrite every direction/sentiment contradiction check_direction_
+    consistency() can detect, in place, using the verified calculation —
+    the deterministic-correction half of Section 7's "deterministic
+    result -> grounded narrative" requirement. Mirrors check_direction_
+    consistency()'s exact matching logic so every contradiction it can
+    find, this can fix; anything it can't find (e.g. a paraphrase with no
+    literal figure or direction word) is naturally left uncorrected too.
+
+    Returns (corrected_narrative, remaining_issues) — remaining_issues is
+    what check_direction_consistency finds AFTER corrections are applied.
+    This should normally be empty; callers should still surface it if
+    not, rather than assume every contradiction was fixable."""
+
+    corrections: list[tuple[int, int, str]] = []
+
+    for table in metric_tables:
+        title = str(table.get("title") or "")
+        calculations = table.get("calculations") or {}
+        distinctive_words = _distinctive_title_words(title)
+        if not distinctive_words:
+            continue
+
+        signed_changes: list[float] = []
+        total = calculations.get("total_change") or {}
+        if total.get("percent") is not None:
+            signed_changes.append(float(total["percent"]))
+        for change in calculations.get("period_over_period") or []:
+            if change.get("percent") is not None:
+                signed_changes.append(float(change["percent"]))
+
+        polarity = classify_metric_polarity(title)
+
+        for percent in signed_changes:
+            formatted = f"{abs(percent):.1f}%"
+            for match in re.finditer(re.escape(formatted), narrative):
+                start, end = _line_bounded_window(narrative, match.start(), match.end(), 80)
+                context = narrative[start:end].lower()
+                if not any(word in context for word in distinctive_words):
+                    continue
+
+                found_increase = _contains_word(context, _INCREASE_WORDS)
+                found_decrease = _contains_word(context, _DECREASE_WORDS)
+                if found_increase and not found_decrease and percent < 0:
+                    for span in _find_all_word_spans(narrative, start, end, _INCREASE_WORDS):
+                        original = narrative[span[0]:span[1]]
+                        replacement = _DIRECTION_WORD_OPPOSITE.get(original.lower(), "decreased")
+                        corrections.append((*span, _swap_case(replacement, original)))
+                elif found_decrease and not found_increase and percent >= 0:
+                    for span in _find_all_word_spans(narrative, start, end, _DECREASE_WORDS):
+                        original = narrative[span[0]:span[1]]
+                        replacement = _DIRECTION_WORD_OPPOSITE.get(original.lower(), "increased")
+                        corrections.append((*span, _swap_case(replacement, original)))
+
+                found_improved = _contains_word(context, _IMPROVEMENT_WORDS)
+                found_worsened = _contains_word(context, _DETERIORATION_WORDS)
+                if found_improved and not found_worsened:
+                    for span in _find_all_word_spans(narrative, start, end, _IMPROVEMENT_WORDS):
+                        original = narrative[span[0]:span[1]]
+                        if polarity == POLARITY_NEGATIVE and percent > 0:
+                            replacement = _SENTIMENT_WORD_OPPOSITE.get(original.lower(), "worsened")
+                        elif polarity == POLARITY_POSITIVE and percent < 0:
+                            replacement = _SENTIMENT_WORD_OPPOSITE.get(original.lower(), "worsened")
+                        elif polarity in (POLARITY_UNKNOWN, POLARITY_NEUTRAL):
+                            replacement = _neutral_word_for_percent(original.lower(), percent)
+                        else:
+                            continue
+                        corrections.append((*span, _swap_case(replacement, original)))
+                elif found_worsened and not found_improved:
+                    for span in _find_all_word_spans(narrative, start, end, _DETERIORATION_WORDS):
+                        original = narrative[span[0]:span[1]]
+                        if polarity == POLARITY_NEGATIVE and percent < 0:
+                            replacement = _SENTIMENT_WORD_OPPOSITE.get(original.lower(), "improved")
+                        elif polarity == POLARITY_POSITIVE and percent > 0:
+                            replacement = _SENTIMENT_WORD_OPPOSITE.get(original.lower(), "improved")
+                        elif polarity in (POLARITY_UNKNOWN, POLARITY_NEUTRAL):
+                            replacement = _neutral_word_for_percent(original.lower(), percent)
+                        else:
+                            continue
+                        corrections.append((*span, _swap_case(replacement, original)))
+
+    for table in metric_tables:
+        title = str(table.get("title") or "")
+        rows = table.get("rows") or []
+        if len(rows) < 2:
+            continue
+        distinctive_words = _distinctive_title_words(title)
+        if not distinctive_words:
+            continue
+
+        first_value = float(rows[0]["value"])
+        last_value = float(rows[-1]["value"])
+        first_str = _format_value_for_search(first_value)
+        last_str = _format_value_for_search(last_value)
+        if not first_str or not last_str or first_str == last_str:
+            continue
+
+        for match in _iter_value_occurrences(narrative, first_str):
+            start, end = _line_bounded_window(narrative, match.start(), match.end(), 150)
+            window_lower = narrative[start:end].lower()
+            if last_str not in narrative[start:end]:
+                continue
+            if not any(word in window_lower for word in distinctive_words):
+                continue
+
+            found_increase = _contains_word(window_lower, _INCREASE_WORDS)
+            found_decrease = _contains_word(window_lower, _DECREASE_WORDS)
+            actual_increase = last_value > first_value
+            if found_increase and not found_decrease and not actual_increase:
+                for span in _find_all_word_spans(narrative, start, end, _INCREASE_WORDS):
+                    original = narrative[span[0]:span[1]]
+                    replacement = _DIRECTION_WORD_OPPOSITE.get(original.lower(), "decreased")
+                    corrections.append((*span, _swap_case(replacement, original)))
+            if found_decrease and not found_increase and actual_increase:
+                for span in _find_all_word_spans(narrative, start, end, _DECREASE_WORDS):
+                    original = narrative[span[0]:span[1]]
+                    replacement = _DIRECTION_WORD_OPPOSITE.get(original.lower(), "increased")
+                    corrections.append((*span, _swap_case(replacement, original)))
+
+    for table in metric_tables:
+        title = str(table.get("title") or "")
+        rows = table.get("rows") or []
+        if len(rows) < 2:
+            continue
+        distinctive_words = _distinctive_title_words(title)
+        if not distinctive_words:
+            continue
+
+        first_value = float(rows[0]["value"])
+        last_value = float(rows[-1]["value"])
+        first_str = _format_value_for_search(first_value)
+        last_str = _format_value_for_search(last_value)
+        if not first_str or not last_str or first_str == last_str:
+            continue
+
+        polarity = classify_metric_polarity(title)
+
+        for match in _iter_value_occurrences(narrative, first_str):
+            start, end = _line_bounded_window(narrative, match.start(), match.end(), 150)
+            window = narrative[start:end]
+            if last_str not in window:
+                continue
+            window_lower = window.lower()
+            if not any(word in window_lower for word in distinctive_words):
+                continue
+
+            found_improved = _contains_word(window_lower, _IMPROVEMENT_WORDS)
+            found_worsened = _contains_word(window_lower, _DETERIORATION_WORDS)
+            actual_increase = last_value > first_value
+
+            percent_for_neutral = 1.0 if actual_increase else -1.0
+            if found_improved and not found_worsened:
+                for span in _find_all_word_spans(narrative, start, end, _IMPROVEMENT_WORDS):
+                    original = narrative[span[0]:span[1]]
+                    if polarity == POLARITY_NEGATIVE and actual_increase:
+                        replacement = _SENTIMENT_WORD_OPPOSITE.get(original.lower(), "worsened")
+                    elif polarity == POLARITY_POSITIVE and not actual_increase:
+                        replacement = _SENTIMENT_WORD_OPPOSITE.get(original.lower(), "worsened")
+                    elif polarity in (POLARITY_UNKNOWN, POLARITY_NEUTRAL):
+                        replacement = _neutral_word_for_percent(original.lower(), percent_for_neutral)
+                    else:
+                        continue
+                    corrections.append((*span, _swap_case(replacement, original)))
+            if found_worsened and not found_improved:
+                for span in _find_all_word_spans(narrative, start, end, _DETERIORATION_WORDS):
+                    original = narrative[span[0]:span[1]]
+                    if polarity == POLARITY_NEGATIVE and not actual_increase:
+                        replacement = _SENTIMENT_WORD_OPPOSITE.get(original.lower(), "improved")
+                    elif polarity == POLARITY_POSITIVE and actual_increase:
+                        replacement = _SENTIMENT_WORD_OPPOSITE.get(original.lower(), "improved")
+                    elif polarity in (POLARITY_UNKNOWN, POLARITY_NEUTRAL):
+                        replacement = _neutral_word_for_percent(original.lower(), percent_for_neutral)
+                    else:
+                        continue
+                    corrections.append((*span, _swap_case(replacement, original)))
+
+    corrected = _apply_text_corrections(narrative, corrections)
+    remaining_issues = check_direction_consistency(corrected, metric_tables) if corrections else []
+    return corrected, remaining_issues
 
 
 def _format_value_for_search(value: float) -> str:
@@ -384,6 +697,20 @@ def _format_value_for_search(value: float) -> str:
     cases"; "82.1" stays "82.1"."""
 
     return f"{value:g}"
+
+
+def _iter_value_occurrences(text: str, value_str: str):
+    """Every occurrence of `value_str` in `text` that is a genuine
+    standalone number, not a truncated prefix accidentally embedded in a
+    LONGER decimal — "64" must never match inside "64.3" just because it
+    shares a leading substring (confirmed: a loss ratio series with both
+    a 64.0 and a 64.3 endpoint produced exactly this false match, since
+    _format_value_for_search(64.0) == "64" is literally a prefix of
+    "64.3"). A plain \\b word boundary does not guard against this — "."
+    is itself a non-word character, so "64" already satisfies \\b right
+    before the "." in "64.3"."""
+
+    return re.finditer(re.escape(value_str) + r"(?!\.\d*[1-9])", text)
 
 
 def _check_endpoint_value_direction(
@@ -396,7 +723,18 @@ def _check_endpoint_value_direction(
     above to anchor to, but the contradiction is just as real: 89.7 is
     not less than 82.1. Looks for the series' first and last row values
     both appearing near each other in the narrative, together with a
-    direction word, and compares against the true first-to-last sign."""
+    direction word, and compares against the true first-to-last sign.
+
+    Deliberately first/last only, not every (earlier, later) pair in the
+    series: a version generalized to every pair was tried and reverted
+    (Phase C.1) — in a compound sentence naming 3+ periods, a direction
+    word correctly describing one clause (e.g. "increased ... in
+    February") got misattributed to an unrelated pair whose two values
+    also happened to fall in the same proximity window (e.g. February-to-
+    March), actively flipping a CORRECT word to wrong. That failure mode
+    is worse than this function's known gap (missing an intermediate-
+    period claim with no restated percentage) — a false correction is
+    strictly worse than a missed one."""
 
     issues: list[QCIssue] = []
 
@@ -416,7 +754,7 @@ def _check_endpoint_value_direction(
         if not first_str or not last_str or first_str == last_str:
             continue
 
-        for match in re.finditer(re.escape(first_str), narrative):
+        for match in _iter_value_occurrences(narrative, first_str):
             start, end = _line_bounded_window(narrative, match.start(), match.end(), 150)
             window = narrative[start:end]
             if last_str not in window:
@@ -426,8 +764,8 @@ def _check_endpoint_value_direction(
             if not any(word in window_lower for word in distinctive_words):
                 continue
 
-            found_increase = any(word in window_lower for word in _INCREASE_WORDS)
-            found_decrease = any(word in window_lower for word in _DECREASE_WORDS)
+            found_increase = _contains_word(window_lower, _INCREASE_WORDS)
+            found_decrease = _contains_word(window_lower, _DECREASE_WORDS)
             actual_increase = last_value > first_value
             span = f"{first_str} → {last_str}"
             if found_increase and not found_decrease and not actual_increase:
@@ -436,6 +774,80 @@ def _check_endpoint_value_direction(
             if found_decrease and not found_increase and actual_increase:
                 issues.append(_direction_issue(title, span, "a decrease", "an increase"))
                 break
+
+    return issues
+
+
+def _check_endpoint_value_sentiment(
+    narrative: str, metric_tables: list[dict[str, Any]]
+) -> list[QCIssue]:
+    """The sentiment-word counterpart to _check_endpoint_value_direction()
+    above — catches "Loss ratio improved from 64.0% to 64.3%" (confirmed
+    in a real production export), where check_direction_consistency's
+    percent-proximity pass never fires because no restated delta
+    percentage appears anywhere near the sentence; only the two raw
+    endpoint values do. Same value-matching mechanism, but judges
+    'improved'/'worsened' against polarity + the true endpoint-to-endpoint
+    direction, exactly like the percent-anchored sentiment check does.
+
+    First/last only — see _check_endpoint_value_direction's docstring for
+    why an every-pair generalization was tried and reverted."""
+
+    issues: list[QCIssue] = []
+
+    for table in metric_tables:
+        title = str(table.get("title") or "")
+        rows = table.get("rows") or []
+        if len(rows) < 2:
+            continue
+        distinctive_words = _distinctive_title_words(title)
+        if not distinctive_words:
+            continue
+
+        first_value = float(rows[0]["value"])
+        last_value = float(rows[-1]["value"])
+        first_str = _format_value_for_search(first_value)
+        last_str = _format_value_for_search(last_value)
+        if not first_str or not last_str or first_str == last_str:
+            continue
+
+        polarity = classify_metric_polarity(title)
+
+        for match in _iter_value_occurrences(narrative, first_str):
+            start, end = _line_bounded_window(narrative, match.start(), match.end(), 150)
+            window = narrative[start:end]
+            if last_str not in window:
+                continue
+
+            window_lower = window.lower()
+            if not any(word in window_lower for word in distinctive_words):
+                continue
+
+            found_improved = _contains_word(window_lower, _IMPROVEMENT_WORDS)
+            found_worsened = _contains_word(window_lower, _DETERIORATION_WORDS)
+            actual_increase = last_value > first_value
+            span = f"{first_str} → {last_str}"
+
+            if found_improved and not found_worsened:
+                if polarity == POLARITY_NEGATIVE and actual_increase:
+                    issues.append(_sentiment_issue(title, span, "improved", "increased (a deterioration for this metric)"))
+                    break
+                if polarity == POLARITY_POSITIVE and not actual_increase:
+                    issues.append(_sentiment_issue(title, span, "improved", "decreased (a deterioration for this metric)"))
+                    break
+                if polarity in (POLARITY_UNKNOWN, POLARITY_NEUTRAL):
+                    issues.append(_unclassified_sentiment_issue(title, span, "improved"))
+                    break
+            elif found_worsened and not found_improved:
+                if polarity == POLARITY_NEGATIVE and not actual_increase:
+                    issues.append(_sentiment_issue(title, span, "worsened", "decreased (an improvement for this metric)"))
+                    break
+                if polarity == POLARITY_POSITIVE and actual_increase:
+                    issues.append(_sentiment_issue(title, span, "worsened", "increased (an improvement for this metric)"))
+                    break
+                if polarity in (POLARITY_UNKNOWN, POLARITY_NEUTRAL):
+                    issues.append(_unclassified_sentiment_issue(title, span, "worsened"))
+                    break
 
     return issues
 
