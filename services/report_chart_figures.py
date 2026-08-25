@@ -230,8 +230,24 @@ def _figure_from_visualization_block(block: dict[str, Any]) -> tuple[str, go.Fig
         point_text = [
             value_labels[i] if i in (0, last_idx) else "" for i in range(len(points))
         ]
+        # An edge point's label is pushed toward the chart's interior
+        # (right for the first point, left for the last) so it isn't
+        # clipped by the plot's own left/right boundary. But a fixed
+        # "top" for that push ignores which way the ADJACENT line
+        # segment actually runs — confirmed against a real export: for
+        # an ascending first segment, "top right" sends the label
+        # straight up the rising line's own path, rendering it crossed
+        # out by the stroke. Choosing top vs. bottom based on the local
+        # segment's slope keeps the label on the side the line ISN'T
+        # occupying, regardless of chart size or value range.
+        first_position = "top right"
+        if len(values) > 1 and values[1] >= values[0]:
+            first_position = "bottom right"  # rises away to the right -> label below
+        last_position = "top left"
+        if len(values) > 1 and values[last_idx] < values[last_idx - 1]:
+            last_position = "bottom left"  # arrived via a descent -> label below
         text_positions = [
-            "top right" if i == 0 else "top left" if i == last_idx else "top center"
+            first_position if i == 0 else last_position if i == last_idx else "top center"
             for i in range(len(points))
         ]
         figure = go.Figure()
@@ -358,6 +374,37 @@ def _figure_from_visualization_block(block: dict[str, Any]) -> tuple[str, go.Fig
             return None
         labels = [row.get("risk", "") for row in rows]
         severity = [float(row.get("severity", 0)) for row in rows]
+
+        # A risk matrix is inherently two-dimensional (severity vs.
+        # likelihood) — confirmed against a real export: when the source
+        # data actually carried a likelihood value per risk, this block
+        # was rendering as a plain 1-D bar of severity only, silently
+        # discarding likelihood entirely (it never appeared anywhere in
+        # the export, not a wrong number, but a real loss of
+        # information and a chart mislabeled as a "matrix" when it
+        # wasn't one). Only switch to the scatter rendering when
+        # likelihood data actually exists, so a caller that only ever
+        # supplies severity (the plain bar's original, still-valid use
+        # case) is unaffected.
+        if any(row.get("likelihood") is not None for row in rows):
+            likelihood = [float(row.get("likelihood", 0)) for row in rows]
+            figure = go.Figure(
+                go.Scatter(
+                    x=likelihood,
+                    y=severity,
+                    mode="markers+text",
+                    text=labels,
+                    textposition="top center",
+                    marker={"size": 14, "color": RISK_COLORS[0]},
+                )
+            )
+            figure.update_layout(
+                **chart_layout(title=title),
+                xaxis={"title": "Likelihood"},
+                yaxis={"title": "Severity"},
+            )
+            return title, figure
+
         figure = px.bar(
             x=labels,
             y=severity,

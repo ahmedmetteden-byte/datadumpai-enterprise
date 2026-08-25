@@ -25,6 +25,23 @@ MAX_DOCUMENTS = int(os.getenv("REPORT_RETRIEVAL_MAX_DOCUMENTS", "14"))
 PER_DOCUMENT_CHAR_CAP = int(os.getenv("REPORT_RETRIEVAL_PER_DOCUMENT_CHAR_CAP", "4500"))
 TOTAL_BUDGET_CHARS = int(os.getenv("REPORT_RETRIEVAL_TOTAL_BUDGET_CHARS", "60000"))
 
+# Phase D: the rank+cap scheme above has no floor — with fewer than
+# MAX_DOCUMENTS documents in a workspace, EVERY document survives into the
+# report's evidence regardless of how irrelevant it is to the facet
+# queries, because nothing before the cap ever asks "is this actually
+# relevant" rather than just "is this the best of what's here". Confirmed
+# against real data: a genuinely unrelated HR-policy document scored
+# 0.24-0.27 cosine similarity across every facet query for a financial
+# report, while the report's own real source documents scored 0.36-0.51
+# on the same facets — a wide, consistent gap. This floor is set well
+# below the observed relevant range and well above the observed
+# irrelevant range, with margin on both sides. Applies ONLY to the
+# global relevance-ranking stage below, never to _ensure_document_
+# coverage()'s explicit, opt-in "use every document" guarantee — a user
+# who asks for every document to be used has already overridden
+# relevance as the inclusion criterion.
+MIN_DOCUMENT_RELEVANCE_SCORE = float(os.getenv("REPORT_RETRIEVAL_MIN_DOCUMENT_RELEVANCE_SCORE", "0.30"))
+
 # One query per report facet rather than a single query — a single query
 # biases retrieval toward whichever theme it best matches, reproducing the
 # "clustered from one document" problem the report prompt already warns
@@ -295,17 +312,24 @@ def retrieve_grouped_sources(
             continue
         by_document.setdefault(key, []).append(hit)
 
-    # Rank documents by their single best-scoring chunk, cap how many
-    # distinct documents make it into the report at all. This cap bounds
-    # the global-relevance stage only — the coverage-guarantee stage
-    # below adds explicitly in-scope documents regardless of it.
+    # Rank documents by their single best-scoring chunk, drop anything
+    # below the relevance floor (see MIN_DOCUMENT_RELEVANCE_SCORE), then
+    # cap how many distinct documents make it into the report at all.
+    # Both the floor and the cap bound the global-relevance stage only —
+    # the coverage-guarantee stage below adds explicitly in-scope
+    # documents regardless of either.
     ranked_documents = sorted(
         by_document.items(),
         key=lambda item: max(hit["score"] for hit in item[1]),
         reverse=True,
-    )[:MAX_DOCUMENTS]
+    )
+    ranked_documents = [
+        item for item in ranked_documents
+        if max(hit["score"] for hit in item[1]) >= MIN_DOCUMENT_RELEVANCE_SCORE
+    ][:MAX_DOCUMENTS]
 
     sources: list[dict[str, str]] = []
+    seen_excerpts: set[str] = set()
     remaining_budget = TOTAL_BUDGET_CHARS
 
     for _document_key, hits in ranked_documents:
@@ -316,6 +340,18 @@ def retrieve_grouped_sources(
         excerpt = _assemble_excerpt(hits, budget=remaining_budget)
         if not excerpt:
             continue
+
+        # Phase D: confirmed against real data — the same content indexed
+        # twice under two filenames (e.g. an accidental re-upload) was
+        # being presented as two independent corroborating sources,
+        # inflating stated confidence ("supported by multiple documents")
+        # and citation count for what is really one source counted
+        # twice. An exact-text check is deliberately narrow — it only
+        # catches a genuine duplicate, never a merely-similar document —
+        # so it can't accidentally drop a real second source.
+        if excerpt in seen_excerpts:
+            continue
+        seen_excerpts.add(excerpt)
 
         sources.append({"filename": filename, "excerpt": excerpt})
         remaining_budget -= len(excerpt)

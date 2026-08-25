@@ -299,6 +299,130 @@ def test_line_chart_single_trend_point_is_still_rendered():
     assert result is not None
 
 
+# --- Phase D cleanup: first/last data-point label positioning ---
+#
+# Confirmed against a real export: a fixed "top right" for the first
+# point put its label directly in the path of an ASCENDING first
+# segment's own line stroke (the label and the rising line occupy the
+# same up-right direction from the point), rendering the value crossed
+# out. The fix chooses top vs. bottom for the first/last point based on
+# the LOCAL segment's slope, so the label lands on whichever side the
+# adjacent line segment is NOT occupying. These tests check the
+# renderer's positioning decision (figure.data[0].textposition), not
+# rendered pixel output, per the guidance to avoid brittle
+# pixel-coordinate tests.
+
+
+def _line_chart_positions(points: list[dict], unit: str = "$ million") -> list[str]:
+    block = {
+        "type": "LINE_CHART",
+        "title": "Metric",
+        "data": {"points": points},
+        "x_label": "Period",
+        "unit": unit,
+    }
+    _title, figure = _figure_from_visualization_block(block)
+    return list(figure.data[0].textposition)
+
+
+def test_line_chart_label_position_avoids_an_ascending_first_segment():
+    """The exact reproduced case: values rise sharply from the first
+    point (82.1 -> 91.8 -> 89.7) — the first point's label must be
+    placed on the "bottom" side, away from the rising line, not "top"
+    where it would sit on the stroke."""
+
+    positions = _line_chart_positions(
+        [
+            {"label": "January 2026", "value": 82.1},
+            {"label": "February 2026", "value": 91.8},
+            {"label": "March 2026", "value": 89.7},
+        ]
+    )
+    assert positions[0] == "bottom right"
+    # The final segment descends into the last point (91.8 -> 89.7) —
+    # the incoming line arrives from above, so the label goes below.
+    assert positions[-1] == "bottom left"
+
+
+def test_line_chart_label_position_avoids_a_descending_first_segment():
+    """The mirror case: values fall from the first point. Here "top" IS
+    the clear side (the line descends away to the right), so the
+    original top-right placement remains correct — the fix must not
+    flip labels unconditionally, only when the adjacent segment's slope
+    actually collides with the default side."""
+
+    positions = _line_chart_positions(
+        [
+            {"label": "January 2026", "value": 91.8},
+            {"label": "February 2026", "value": 82.1},
+            {"label": "March 2026", "value": 89.7},
+        ]
+    )
+    assert positions[0] == "top right"
+    # The final segment ascends into the last point (82.1 -> 89.7) —
+    # arrives from below, so "top left" (the default) remains clear.
+    assert positions[-1] == "top left"
+
+
+def test_line_chart_label_position_for_a_two_point_series():
+    """A 2-point series has no "middle" point — first and last are the
+    same two points the slope-aware rule must still handle correctly."""
+
+    rising = _line_chart_positions(
+        [{"label": "January 2026", "value": 100.0}, {"label": "February 2026", "value": 150.0}]
+    )
+    assert rising[0] == "bottom right"
+    assert rising[-1] == "top left"
+
+    falling = _line_chart_positions(
+        [{"label": "January 2026", "value": 150.0}, {"label": "February 2026", "value": 100.0}]
+    )
+    assert falling[0] == "top right"
+    assert falling[-1] == "bottom left"
+
+
+def test_line_chart_label_position_for_small_and_large_value_ranges():
+    """The slope comparison must work the same way regardless of the
+    data's absolute scale — a small range (percentages) and a large
+    range (millions) with the same shape must produce the same
+    first-point placement."""
+
+    small_range = _line_chart_positions(
+        [
+            {"label": "January 2026", "value": 64.0},
+            {"label": "February 2026", "value": 68.2},
+            {"label": "March 2026", "value": 64.3},
+        ],
+        unit="%",
+    )
+    large_range = _line_chart_positions(
+        [
+            {"label": "January 2026", "value": 128.4},
+            {"label": "February 2026", "value": 134.7},
+            {"label": "March 2026", "value": 139.6},
+        ],
+        unit="$ million",
+    )
+    assert small_range[0] == "bottom right"
+    assert large_range[0] == "bottom right"
+
+
+def test_line_chart_first_point_label_stays_legible_at_the_chart_boundary():
+    """The first point sits at (or very near) the y-axis floor, the
+    exact geometry the reported bug involved — even here the label must
+    still be assigned a real, on-chart position rather than being
+    dropped or left empty."""
+
+    positions = _line_chart_positions(
+        [
+            {"label": "January 2026", "value": 82.1},
+            {"label": "February 2026", "value": 82.15},
+        ]
+    )
+    assert positions[0] in {"top right", "bottom right"}
+    assert positions[0] != ""
+
+
 def test_risk_matrix_has_meaningful_axis_labels():
     block = {
         "type": "RISK_MATRIX",
@@ -309,6 +433,32 @@ def test_risk_matrix_has_meaningful_axis_labels():
 
     assert figure.layout.xaxis.title.text == "Risk"
     assert figure.layout.yaxis.title.text == "Severity"
+
+
+def test_risk_matrix_renders_both_dimensions_when_likelihood_is_present():
+    """Phase D: confirmed against a real export — a risk matrix with real
+    likelihood data was rendering as a plain 1-D severity bar, silently
+    dropping likelihood entirely. When likelihood IS present, it must
+    render as a 2-D chart with likelihood on one axis, not disappear."""
+
+    block = {
+        "type": "RISK_MATRIX",
+        "title": "Risk Matrix",
+        "data": {
+            "rows": [
+                {"risk": "Regulatory change", "severity": 4, "likelihood": 1},
+                {"risk": "Claims backlog", "severity": 8, "likelihood": 5},
+            ]
+        },
+    }
+    _title, figure = _figure_from_visualization_block(block)
+
+    assert figure.layout.xaxis.title.text == "Likelihood"
+    assert figure.layout.yaxis.title.text == "Severity"
+    trace = figure.data[0]
+    assert list(trace.x) == [1.0, 5.0]
+    assert list(trace.y) == [4.0, 8.0]
+    assert list(trace.text) == ["Regulatory change", "Claims backlog"]
 
 
 def test_decision_matrix_and_organizational_flow_have_meaningful_x_labels():

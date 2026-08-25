@@ -49,7 +49,18 @@ def strip_inline_markdown(text: str) -> str:
     cleaned = re.sub(r"\*\*([^*]+)\*\*", r"\1", cleaned)
     cleaned = re.sub(r"__([^_]+)__", r"\1", cleaned)
     cleaned = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"\1", cleaned)
-    cleaned = re.sub(r"(?<!_)_([^_]+)_(?!_)", r"\1", cleaned)
+    # CommonMark's "intraword emphasis" rule: a single underscore only
+    # opens/closes emphasis when NOT flanked by a word character on the
+    # outside — this is what stops "foo_bar_baz" from being read as
+    # foo<em>bar</em>baz. Confirmed via real generated PDFs: without this,
+    # a filename like "January_2026_Monthly_Report.docx" got its
+    # underscores stripped as italic markers, and when several filenames
+    # were comma-joined on one "Source:" line, the greedy match spanned
+    # PAST the comma into the next filename entirely, merging two
+    # citations into one garbled string and dropping a trailing
+    # extension. (?<!_) alone only excluded a directly-adjacent
+    # underscore, not an adjacent letter/digit, so it never caught this.
+    cleaned = re.sub(r"(?<!\w)_([^_]+)_(?!\w)", r"\1", cleaned)
     cleaned = cleaned.replace("**", "").replace("__", "").replace("*", "")
     cleaned = re.sub(r"\(\*\*(\d+)\s+of\s+(\d+)\*\*\s*documents\)", r"(\1 of \2 documents)", cleaned, flags=re.I)
     cleaned = re.sub(r"\(\*\*([^*]+)\*\*\)", r"(\1)", cleaned)
@@ -515,23 +526,56 @@ def parse_markdown_blocks(text: str) -> list[MarkdownBlock]:
 
 
 def group_blocks_for_keep_together(blocks: list[MarkdownBlock]) -> list[list[MarkdownBlock]]:
-    """Group finding and recommendation blocks so they stay on one page when possible."""
+    """Group finding and recommendation blocks so they stay on one page when possible.
+
+    A finding/risk/opportunity item is written as a bold-led bullet
+    ("- **Title**") followed by a paragraph and Basis/Confidence/Source
+    label_value lines — never as its own markdown heading. Confirmed via
+    a real generated PDF: because this function previously only started
+    a new group at a `heading` block, an entire section's worth of
+    findings (each one a separate `bullets` block per parse_markdown_
+    blocks, with no heading between them) collapsed into ONE oversized
+    KeepTogether group spanning many findings. A group that large can
+    never fit on one page, so ReportLab's KeepTogether had no page-sized
+    unit left to protect and fell back to splitting wherever the content
+    happened to overflow — landing mid-sentence, or between a finding's
+    evidence caption and its Basis/Confidence/Source lines, with nothing
+    keeping either together.
+
+    Fix: also close the current group when a NEW `bullets` block starts
+    a fresh finding — but only once the group already contains at least
+    one `label_value` block. That guard is what keeps a section heading
+    attached to the FIRST finding below it (no label_value seen yet) —
+    only the boundary BETWEEN one finding's evidence and the next
+    finding's bullet becomes a new group, not every heading-to-bullet
+    transition."""
 
     groups: list[list[MarkdownBlock]] = []
     current: list[MarkdownBlock] = []
+    current_has_evidence = False
 
     for block in blocks:
         if block.block_type == "heading" and block.level >= 4 and current:
             groups.append(current)
             current = [block]
+            current_has_evidence = False
             continue
 
         if block.block_type == "heading" and block.level == 3 and current:
             groups.append(current)
             current = [block]
+            current_has_evidence = False
+            continue
+
+        if block.block_type == "bullets" and current and current_has_evidence:
+            groups.append(current)
+            current = [block]
+            current_has_evidence = False
             continue
 
         current.append(block)
+        if block.block_type == "label_value":
+            current_has_evidence = True
 
     if current:
         groups.append(current)

@@ -776,6 +776,58 @@ def test_endpoint_value_sentiment_flags_unclassified_metric():
     assert "not established" in issues[0].message
 
 
+# --- Phase D: a real generated-report bug where a DIFFERENT metric's bare
+# direction word ("rising claims", no number of its own attached) fell in
+# the same proximity window as this metric's own wrong direction word and
+# tripped the both-directions-present ambiguity guard, letting the real
+# contradiction through uncaught. Fixed via _resolve_competing_signals,
+# which only credits a competing signal toward genuine ambiguity when it
+# has its own nearby numeric value. ---
+
+
+def test_direction_consistency_catches_wrong_word_even_with_unrelated_metric_nearby():
+    """'The loss ratio decreased from 64.0% ... deterioration ... combined
+    with rising claims' — 'rising' describes Claims incurred, not Loss
+    ratio, and has no number of its own nearby. It must not shield the
+    real, wrong 'decreased' (64.0% -> 64.3% is an increase) from being
+    flagged."""
+
+    narrative = (
+        "The loss ratio decreased from 64.0% in January to 64.3% in March, "
+        "reflecting a slight deterioration in profitability. This trend, "
+        "combined with rising claims, suggests a need for tighter cost controls."
+    )
+    issues = check_direction_consistency(narrative, [LOSS_RATIO_TABLE_WITH_ROWS])
+    assert len(issues) == 1
+    assert "a decrease" in issues[0].message
+    assert "an increase" in issues[0].message
+
+
+def test_apply_deterministic_corrections_fixes_wrong_word_with_unrelated_metric_nearby():
+    narrative = (
+        "The loss ratio decreased from 64.0% in January to 64.3% in March, "
+        "reflecting a slight deterioration in profitability. This trend, "
+        "combined with rising claims, suggests a need for tighter cost controls."
+    )
+    corrected, remaining = apply_deterministic_corrections(narrative, [LOSS_RATIO_TABLE_WITH_ROWS])
+    assert "increased from 64.0%" in corrected
+    assert "combined with rising claims" in corrected  # untouched — genuinely correct
+    assert remaining == []
+
+
+def test_direction_consistency_still_allows_genuine_same_metric_compound_with_numbers():
+    """A competing signal that DOES restate its own number for the same
+    metric (a real second leg) must still be treated as ambiguous and
+    left unflagged — the fix must not start flagging legitimate compound
+    sentences just because a number happens to be nearby."""
+
+    narrative = (
+        "The loss ratio increased from 64.0% in January to 68.2% in February "
+        "before decreasing to 64.3% in March."
+    )
+    assert check_direction_consistency(narrative, [LOSS_RATIO_TABLE_WITH_ROWS]) == []
+
+
 # --- Phase C.1: apply_deterministic_corrections — the correction half of
 # Section 7's "deterministic result -> grounded narrative" requirement.
 # Detecting a contradiction is not enough; it must be fixed before the

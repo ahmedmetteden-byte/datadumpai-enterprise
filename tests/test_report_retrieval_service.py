@@ -159,6 +159,69 @@ def test_retrieve_grouped_sources_caps_documents_and_chunks_per_document(monkeyp
     assert result[0]["excerpt"] == "A chunk 1"
 
 
+def test_retrieve_grouped_sources_excludes_documents_below_relevance_floor(monkeypatch):
+    """Phase D: confirmed against real data — a genuinely irrelevant
+    document (an HR policy doc mixed into a financial report request)
+    scored 0.24-0.27 across every facet query, while the report's real
+    source documents scored 0.36-0.51 on the same facets. Before this
+    floor existed, the rank+cap scheme had nothing that excluded a
+    document purely for being irrelevant — with fewer documents than
+    MAX_DOCUMENTS, everything survived regardless of score."""
+
+    monkeypatch.setattr("services.report_retrieval_service.MIN_DOCUMENT_RELEVANCE_SCORE", 0.30)
+    hits = {
+        0: [
+            _hit("c1", 0.4, "doc-a", "relevant.pdf", 0, "Relevant chunk"),
+            _hit("c2", 0.25, "doc-b", "irrelevant.pdf", 0, "Irrelevant chunk"),
+        ],
+    }
+    result = retrieve_grouped_sources(
+        "ws1", ["only query"], embedder=_FakeEmbedder(), qdrant=_FakeQdrant(hits)
+    )
+    assert [source["filename"] for source in result] == ["relevant.pdf"]
+
+
+def test_retrieve_grouped_sources_relevance_floor_does_not_apply_to_coverage_stage(monkeypatch):
+    """A document explicitly guaranteed via the "use every document"
+    coverage stage must still be included even if its score is below the
+    relevance floor — a user who asked for every document to be used has
+    already overridden relevance as the inclusion criterion."""
+
+    monkeypatch.setattr("services.report_retrieval_service.MIN_DOCUMENT_RELEVANCE_SCORE", 0.30)
+    hits_by_query = {0: [_hit("c1", 0.9, "doc-a-id", "a.pdf", 0, "A chunk")]}
+    hits_by_document = {
+        "doc-b-id": [_hit("c2", 0.1, "doc-b-id", "b.pdf", 0, "Low-scoring but explicitly requested")],
+    }
+    qdrant = _FakeQdrant(hits_by_query, hits_by_document)
+    documents = [
+        {"id": "doc-a-id", "filename": "a.pdf", "status": "indexed"},
+        {"id": "doc-b-id", "filename": "b.pdf", "status": "indexed"},
+    ]
+    result = retrieve_grouped_sources(
+        "ws1", ["q1"], embedder=_FakeEmbedder(), qdrant=qdrant, documents=documents
+    )
+    assert {source["filename"] for source in result} == {"a.pdf", "b.pdf"}
+
+
+def test_retrieve_grouped_sources_deduplicates_identical_content_under_different_filenames():
+    """Phase D: confirmed against real data — the same document indexed
+    twice under two filenames (e.g. an accidental re-upload) was being
+    presented as two independent corroborating sources, inflating stated
+    confidence and citation count for what is really one source counted
+    twice. Only the first-ranked copy should survive."""
+
+    hits = {
+        0: [
+            _hit("c1", 0.9, "doc-a", "January_2026_Monthly_Report.docx", 0, "Same content"),
+            _hit("c2", 0.85, "doc-b", "January_2026_Monthly_Report_copy.docx", 0, "Same content"),
+        ],
+    }
+    result = retrieve_grouped_sources(
+        "ws1", ["only query"], embedder=_FakeEmbedder(), qdrant=_FakeQdrant(hits)
+    )
+    assert [source["filename"] for source in result] == ["January_2026_Monthly_Report.docx"]
+
+
 def test_clip_preserves_table_row_newlines_while_collapsing_prose():
     """Regression test for the bug that silently defeated Step 1's
     quantitative analysis: _clip() used to collapse ALL whitespace,

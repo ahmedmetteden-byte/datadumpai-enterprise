@@ -363,6 +363,46 @@ def test_calculation_verified_none_when_answer_never_engages_the_verified_metric
     assert result["notice"] is None
 
 
+def test_calculation_not_verified_when_answer_claims_a_period_with_no_indexed_data(monkeypatch):
+    """Phase D: confirmed live production bug — with only January and
+    March indexed (no February document at all), asked for the
+    January-to-February change, the model answered confidently with
+    "increased by 3.4%" (actually January's OWN reported change versus
+    an unindexed December, relabeled as if it answered the requested
+    span) under a calculationVerified: true badge. The system must not
+    silently present an unverifiable period-pair claim as verified."""
+
+    jan_only_mar_hits = [
+        hit for hit in _fake_hits() if hit["filename"] != "February_2026_Monthly_Report.docx"
+    ]
+    jan_only_mar_documents = [
+        doc for doc in _fake_documents() if doc["filename"] != "February_2026_Monthly_Report.docx"
+    ]
+
+    service, _completions = _service(
+        monkeypatch,
+        hits=jan_only_mar_hits,
+        response_json={
+            "answer": "Claims incurred increased by 3.4% from January to February.",
+            "evidence": "Verified calculation.",
+            "confidence": 0.9,
+            "followUps": [],
+            "citationIndexes": [1],
+        },
+    )
+
+    result = service.answer(
+        workspace_id="ws_test",
+        question="What was the change in claims incurred from January to February?",
+        web_research_enabled=False,
+        documents=jan_only_mar_documents,
+    )
+
+    assert result["calculationVerified"] is False
+    assert result["notice"] is not None
+    assert "caution" in result["notice"].lower()
+
+
 def test_confidence_is_independent_of_calculation_verified(monkeypatch):
     """Confidence and calculationVerified are independent signals — a
     high self-reported confidence is left as the model reported it

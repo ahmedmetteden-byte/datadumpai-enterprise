@@ -8,6 +8,7 @@ from services.report_markdown_renderer import (
     classify_label_value,
     drop_duplicate_leading_heading,
     format_bullet_item,
+    group_blocks_for_keep_together,
     highlight_value_html,
     humanize_filename,
     humanize_source_value,
@@ -40,6 +41,106 @@ def test_strip_inline_markdown_removes_markers():
 
     assert "**" not in cleaned
     assert cleaned == "Confidence: 100% and (3 of 3 documents)"
+
+
+def test_strip_inline_markdown_preserves_underscored_filenames():
+    """Phase D: confirmed in real generated PDFs — a single-underscore
+    filename was being read as italic markup and mangled, and when
+    several such filenames were comma-joined on one Source: line the
+    greedy match spanned across the comma into the next filename,
+    merging two citations and dropping a trailing extension."""
+
+    raw = "January_2026_Monthly_Report.docx, March_2026_Monthly_Report.docx"
+    assert strip_inline_markdown(raw) == raw
+
+
+def test_strip_inline_markdown_still_strips_genuine_italic_underscores():
+    assert strip_inline_markdown("This is _emphasized_ text.") == "This is emphasized text."
+    assert strip_inline_markdown("(_note_) trailing") == "(note) trailing"
+
+
+# --- Phase D cleanup: evidence caption / page-break grouping ---
+#
+# A Key Finding (or Risk/Opportunity item) is written as a bold-led
+# bullet ("- **Title**") followed by a paragraph and Basis/Confidence/
+# Source label_value lines — never as its own markdown heading. Before
+# this fix, group_blocks_for_keep_together() only started a new
+# KeepTogether group at a heading, so an entire section's worth of
+# findings collapsed into ONE oversized group that could never fit on a
+# page — confirmed via a real generated PDF where a finding's own
+# evidence caption ("EVIDENCE") was stranded at the bottom of one page
+# while its Basis/Confidence/Source lines started the next. These tests
+# exercise the renderer's actual grouping decision (what feeds
+# ReportLab's KeepTogether), not page-rendered pixel output, per the
+# guidance to avoid brittle pixel-coordinate tests.
+
+
+def _finding_markdown(title: str, basis: str = "Calculated result") -> str:
+    return (
+        f"- **{title}**  \n"
+        f"Some narrative sentence about {title.lower()}.  \n"
+        f"**Basis:** {basis}  \n"
+        "**Confidence:** High — supported by multiple documents  \n"
+        "**Source:** January_2026_Monthly_Report.docx\n"
+    )
+
+
+def test_keep_together_grouping_keeps_each_findings_evidence_with_its_own_finding():
+    """The regression case: a report section with several findings, none
+    of them under their own markdown heading — exactly the shape real
+    Key Findings/Risks/Opportunities sections use. Each finding's bullet,
+    paragraph, and evidence lines must land in ONE group, and that group
+    must NOT also contain the next finding's content (which is what
+    let the evidence caption drift away from its own data lines when the
+    whole section was one oversized group)."""
+
+    markdown = (
+        "## Key Findings\n\n"
+        + _finding_markdown("Customer retention improved slightly")
+        + "\n"
+        + _finding_markdown("Loss ratio increased slightly")
+        + "\n"
+        + _finding_markdown("Claims backlog declined")
+    )
+
+    blocks = parse_markdown_blocks(markdown)
+    groups = group_blocks_for_keep_together(blocks)
+
+    # One group per finding (the heading rides along with the first).
+    assert len(groups) == 3
+
+    for group in groups:
+        block_types = [b.block_type for b in group]
+        # Every group with a bullet must carry its own full evidence
+        # block with it — the exact failure mode being regression-tested
+        # is a caption (or the block_type carrying it) surviving without
+        # its Basis/Confidence/Source, or vice versa.
+        assert block_types.count("bullets") == 1
+        assert block_types.count("label_value") == 3
+
+    # The finding titles must not bleed into the wrong group.
+    def _bullet_text(group):
+        bullet = next(b for b in group if b.block_type == "bullets")
+        return bullet.items[0]
+
+    assert "Customer retention" in _bullet_text(groups[0])
+    assert "Loss ratio" in _bullet_text(groups[1])
+    assert "Claims backlog" in _bullet_text(groups[2])
+
+
+def test_keep_together_grouping_keeps_heading_with_first_finding_not_isolated():
+    """A section heading must stay attached to the FIRST finding below
+    it rather than becoming its own orphaned one-line group — the new
+    bullet-boundary rule must only fire BETWEEN findings, not between a
+    heading and the finding that follows it."""
+
+    markdown = "## Key Findings\n\n" + _finding_markdown("Only finding")
+    blocks = parse_markdown_blocks(markdown)
+    groups = group_blocks_for_keep_together(blocks)
+
+    assert len(groups) == 1
+    assert groups[0][0].block_type == "heading"
+    assert any(b.block_type == "bullets" for b in groups[0])
 
 
 def test_parse_markdown_blocks_renders_findings_without_hash_symbols():

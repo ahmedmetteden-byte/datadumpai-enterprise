@@ -272,6 +272,60 @@ _DECREASE_WORDS = (
 _IMPROVEMENT_WORDS = ("improved", "improvement", "improving")
 _DETERIORATION_WORDS = ("worsened", "worsening", "deteriorated", "deterioration")
 
+_NUMBER_TOKEN = re.compile(r"\d[\d,]*\.?\d*")
+
+
+def _word_near_number(text: str, words: tuple[str, ...], radius: int = 30) -> bool:
+    """Whether any of `words` appears in `text` (as a genuine standalone
+    word) with a numeric value within `radius` characters of it.
+
+    Used to tell a genuine per-period direction/sentiment claim about
+    THIS metric (which always restates a figure for the leg it
+    describes, e.g. "rose from $82.1m ... before declining to $89.7m")
+    from an unrelated clause that merely happens to share a direction
+    word — confirmed against real generated output: "The loss ratio
+    decreased from 64.0% ... reflecting a slight deterioration ...
+    combined with rising claims" has no number anywhere near "rising",
+    which describes Claims incurred, not Loss ratio. Without this check,
+    that bare, numberless "rising" reads as a second competing signal and
+    trips the both-directions-present ambiguity guard, which lets the
+    sentence's real, wrong "decreased" (for a value that provably went
+    up) through uncorrected."""
+
+    number_spans = [match.span() for match in _NUMBER_TOKEN.finditer(text)]
+    if not number_spans:
+        return False
+    for word in words:
+        for match in re.finditer(rf"\b{re.escape(word)}\b", text):
+            for num_start, num_end in number_spans:
+                if num_start - radius <= match.end() and match.start() <= num_end + radius:
+                    return True
+    return False
+
+
+def _resolve_competing_signals(
+    window: str, found_a: bool, found_b: bool, words_a: tuple[str, ...], words_b: tuple[str, ...]
+) -> tuple[bool, bool]:
+    """When both a signal and its opposite are found in the same window,
+    the caller normally treats this as an ambiguous compound sentence
+    (two legitimate transitions of the same metric) and skips flagging
+    either one. Discount whichever side has no numeric value anywhere
+    near its own occurrence — that side is more likely a different
+    clause about a different metric bleeding into the proximity window
+    than a second, genuine leg of THIS metric's own story. If both sides
+    are numerically grounded (or neither is), leave the ambiguity guard
+    untouched — the existing, deliberately cautious behavior."""
+
+    if not (found_a and found_b):
+        return found_a, found_b
+    a_grounded = _word_near_number(window, words_a)
+    b_grounded = _word_near_number(window, words_b)
+    if a_grounded and not b_grounded:
+        return found_a, False
+    if b_grounded and not a_grounded:
+        return False, found_b
+    return found_a, found_b
+
 
 def _direction_issue(title: str, formatted: str, stated: str, actual: str) -> QCIssue:
     return QCIssue(
@@ -360,6 +414,11 @@ def check_direction_consistency(
                 # March") legitimately has both words near the figure, and
                 # attributing "decreased" to the OTHER clause's number
                 # would be a false positive, not a real contradiction.
+                # But discount a competing word with no number of its own
+                # nearby — see _resolve_competing_signals.
+                found_increase, found_decrease = _resolve_competing_signals(
+                    context, found_increase, found_decrease, _INCREASE_WORDS, _DECREASE_WORDS
+                )
                 if found_increase and not found_decrease and percent < 0:
                     issues.append(_direction_issue(title, formatted, "an increase", "a decrease"))
                 elif found_decrease and not found_increase and percent >= 0:
@@ -367,6 +426,9 @@ def check_direction_consistency(
 
                 found_improved = _contains_word(context, _IMPROVEMENT_WORDS)
                 found_worsened = _contains_word(context, _DETERIORATION_WORDS)
+                found_improved, found_worsened = _resolve_competing_signals(
+                    context, found_improved, found_worsened, _IMPROVEMENT_WORDS, _DETERIORATION_WORDS
+                )
                 if found_improved and not found_worsened:
                     if polarity == POLARITY_NEGATIVE and percent > 0:
                         issues.append(
@@ -392,6 +454,79 @@ def check_direction_consistency(
 
     issues.extend(_check_endpoint_value_direction(narrative, metric_tables))
     issues.extend(_check_endpoint_value_sentiment(narrative, metric_tables))
+    return issues
+
+
+_MONTH_TOKEN = re.compile(
+    r"\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|"
+    r"aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b",
+    re.IGNORECASE,
+)
+
+
+def check_period_availability(
+    narrative: str, metric_tables: list[dict[str, Any]]
+) -> list[QCIssue]:
+    """Catch a period-over-period claim naming a month that has no
+    verified data row for that metric — e.g. "Claims incurred increased
+    by 3.4% from January to February" when no February document was ever
+    indexed for this workspace. The deterministic engine can only ever
+    compute a change between rows it actually has; a claim naming a
+    period outside that set isn't a rounding or wording slip, it's
+    unverifiable and must not be presented as a verified calculation.
+
+    Confirmed against a real production Q&A answer: with only January
+    and March indexed, asked for the January-to-February change, the
+    model answered confidently with "+3.4%" — actually January's OWN
+    reported change versus an unindexed December, relabeled as if it
+    answered the requested span — under a calculationVerified: true
+    badge. Only fires on a sentence naming two or more distinct months
+    for this metric (a genuine period-pair claim), never a bare
+    single-month mention, to avoid flagging a legitimate reference to a
+    month that isn't part of any comparison."""
+
+    issues: list[QCIssue] = []
+
+    for table in metric_tables:
+        title = str(table.get("title") or "")
+        distinctive_words = _distinctive_title_words(title)
+        if not distinctive_words:
+            continue
+
+        rows = table.get("rows") or []
+        available_months = {
+            match.group(0).lower()[:3]
+            for row in rows
+            for match in _MONTH_TOKEN.finditer(str(row.get("label") or ""))
+        }
+        if not available_months:
+            continue
+
+        for sentence in re.split(r"(?<=[.!?])\s+", narrative):
+            lowered = sentence.lower()
+            if not any(word in lowered for word in distinctive_words):
+                continue
+            mentioned_months = {
+                match.group(0).lower()[:3] for match in _MONTH_TOKEN.finditer(sentence)
+            }
+            if len(mentioned_months) < 2:
+                continue
+            missing = sorted(mentioned_months - available_months)
+            if not missing:
+                continue
+            issues.append(
+                QCIssue(
+                    severity="high",
+                    category="period_availability",
+                    message=(
+                        f"The narrative describes a change for {title!r} involving "
+                        f"{', '.join(missing)}, but no verified data exists for that "
+                        f"period — only {', '.join(sorted(available_months))} were available."
+                    ),
+                    location=title,
+                )
+            )
+
     return issues
 
 
@@ -553,6 +688,9 @@ def apply_deterministic_corrections(
 
                 found_increase = _contains_word(context, _INCREASE_WORDS)
                 found_decrease = _contains_word(context, _DECREASE_WORDS)
+                found_increase, found_decrease = _resolve_competing_signals(
+                    context, found_increase, found_decrease, _INCREASE_WORDS, _DECREASE_WORDS
+                )
                 if found_increase and not found_decrease and percent < 0:
                     for span in _find_all_word_spans(narrative, start, end, _INCREASE_WORDS):
                         original = narrative[span[0]:span[1]]
@@ -566,6 +704,9 @@ def apply_deterministic_corrections(
 
                 found_improved = _contains_word(context, _IMPROVEMENT_WORDS)
                 found_worsened = _contains_word(context, _DETERIORATION_WORDS)
+                found_improved, found_worsened = _resolve_competing_signals(
+                    context, found_improved, found_worsened, _IMPROVEMENT_WORDS, _DETERIORATION_WORDS
+                )
                 if found_improved and not found_worsened:
                     for span in _find_all_word_spans(narrative, start, end, _IMPROVEMENT_WORDS):
                         original = narrative[span[0]:span[1]]
@@ -617,6 +758,9 @@ def apply_deterministic_corrections(
 
             found_increase = _contains_word(window_lower, _INCREASE_WORDS)
             found_decrease = _contains_word(window_lower, _DECREASE_WORDS)
+            found_increase, found_decrease = _resolve_competing_signals(
+                window_lower, found_increase, found_decrease, _INCREASE_WORDS, _DECREASE_WORDS
+            )
             actual_increase = last_value > first_value
             if found_increase and not found_decrease and not actual_increase:
                 for span in _find_all_word_spans(narrative, start, end, _INCREASE_WORDS):
@@ -658,6 +802,9 @@ def apply_deterministic_corrections(
 
             found_improved = _contains_word(window_lower, _IMPROVEMENT_WORDS)
             found_worsened = _contains_word(window_lower, _DETERIORATION_WORDS)
+            found_improved, found_worsened = _resolve_competing_signals(
+                window_lower, found_improved, found_worsened, _IMPROVEMENT_WORDS, _DETERIORATION_WORDS
+            )
             actual_increase = last_value > first_value
 
             percent_for_neutral = 1.0 if actual_increase else -1.0
@@ -766,6 +913,9 @@ def _check_endpoint_value_direction(
 
             found_increase = _contains_word(window_lower, _INCREASE_WORDS)
             found_decrease = _contains_word(window_lower, _DECREASE_WORDS)
+            found_increase, found_decrease = _resolve_competing_signals(
+                window_lower, found_increase, found_decrease, _INCREASE_WORDS, _DECREASE_WORDS
+            )
             actual_increase = last_value > first_value
             span = f"{first_str} → {last_str}"
             if found_increase and not found_decrease and not actual_increase:
@@ -825,6 +975,9 @@ def _check_endpoint_value_sentiment(
 
             found_improved = _contains_word(window_lower, _IMPROVEMENT_WORDS)
             found_worsened = _contains_word(window_lower, _DETERIORATION_WORDS)
+            found_improved, found_worsened = _resolve_competing_signals(
+                window_lower, found_improved, found_worsened, _IMPROVEMENT_WORDS, _DETERIORATION_WORDS
+            )
             actual_increase = last_value > first_value
             span = f"{first_str} → {last_str}"
 
@@ -1345,6 +1498,7 @@ def run_qc_pass(
     issues: list[QCIssue] = []
     issues.extend(_check_numerical_consistency(narrative, metric_tables or []))
     issues.extend(check_direction_consistency(narrative, metric_tables or []))
+    issues.extend(check_period_availability(narrative, metric_tables or []))
     issues.extend(_check_no_implausible_ungrounded_percentages(narrative, metric_tables or []))
     issues.extend(_check_no_generic_metric_titles(metric_tables or []))
     issues.extend(_check_citation_consistency(narrative, source_documents))

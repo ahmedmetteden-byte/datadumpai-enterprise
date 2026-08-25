@@ -23,7 +23,7 @@ from services.quantitative_analysis_service import (
     format_metrics_for_evidence,
     render_movement_classification_answer,
 )
-from services.report_qc_service import apply_deterministic_corrections
+from services.report_qc_service import apply_deterministic_corrections, check_period_availability
 from services.report_retrieval_service import retrieve_grouped_sources
 from services.web_search_service import WebSearchService
 
@@ -238,6 +238,14 @@ class IntelligenceRagService:
         corrected_text, remaining_issues = apply_deterministic_corrections(
             answer_text, metric_tables
         )
+        # A period-availability problem (e.g. a claimed January-to-February
+        # change when no February data was ever indexed) has no word to
+        # swap — it's not a direction/sentiment slip apply_deterministic_
+        # corrections can fix, it's an unverifiable claim — so it must be
+        # checked separately rather than relying on that function's
+        # internal re-check, which only re-runs check_direction_
+        # consistency and only when a text correction was actually made.
+        remaining_issues = remaining_issues + check_period_availability(corrected_text, metric_tables)
         high_severity = [issue for issue in remaining_issues if issue.severity == "high"]
         if not high_severity:
             return corrected_text, True, None
@@ -395,7 +403,14 @@ class IntelligenceRagService:
             "information the documents can't cover (e.g. current events, "
             "regulatory updates, market data), and note plainly when your answer "
             "relies on the web rather than the workspace. If document and web "
-            "evidence conflict, say so rather than picking one silently. Use "
+            "evidence conflict, say so rather than picking one silently. This "
+            "applies equally between two DOCUMENT blocks: if two workspace "
+            "documents state different values for what appears to be the same "
+            "metric and period (e.g. a preliminary estimate versus an audited "
+            "figure), you MUST surface that discrepancy in your answer — name "
+            "both figures and both sources — even when the question only asks "
+            "for 'the' value and does not mention a conflict. Never silently "
+            "pick one figure over the other. Use "
             "ONLY the numbered evidence blocks — never invent a fact that isn't "
             "in one of them. If the evidence only partially answers the question, "
             "say what's missing rather than padding with generic text. Respond "
