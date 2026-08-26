@@ -594,8 +594,6 @@ PLANS = {
             "pptx_export": False,
             "custom_branding": False,
             "team_sharing": False,
-            "priority_processing": False,
-            "priority_support": False,
             "watermark": True,
         },
         "includes": [
@@ -629,8 +627,6 @@ PLANS = {
             "pptx_export": False,
             "custom_branding": False,
             "team_sharing": False,
-            "priority_processing": False,
-            "priority_support": False,
             "watermark": False,
         },
         "includes": [
@@ -667,8 +663,6 @@ PLANS = {
             "pptx_export": True,
             "custom_branding": True,
             "team_sharing": True,
-            "priority_processing": True,
-            "priority_support": True,
             "watermark": False,
         },
         "includes": [
@@ -680,7 +674,6 @@ PLANS = {
             "AI Assistant with deep context and citations",
             "PDF, Word, PowerPoint, and Markdown exports",
             "Branded reports with your logo and colors",
-            "Priority processing and email support",
         ],
     },
     "enterprise": {
@@ -704,8 +697,6 @@ PLANS = {
             "pptx_export": True,
             "custom_branding": True,
             "team_sharing": True,
-            "priority_processing": True,
-            "priority_support": True,
             "sso": True,
             "admin_dashboard": True,
             "audit_logs": True,
@@ -721,7 +712,6 @@ PLANS = {
             "API access",
             "On-premise deployment",
             "White labeling",
-            "Dedicated support",
         ],
     },
 }

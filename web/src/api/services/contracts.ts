@@ -301,6 +301,15 @@ export interface ProfileService {
   ): Promise<import('@/types/auth').OrganisationMembership[]>;
 }
 
+export interface BrandingService {
+  getLogo(auth?: ServiceAuth): Promise<import('@/types/auth').BrandingLogo>;
+  uploadLogo(
+    file: File,
+    auth?: ServiceAuth,
+  ): Promise<import('@/types/auth').BrandingLogo>;
+  removeLogo(auth?: ServiceAuth): Promise<import('@/types/auth').BrandingLogo>;
+}
+
 export interface BillingService {
   listPlans(auth?: ServiceAuth): Promise<Plan[]>;
   getSummary(auth?: ServiceAuth): Promise<BillingSummary>;
@@ -326,4 +335,5 @@ export interface ServiceContainer {
   intelligence: IntelligenceService;
   profile: ProfileService;
   billing: BillingService;
+  branding: BrandingService;
 }

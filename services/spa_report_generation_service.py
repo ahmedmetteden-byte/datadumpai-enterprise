@@ -26,6 +26,7 @@ from services.report_plan_service import (
     render_plan_for_prompt,
     select_dashboard_items,
 )
+from services.plan_service import PlanService
 from services.report_qc_service import apply_deterministic_corrections, run_qc_pass
 from services.report_retrieval_service import (
     build_facet_queries,
@@ -1058,7 +1059,15 @@ class SpaReportGenerationService:
             executive_summary={"text": _clip(markdown, 500)},
         )
 
-        is_analytical_template = template_id in ANALYTICAL_TEMPLATE_IDS
+        # "Professional charts & trend analysis" is a Professional+ pricing
+        # bullet — Starter reports still get the analytical template's other
+        # sections, just not the generated chart blocks.
+        charts_plan_eligible = PlanService(
+            access_token=self._access_token
+        ).include_professional_charts()
+        is_analytical_template = (
+            template_id in ANALYTICAL_TEMPLATE_IDS and charts_plan_eligible
+        )
         report = apply_visualizations(
             report,
             user_report_type=template["name"],

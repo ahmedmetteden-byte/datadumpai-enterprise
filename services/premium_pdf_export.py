@@ -139,6 +139,11 @@ class PremiumExportMetadata:
     # simply renders "At a Glance" without these rows, same as before.
     metric_tables: list[dict[str, Any]] | None = None
     report_plan: dict[str, Any] | None = None
+    # "Branded reports with your logo" (Professional+): the account's
+    # uploaded logo bytes, used on the cover page in place of the default
+    # DataDumpAI mark. None for every plan that doesn't include custom
+    # branding, or when the account hasn't uploaded one yet.
+    custom_logo_bytes: bytes | None = None
 
 
 class PremiumPDFBuilder:
@@ -402,11 +407,21 @@ class PremiumPDFBuilder:
         story: list[Any] = []
         story.append(Spacer(1, 1.2 * inch))
 
-        logo = self._logo_path()
-
-        if logo:
-            story.append(Image(str(logo), width=1.6 * inch, height=1.6 * inch, kind="proportional"))
+        if self.metadata.custom_logo_bytes:
+            story.append(
+                Image(
+                    BytesIO(self.metadata.custom_logo_bytes),
+                    width=1.6 * inch,
+                    height=1.6 * inch,
+                    kind="proportional",
+                )
+            )
             story.append(Spacer(1, 0.45 * inch))
+        else:
+            logo = self._logo_path()
+            if logo:
+                story.append(Image(str(logo), width=1.6 * inch, height=1.6 * inch, kind="proportional"))
+                story.append(Spacer(1, 0.45 * inch))
 
         story.append(Paragraph("Executive Intelligence Report", self.styles["cover_subtitle"]))
         story.append(Spacer(1, 0.35 * inch))

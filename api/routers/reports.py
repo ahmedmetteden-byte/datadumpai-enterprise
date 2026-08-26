@@ -23,9 +23,11 @@ from api.schemas import (
     ReportTemplateOut,
     SaveReportBody,
 )
+from services.branding_service import BrandingService
 from services.export_service import ExportService
 from services.plan_service import PlanService
 from services.premium_export_service import PremiumExportService, ReportExportContext
+from services.profile_service import ProfileService
 from services.project_service import ProjectService
 from services.report_document import report_data_from_markdown
 from services.report_service import ReportService
@@ -310,12 +312,23 @@ def export_report(
                 detail="PowerPoint export requires the Professional plan or higher.",
             )
 
+        custom_logo_bytes: bytes | None = None
+        if plans.can_use_custom_branding():
+            logo_key = ProfileService(
+                access_token=principal.access_token
+            ).get_branding_logo_key()
+            if logo_key:
+                custom_logo_bytes = BrandingService(
+                    access_token=principal.access_token
+                ).load_logo_bytes(logo_key)
+
         context = ReportExportContext(
             project_id=workspace_id,
             project_name=str(project.get("name") or "Workspace"),
             report=report_data,
             reporting_period=str(report.get("periodName") or "Not specified"),
             show_watermark=plans.show_watermark(),
+            custom_logo_bytes=custom_logo_bytes,
         )
 
         premium = PremiumExportService(

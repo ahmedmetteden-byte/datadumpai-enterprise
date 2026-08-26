@@ -20,6 +20,7 @@ export interface UserProfile {
   organisationName: string;
   memberships: OrganisationMembership[];
   updatedAt?: IsoDateTime;
+  hasBrandingLogo: boolean;
 }
 
 /** Workspace membership scoped to the signed-in user's organisation. */
@@ -50,6 +51,11 @@ export interface UpdateProfileInput {
   fullName?: string;
   company?: string;
   jobTitle?: string;
+}
+
+export interface BrandingLogo {
+  hasLogo: boolean;
+  dataUrl?: string | null;
 }
 
 export type { WorkspaceMembership };

@@ -199,7 +199,6 @@ export const PRICING_PLANS = [
       "AI Assistant with citations",
       "PDF, Word, PowerPoint & Markdown exports",
       "Branded reports with your logo",
-      "Priority processing & support",
     ],
   },
   {
@@ -217,7 +216,6 @@ export const PRICING_PLANS = [
       "API access",
       "Dedicated account manager",
       "Custom deployment options",
-      "SLA & priority support",
       "AI governance controls",
     ],
   },

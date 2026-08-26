@@ -508,6 +508,7 @@ export const UI_COPY = {
   accountMembershipsHint:
     'Workspaces you belong to within your organisation.',
   accountNoMemberships: 'No workspace memberships yet.',
+  accountNavLabel: 'Account settings',
   billingNavLabel: 'Billing',
   billingTitle: 'Billing',
   billingSubtitle: 'Manage your plan, usage, and payment method.',

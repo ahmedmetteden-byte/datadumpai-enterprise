@@ -378,6 +378,14 @@ class UserProfileOut(CamelModel):
     organisation_name: str = ""
     memberships: list[OrganisationMembershipOut] = Field(default_factory=list)
     updated_at: str | None = None
+    has_branding_logo: bool = False
+
+
+class BrandingLogoOut(CamelModel):
+    """Response for uploading/removing the account's custom report logo."""
+
+    has_logo: bool
+    data_url: str | None = None
 
 
 # --- Billing -----------------------------------------------------------

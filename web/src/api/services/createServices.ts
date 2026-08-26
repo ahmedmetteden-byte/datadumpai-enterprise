@@ -5,6 +5,10 @@ import {
   HttpBillingService,
   MockBillingService,
 } from '@/api/services/BillingService';
+import {
+  HttpBrandingService,
+  MockBrandingService,
+} from '@/api/services/BrandingService';
 import { HttpHomeService, MockHomeService } from '@/api/services/HomeService';
 import {
   HttpIntelligenceService,
@@ -53,6 +57,7 @@ export function createServices(): ServiceContainer {
       home: new MockHomeService(workspace, knowledge, report, ai),
       profile,
       billing: new MockBillingService(),
+      branding: new MockBrandingService(),
     };
   }
 
@@ -66,6 +71,7 @@ export function createServices(): ServiceContainer {
     intelligence: new HttpIntelligenceService(),
     profile,
     billing: new HttpBillingService(),
+    branding: new HttpBrandingService(),
   };
 }
 

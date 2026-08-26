@@ -47,3 +47,9 @@ def get_user_profile_json(user_id: str) -> Path:
     """Return the local profile metadata file for one user."""
 
     return get_user_data_root(user_id) / "profile.json"
+
+
+def get_user_branding_logo_path(user_id: str, extension: str) -> Path:
+    """Return the local custom report logo file for one user."""
+
+    return get_user_data_root(user_id) / "branding" / f"logo.{extension}"

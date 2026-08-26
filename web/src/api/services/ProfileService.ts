@@ -40,6 +40,7 @@ function defaultMockProfile(email?: string, fullName?: string): UserProfile {
       role: (index === 0 ? 'owner' : 'admin') as WorkspaceRole,
       userId: mockUser.id,
     })),
+    hasBrandingLogo: false,
   };
 }
 
@@ -196,6 +197,7 @@ export class SupabaseProfileService implements ProfileService {
       organisationName: company || 'Personal',
       memberships,
       updatedAt: profile?.updated_at,
+      hasBrandingLogo: false,
     };
   }
 

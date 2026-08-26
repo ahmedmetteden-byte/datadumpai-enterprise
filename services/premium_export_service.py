@@ -36,6 +36,11 @@ class ReportExportContext:
     # PDF -- callers with plan context (the export API route) pass the
     # real value explicitly.
     show_watermark: bool = True
+    # "Branded reports with your logo" (Professional+): the account's
+    # uploaded logo bytes, or None to fall back to the default DataDumpAI
+    # mark. Callers without plan context (or without an uploaded logo)
+    # simply never set this.
+    custom_logo_bytes: bytes | None = None
 
     @property
     def report_name(self) -> str:
@@ -84,6 +89,7 @@ class PremiumExportService:
                     show_watermark=context.show_watermark,
                     metric_tables=context.metric_tables,
                     report_plan=context.report_plan,
+                    custom_logo_bytes=context.custom_logo_bytes,
                 ),
             )
             filename = f"{self._slugify(context.report_name, 'executive')}.pdf"
@@ -116,6 +122,7 @@ class PremiumExportService:
                     show_watermark=context.show_watermark,
                     metric_tables=context.metric_tables,
                     report_plan=context.report_plan,
+                    custom_logo_bytes=context.custom_logo_bytes,
                 ),
             )
             filename = f"{self._slugify(context.report_name, 'board_pack')}.pdf"
@@ -153,6 +160,7 @@ class PremiumExportService:
                     project_name=context.project_name,
                     report_name=context.report_name,
                     source_documents=context.source_documents,
+                    custom_logo_bytes=context.custom_logo_bytes,
                 ),
             )
             filename = f"{self._slugify(context.report_name, 'presentation')}.pptx"
@@ -192,6 +200,7 @@ class PremiumExportService:
                     reporting_period=context.reporting_period,
                     source_documents=context.source_documents,
                     pack_type="executive",
+                    custom_logo_bytes=context.custom_logo_bytes,
                 ),
             )
             filename = f"{self._slugify(context.report_name, 'executive')}.docx"

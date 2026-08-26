@@ -14,6 +14,7 @@ import {
 import { HomePage } from '@/pages/Home';
 import { KnowledgePage } from '@/pages/Knowledge';
 import { BillingPage, BillingReturnPage } from '@/pages/Billing';
+import { AccountPage } from '@/pages/Account';
 
 function ProtectedApp() {
   return (
@@ -30,6 +31,7 @@ function ProtectedApp() {
             />
             <Route path={ROUTES.billing} element={<BillingPage />} />
             <Route path={ROUTES.billingReturn} element={<BillingReturnPage />} />
+            <Route path={ROUTES.account} element={<AccountPage />} />
             <Route
               path="/memory"
               element={<Navigate to={ROUTES.library} replace />}

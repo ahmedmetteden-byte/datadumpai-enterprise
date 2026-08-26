@@ -150,6 +150,7 @@ class SupabaseProfileRepository:
             "onboarding_step": int(row.get("onboarding_step", 1) or 1),
             "onboarding_completed_at": row.get("onboarding_completed_at"),
             "notification_preferences": prefs,
+            "branding_logo_key": row.get("branding_logo_key", ""),
         }
 
     def save(self, profile: dict[str, Any]) -> None:
@@ -171,6 +172,7 @@ class SupabaseProfileRepository:
                 "notification_preferences",
                 config.DEFAULT_NOTIFICATION_PREFERENCES,
             ),
+            "branding_logo_key": profile.get("branding_logo_key", ""),
         }
         handle_response(
             self._client.table("user_profiles").upsert(row).execute(),

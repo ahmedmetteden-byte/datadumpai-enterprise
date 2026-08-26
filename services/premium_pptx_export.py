@@ -35,6 +35,10 @@ class PresentationExportMetadata:
     project_name: str
     report_name: str
     source_documents: list[str] | None = None
+    # "Branded reports with your logo" (Professional+): see
+    # PremiumExportMetadata.custom_logo_bytes for the same field on the PDF
+    # builder.
+    custom_logo_bytes: bytes | None = None
 
 
 class PremiumPresentationBuilder:
@@ -46,6 +50,14 @@ class PremiumPresentationBuilder:
 
     def _title_slide(self) -> None:
         slide = self.presentation.slides.add_slide(self.presentation.slide_layouts[6])
+
+        if self.metadata.custom_logo_bytes:
+            slide.shapes.add_picture(
+                BytesIO(self.metadata.custom_logo_bytes),
+                Inches(5.92),
+                Inches(0.4),
+                height=Inches(0.7),
+            )
 
         title = slide.shapes.add_textbox(Inches(0.8), Inches(1.2), Inches(11.5), Inches(1))
         frame = title.text_frame

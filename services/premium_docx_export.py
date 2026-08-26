@@ -55,6 +55,10 @@ class DocxExportMetadata:
     reporting_period: str = "Not specified"
     source_documents: list[str] | None = None
     pack_type: str = "executive"
+    # "Branded reports with your logo" (Professional+): see
+    # PremiumExportMetadata.custom_logo_bytes for the same field on the PDF
+    # builder.
+    custom_logo_bytes: bytes | None = None
 
 
 def _set_margins(document: Document) -> None:
@@ -279,16 +283,24 @@ def _append_chart_images(document: Document, chart_data: dict[str, Any]) -> None
 
 
 def _cover_page(document: Document, metadata: DocxExportMetadata) -> None:
-    assets_dir = Path(__file__).resolve().parent.parent / "assets"
-    logo_path = assets_dir / "logo.png"
-    if not logo_path.is_file():
-        logo_path = assets_dir / "datadump-hero-logo.png"
-
-    if logo_path.is_file():
+    if metadata.custom_logo_bytes:
         logo_paragraph = document.add_paragraph()
         logo_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        logo_paragraph.add_run().add_picture(str(logo_path), width=Inches(1.4))
+        logo_paragraph.add_run().add_picture(
+            BytesIO(metadata.custom_logo_bytes), width=Inches(1.4)
+        )
         document.add_paragraph()
+    else:
+        assets_dir = Path(__file__).resolve().parent.parent / "assets"
+        logo_path = assets_dir / "logo.png"
+        if not logo_path.is_file():
+            logo_path = assets_dir / "datadump-hero-logo.png"
+
+        if logo_path.is_file():
+            logo_paragraph = document.add_paragraph()
+            logo_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            logo_paragraph.add_run().add_picture(str(logo_path), width=Inches(1.4))
+            document.add_paragraph()
 
     subtitle = document.add_paragraph("Executive Intelligence Report")
     subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER

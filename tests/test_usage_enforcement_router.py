@@ -13,15 +13,36 @@ import io
 import pytest
 from fastapi import BackgroundTasks, HTTPException, UploadFile
 
+from fastapi.datastructures import Headers
+
 from api.auth_jwt import AuthenticatedPrincipal
 from api.routers.intelligence import check_readiness
 from api.routers.knowledge import upload_knowledge
+from api.routers.me import delete_branding_logo, get_branding_logo, upload_branding_logo
 from api.routers.reports import export_report, generate_report, get_report, list_templates
 from api.routers.workspaces import create_workspace
 from api.schemas import CreateWorkspaceBody, GenerateReportBody
 from services.project_service import ProjectService
 from services.usage_service import UsageService
 from tests.conftest import TEST_USER
+
+# 1x1 transparent PNG — small enough to exercise BrandingService's real
+# validation/storage path without a binary test fixture file.
+_TINY_PNG = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01"
+    b"\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
+
+def _image_upload_file(
+    name: str = "logo.png", content: bytes = _TINY_PNG, content_type: str = "image/png"
+) -> UploadFile:
+    return UploadFile(
+        file=io.BytesIO(content),
+        filename=name,
+        headers=Headers({"content-type": content_type}),
+    )
 
 
 @pytest.fixture
@@ -213,3 +234,42 @@ def test_web_research_readiness_reflects_plan(
     UsageService().set_plan("professional")
     pro_readiness = check_readiness(project["id"], principal, TEST_USER)
     assert pro_readiness.web_research_available is True
+
+
+def test_branding_logo_upload_blocked_on_starter_plan(isolated_env, principal):
+    UsageService().set_plan("starter")
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(upload_branding_logo(_image_upload_file(), principal, TEST_USER))
+    assert exc_info.value.status_code == 403
+
+
+def test_branding_logo_upload_allowed_on_professional_plan(isolated_env, principal):
+    UsageService().set_plan("professional")
+
+    uploaded = asyncio.run(upload_branding_logo(_image_upload_file(), principal, TEST_USER))
+    assert uploaded.has_logo is True
+    assert uploaded.data_url and uploaded.data_url.startswith("data:image/png;base64,")
+
+    fetched = get_branding_logo(principal, TEST_USER)
+    assert fetched.has_logo is True
+
+    removed = delete_branding_logo(principal, TEST_USER)
+    assert removed.has_logo is False
+    assert get_branding_logo(principal, TEST_USER).has_logo is False
+
+
+def test_branding_logo_upload_rejects_non_image_content(isolated_env, principal):
+    UsageService().set_plan("professional")
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            upload_branding_logo(
+                _image_upload_file(
+                    name="logo.txt", content=b"not an image", content_type="text/plain"
+                ),
+                principal,
+                TEST_USER,
+            )
+        )
+    assert exc_info.value.status_code == 400

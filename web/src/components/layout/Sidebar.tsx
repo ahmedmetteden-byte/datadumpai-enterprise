@@ -101,9 +101,20 @@ export function Sidebar({
               onClick={() => {
                 menu.close();
                 onNavigate?.();
-                navigate(ROUTES.billing);
+                navigate(ROUTES.account);
               }}
               className="mt-3 w-full rounded-md bg-white/10 px-3 py-2 text-left text-small text-white transition-colors hover:bg-white/20"
+            >
+              {UI_COPY.accountNavLabel}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                menu.close();
+                onNavigate?.();
+                navigate(ROUTES.billing);
+              }}
+              className="mt-2 w-full rounded-md bg-white/10 px-3 py-2 text-left text-small text-white transition-colors hover:bg-white/20"
             >
               {UI_COPY.billingNavLabel}
             </button>

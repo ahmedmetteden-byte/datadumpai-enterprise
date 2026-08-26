@@ -4,18 +4,22 @@ Current-user profile and organisation membership routes for the React SPA.
 
 from __future__ import annotations
 
+import base64
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
 from api.auth_jwt import AuthenticatedPrincipal
 from api.deps import get_current_user, get_principal, user_request_scope
 from api.schemas import (
+    BrandingLogoOut,
     OrganisationMembershipOut,
     UpdateProfileBody,
     UserProfileOut,
 )
 from models.user import User
+from services.branding_service import BrandingError, BrandingService
+from services.plan_service import PlanService
 from services.profile_service import ProfileService
 from services.project_service import ProjectService
 
@@ -61,6 +65,7 @@ def _to_profile_out(
         organisation_name=company or "Personal",
         memberships=memberships,
         updated_at=str(raw.get("updated_at") or "") or None,
+        has_branding_logo=bool(str(raw.get("branding_logo_key") or "").strip()),
     )
 
 
@@ -110,3 +115,71 @@ def list_my_memberships(
     _current_user: User = Depends(get_current_user),
 ) -> list[OrganisationMembershipOut]:
     return _memberships(principal)
+
+
+@router.post("/branding/logo", response_model=BrandingLogoOut)
+async def upload_branding_logo(
+    file: UploadFile = File(...),
+    principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
+) -> BrandingLogoOut:
+    """Upload the account's custom report logo — Professional+ only."""
+
+    with user_request_scope(principal):
+        plans = PlanService(access_token=principal.access_token)
+        if not plans.can_use_custom_branding():
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                detail="Branded reports require the Professional plan or higher.",
+            )
+
+        content = await file.read()
+        content_type = file.content_type or ""
+        try:
+            storage_key = BrandingService(access_token=principal.access_token).save_logo(
+                content=content, content_type=content_type
+            )
+        except BrandingError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+        ProfileService(access_token=principal.access_token).set_branding_logo_key(storage_key)
+
+    data_url = f"data:{content_type};base64,{base64.b64encode(content).decode('ascii')}"
+    return BrandingLogoOut(has_logo=True, data_url=data_url)
+
+
+@router.get("/branding/logo", response_model=BrandingLogoOut)
+def get_branding_logo(
+    principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
+) -> BrandingLogoOut:
+    with user_request_scope(principal):
+        profile_service = ProfileService(access_token=principal.access_token)
+        storage_key = profile_service.get_branding_logo_key()
+        if not storage_key:
+            return BrandingLogoOut(has_logo=False)
+
+        branding = BrandingService(access_token=principal.access_token)
+        content = branding.load_logo_bytes(storage_key)
+        if not content:
+            return BrandingLogoOut(has_logo=False)
+
+        content_type = branding.content_type_for_key(storage_key)
+
+    data_url = f"data:{content_type};base64,{base64.b64encode(content).decode('ascii')}"
+    return BrandingLogoOut(has_logo=True, data_url=data_url)
+
+
+@router.delete("/branding/logo", response_model=BrandingLogoOut)
+def delete_branding_logo(
+    principal: AuthenticatedPrincipal = Depends(get_principal),
+    _current_user: User = Depends(get_current_user),
+) -> BrandingLogoOut:
+    with user_request_scope(principal):
+        profile_service = ProfileService(access_token=principal.access_token)
+        storage_key = profile_service.get_branding_logo_key()
+        if storage_key:
+            BrandingService(access_token=principal.access_token).delete_logo(storage_key)
+            profile_service.set_branding_logo_key("")
+
+    return BrandingLogoOut(has_logo=False)

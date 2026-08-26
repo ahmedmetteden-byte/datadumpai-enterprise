@@ -1,6 +1,7 @@
 export type {
   AIService,
   BillingService,
+  BrandingService,
   HomeService,
   IntelligenceService,
   KnowledgeService,
@@ -41,3 +42,4 @@ export {
   createProfileService,
 } from './ProfileService';
 export { MockBillingService, HttpBillingService } from './BillingService';
+export { MockBrandingService, HttpBrandingService } from './BrandingService';

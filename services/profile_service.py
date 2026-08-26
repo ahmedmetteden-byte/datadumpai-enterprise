@@ -30,6 +30,7 @@ class ProfileService:
         "onboarding_step": 1,
         "onboarding_completed_at": None,
         "notification_preferences": dict(DEFAULT_NOTIFICATION_PREFERENCES),
+        "branding_logo_key": "",
     }
 
     def __init__(
@@ -85,6 +86,14 @@ class ProfileService:
 
     def get_role(self) -> str:
         return str(self.load().get("role", "user"))
+
+    def get_branding_logo_key(self) -> str:
+        return str(self.load().get("branding_logo_key", "") or "")
+
+    def set_branding_logo_key(self, storage_key: str) -> None:
+        current = self.load()
+        current["branding_logo_key"] = storage_key
+        self._repository.save(current)
 
     def get_notification_preferences(self) -> dict[str, bool]:
         prefs = self.load().get("notification_preferences") or {}

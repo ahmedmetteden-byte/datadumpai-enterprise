@@ -26,6 +26,7 @@ from services.spa_report_generation_service import (
     TEMPLATE_SECTIONS,
     SpaReportGenerationService,
 )
+from services.usage_service import UsageService
 from tests.fixtures.fake_llm import fake_openai_client
 
 FIXTURE_PATH = (
@@ -191,10 +192,13 @@ def test_baseline_metric_derived_chart_survives_markdown_round_trip_and_exports(
 
     project = project_service.create_project("Baseline Chart Round Trip Project")
 
-    # Charts are only generated for analytical report types (see
-    # ANALYTICAL_TEMPLATE_IDS in spa_report_generation_service.py) — this
-    # test is about chart persistence round-tripping, not report-type
-    # gating, so it needs a template that actually produces charts.
+    # Charts are only generated for analytical report types on a plan that
+    # includes "Professional charts & trend analysis" (see
+    # ANALYTICAL_TEMPLATE_IDS / PlanService.include_professional_charts in
+    # spa_report_generation_service.py) — this test is about chart
+    # persistence round-tripping, not plan gating, so it needs a plan and
+    # template that actually produce charts.
+    UsageService().set_plan("professional")
     record, _prompt, _report = _generate_with_fake_llm(
         project, monkeypatch=monkeypatch, template_id="financial_analysis"
     )
@@ -224,6 +228,29 @@ def test_baseline_metric_derived_chart_survives_markdown_round_trip_and_exports(
         chart_export = get_export_chart_images(reconstructed.charts)
         assert chart_export.images
         assert chart_export.images[0][1].startswith(b"\x89PNG")
+
+
+def test_starter_plan_gets_no_charts_on_analytical_report(
+    isolated_env, project_service: ProjectService, monkeypatch
+):
+    """"Professional charts & trend analysis" is a Professional+ pricing
+    bullet — a Starter-plan account generating the same analytical report
+    type (financial_analysis) must not get chart blocks, even though the
+    report type itself (Financial Analysis) is available on Starter."""
+
+    from services.report_document import report_data_from_markdown
+
+    project = project_service.create_project("Starter No Charts Project")
+
+    UsageService().set_plan("starter")
+    record, _prompt, _report = _generate_with_fake_llm(
+        project, monkeypatch=monkeypatch, template_id="financial_analysis"
+    )
+
+    reconstructed = report_data_from_markdown(
+        record["content"], report_type="Financial Analysis", title=record["name"]
+    )
+    assert not (reconstructed.charts.get("visualizations") or [])
 
 
 WRONG_DIRECTION_REPORT = "\n\n".join(
