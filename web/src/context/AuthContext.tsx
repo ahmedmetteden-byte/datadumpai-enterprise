@@ -83,6 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         emailVerified: active.user.emailVerified,
         organisationName: 'Personal',
         memberships: [],
+        hasBrandingLogo: false,
       });
     }
   }, []);
