@@ -1096,7 +1096,7 @@ _PROSE_VERB_PATTERN = re.compile(
     r"(?P<suffix>%|million|billion|bn|m\b|cases?|days?)?"
 )
 
-_REPORTING_PERIOD_PATTERN = re.compile(r"reporting\s+period\s*:\s*([^\n.]+)", re.IGNORECASE)
+_REPORTING_PERIOD_PATTERN = re.compile(r"reporting\s+period\s*:\s*([^\n.]{1,60})", re.IGNORECASE)
 
 _MONTH_YEAR_LABEL = re.compile(
     r"^(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|"
@@ -1107,6 +1107,17 @@ _MONTH_NUMBERS = {
     "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
     "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
 }
+
+
+def _looks_like_period_label(label: str) -> bool:
+    """A genuine document-stated period label ("Q1 2026", "FY2025", "H1
+    2026") is always a handful of short words. Used to reject a
+    _REPORTING_PERIOD_PATTERN match that ran on past the actual period
+    text — e.g. a "Reporting period:" line whose paragraph break collapsed
+    into the following heading and body text during document parsing —
+    rather than ship that runaway match verbatim as a display label."""
+
+    return bool(label) and len(label) <= 30 and len(label.split()) <= 5
 
 
 def _parse_prose_value(primary: str) -> tuple[float | None, str]:
@@ -1252,6 +1263,7 @@ def _document_period_info(
             pass
 
     reporting_period_match = _REPORTING_PERIOD_PATTERN.search(text)
+    clean_period_label: str | None = None
     if reporting_period_match:
         label = reporting_period_match.group(1).strip()
         month_year_match = _MONTH_YEAR_LABEL.match(label)
@@ -1263,12 +1275,22 @@ def _document_period_info(
         # "Q1 2026") — still a genuine document-stated label, just without
         # a cheap deterministic sort key here; fall through to uploaded_at
         # for ordering while a real per-document sort key remains missing.
+        # Only trust it as a display label if it still LOOKS like a period
+        # label rather than a runaway match — when a source document's
+        # paragraph breaks collapse during text extraction (a "Reporting
+        # period:" line running straight into a heading and body text with
+        # no period between them), this regex has nothing to stop at and
+        # captures the whole paragraph, which then shipped verbatim as a
+        # chart axis label in production. A real period label is always a
+        # few short words.
+        if _looks_like_period_label(label):
+            clean_period_label = label
 
     uploaded_at_raw = info.get("uploaded_at")
     if uploaded_at_raw:
         try:
             parsed_dt = datetime.fromisoformat(str(uploaded_at_raw).replace("Z", "+00:00"))
-            label = reporting_period_match.group(1).strip() if reporting_period_match else parsed_dt.strftime("%B %Y")
+            label = clean_period_label or parsed_dt.strftime("%B %Y")
             return parsed_dt, label
         except ValueError:
             pass

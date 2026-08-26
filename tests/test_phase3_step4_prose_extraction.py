@@ -286,6 +286,44 @@ def test_prose_extraction_falls_back_to_reporting_period_text_for_legacy_documen
     assert labels_in_order == ["January 2026", "March 2026"]
 
 
+def test_prose_extraction_rejects_runaway_reporting_period_match():
+    """Confirmed in a real production export: when a source document's
+    paragraph breaks collapse during text extraction, "Reporting period:"
+    runs straight into the next heading and body text with no period
+    between them, and _REPORTING_PERIOD_PATTERN — which only stops at a
+    literal "." or newline — captured the entire following paragraph and
+    shipped it verbatim as a chart axis label. The display label must fall
+    back to the clean uploaded_at-derived month instead of that runaway
+    text, while ordering still works."""
+
+    sources = [
+        {
+            "filename": "legacy_jan.docx",
+            "excerpt": (
+                "Reporting period: January 2026 Executive Summary January closed with "
+                "steady commercial activity and improving customer engagement. "
+                "Occupancy rate: 70%."
+            ),
+        },
+        {
+            "filename": "legacy_mar.docx",
+            "excerpt": (
+                "Reporting period: March 2026 Executive Summary March showed a mixed "
+                "performance. Occupancy rate: 82%."
+            ),
+        },
+    ]
+    document_periods = {
+        "legacy_jan.docx": {"uploaded_at": "2026-01-15T00:00:00Z"},
+        "legacy_mar.docx": {"uploaded_at": "2026-03-15T00:00:00Z"},
+    }
+
+    tables = extract_metric_tables(sources, document_periods=document_periods)
+    occupancy = _tables_by_title(tables)["occupancy rate"]
+    labels_in_order = [row["label"] for row in occupancy["rows"]]
+    assert labels_in_order == ["January 2026", "March 2026"]
+
+
 def test_prose_extraction_falls_back_to_uploaded_at_for_legacy_documents_without_period_text():
     """No period_date AND no "Reporting period:" line at all — the
     lowest-priority fallback (uploaded_at) still allows ordering rather
