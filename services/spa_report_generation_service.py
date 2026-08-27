@@ -1067,7 +1067,13 @@ class SpaReportGenerationService:
         is_analytical_template = (
             template_id in ANALYTICAL_TEMPLATE_IDS and charts_plan_eligible
         )
-        logger.info(
+        # WARNING, not INFO: the app has no logging.basicConfig() anywhere,
+        # so the root logger sits at Python's default WARNING level with no
+        # configured handler — an .info() call here is silently dropped in
+        # production regardless of this module's own logger. Confirmed via
+        # `docker compose logs api | grep "Chart eligibility"` coming back
+        # empty after a real request that should have hit this line.
+        logger.warning(
             "Chart eligibility template_id=%s in_analytical_set=%s plan_id=%s "
             "charts_plan_eligible=%s is_analytical_template=%s",
             template_id,
@@ -1084,7 +1090,7 @@ class SpaReportGenerationService:
             include_charts=is_analytical_template,
             force_generate=is_analytical_template,
         )
-        logger.info(
+        logger.warning(
             "Chart result report_id=%s has_visualizations=%s visualization_count=%s",
             report.metadata.get("template_id"),
             bool((report.charts or {}).get("visualizations")),
