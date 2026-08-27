@@ -4,6 +4,7 @@ McKinsey-grade PDF export for DataDumpAI executive intelligence reports.
 
 from __future__ import annotations
 
+import logging
 import re
 import sys
 from dataclasses import dataclass
@@ -55,6 +56,8 @@ from services.report_markdown_renderer import (
     parse_markdown_blocks,
     strip_inline_markdown,
 )
+
+logger = logging.getLogger(__name__)
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 LOGO_CANDIDATES = (
@@ -495,6 +498,18 @@ class PremiumPDFBuilder:
             )
             story.append(summary_table)
             story.append(Spacer(1, 0.12 * inch))
+        # Diagnostic: report_data.charts confirmed populated (3 visualizations)
+        # all the way through report_data_from_markdown() in the export route,
+        # yet no chart images reach the PDF and no warning from
+        # is_chart_export_available()/render_chart_pngs() appears in logs —
+        # meaning parsed.chart_data (re-extracted from a SECOND
+        # markdown round-trip via context.report_text = report.to_markdown())
+        # is empty by the time it gets here. Logging it directly to confirm.
+        logger.warning(
+            "PDF chart_data at render time: keys=%s viz_count=%s",
+            list(parsed.chart_data.keys()) if parsed.chart_data else None,
+            len((parsed.chart_data or {}).get("visualizations") or []),
+        )
         story.extend(self._chart_story_elements(parsed.chart_data))
 
         # Each heading is kept together with at least its first line of
