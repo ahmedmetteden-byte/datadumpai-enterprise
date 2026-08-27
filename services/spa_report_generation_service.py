@@ -1062,11 +1062,19 @@ class SpaReportGenerationService:
         # "Professional charts & trend analysis" is a Professional+ pricing
         # bullet — Starter reports still get the analytical template's other
         # sections, just not the generated chart blocks.
-        charts_plan_eligible = PlanService(
-            access_token=self._access_token
-        ).include_professional_charts()
+        plan_service = PlanService(access_token=self._access_token)
+        charts_plan_eligible = plan_service.include_professional_charts()
         is_analytical_template = (
             template_id in ANALYTICAL_TEMPLATE_IDS and charts_plan_eligible
+        )
+        logger.info(
+            "Chart eligibility template_id=%s in_analytical_set=%s plan_id=%s "
+            "charts_plan_eligible=%s is_analytical_template=%s",
+            template_id,
+            template_id in ANALYTICAL_TEMPLATE_IDS,
+            plan_service.get_plan_id(),
+            charts_plan_eligible,
+            is_analytical_template,
         )
         report = apply_visualizations(
             report,
@@ -1075,6 +1083,12 @@ class SpaReportGenerationService:
             reporting_period=period["name"],
             include_charts=is_analytical_template,
             force_generate=is_analytical_template,
+        )
+        logger.info(
+            "Chart result report_id=%s has_visualizations=%s visualization_count=%s",
+            report.metadata.get("template_id"),
+            bool((report.charts or {}).get("visualizations")),
+            len((report.charts or {}).get("visualizations") or []),
         )
 
         # Phase C.1: correct a detected direction/sentiment contradiction
