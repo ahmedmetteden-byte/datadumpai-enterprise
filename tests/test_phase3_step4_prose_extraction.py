@@ -292,9 +292,10 @@ def test_prose_extraction_rejects_runaway_reporting_period_match():
     runs straight into the next heading and body text with no period
     between them, and _REPORTING_PERIOD_PATTERN — which only stops at a
     literal "." or newline — captured the entire following paragraph and
-    shipped it verbatim as a chart axis label. The display label must fall
-    back to the clean uploaded_at-derived month instead of that runaway
-    text, while ordering still works."""
+    shipped it verbatim as a chart axis label. The genuine period sits at
+    the front of that runaway capture and must be recovered from there
+    (not discarded down to the uploaded_at fallback — see the next test
+    for why that fallback alone isn't safe here)."""
 
     sources = [
         {
@@ -322,6 +323,60 @@ def test_prose_extraction_rejects_runaway_reporting_period_match():
     occupancy = _tables_by_title(tables)["occupancy rate"]
     labels_in_order = [row["label"] for row in occupancy["rows"]]
     assert labels_in_order == ["January 2026", "March 2026"]
+
+
+def test_prose_extraction_recovers_period_from_runaway_match_even_when_uploaded_same_day():
+    """Confirmed in a real production export: three monthly reports
+    uploaded to the same workspace within minutes of each other (a common
+    real-world pattern — someone sets up a demo/test workspace by
+    uploading several files in one sitting) each had a runaway
+    "Reporting period:" match (see the previous test). An earlier fix
+    correctly rejected the runaway text as a display label but fell all
+    the way back to uploaded_at — which collapsed all three documents
+    onto the SAME label (their shared upload month) instead of each
+    document's own January/February/March reporting period. Three charts
+    then silently rendered with zero images, because
+    report_chart_figures.py's own "don't chart collapsed labels" guard
+    correctly refused to plot three points sharing one x-axis label. The
+    genuine per-document period must be recovered from the front of the
+    runaway match, not lost to a collapision-prone fallback."""
+
+    sources = [
+        {
+            "filename": "jan.docx",
+            "excerpt": (
+                "Reporting period: January 2026 Executive Summary January closed with "
+                "steady commercial activity and improving customer engagement. "
+                "Gross premium: $128.4m."
+            ),
+        },
+        {
+            "filename": "feb.docx",
+            "excerpt": (
+                "Reporting period: February 2026 Executive Summary February delivered "
+                "further premium growth, although claims increased faster than premium. "
+                "Gross premium: $134.7m."
+            ),
+        },
+        {
+            "filename": "mar.docx",
+            "excerpt": (
+                "Reporting period: March 2026 Executive Summary March showed a mixed "
+                "performance. Gross premium: $139.6m."
+            ),
+        },
+    ]
+    # All three uploaded within the same session, same as the real bug.
+    document_periods = {
+        "jan.docx": {"uploaded_at": "2026-08-27T02:00:00Z"},
+        "feb.docx": {"uploaded_at": "2026-08-27T02:00:05Z"},
+        "mar.docx": {"uploaded_at": "2026-08-27T02:00:10Z"},
+    }
+
+    tables = extract_metric_tables(sources, document_periods=document_periods)
+    premium = _tables_by_title(tables)["gross premium"]
+    labels_in_order = [row["label"] for row in premium["rows"]]
+    assert labels_in_order == ["January 2026", "February 2026", "March 2026"]
 
 
 def test_prose_extraction_falls_back_to_uploaded_at_for_legacy_documents_without_period_text():

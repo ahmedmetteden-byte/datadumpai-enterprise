@@ -1103,6 +1103,21 @@ _MONTH_YEAR_LABEL = re.compile(
     r"Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+(\d{4})$",
     re.IGNORECASE,
 )
+# Same month/year shape as _MONTH_YEAR_LABEL but anchored only at the
+# start, not the end — recovers the genuine period from the FRONT of a
+# runaway _REPORTING_PERIOD_PATTERN match ("January 2026 Executive
+# Summary January closed with...") instead of discarding the real period
+# entirely. Confirmed necessary in production: falling all the way back
+# to uploaded_at for a rejected non-conforming label collapsed multiple
+# documents uploaded in the same session onto an identical label (all
+# showing the upload month instead of each document's own reporting
+# month), which then tripped report_chart_figures.py's own "don't chart
+# collapsed labels" guard and silently suppressed every chart.
+_MONTH_YEAR_PREFIX = re.compile(
+    r"^(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|"
+    r"Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+(\d{4})\b",
+    re.IGNORECASE,
+)
 _MONTH_NUMBERS = {
     "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
     "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
@@ -1271,6 +1286,19 @@ def _document_period_info(
             month_key = month_year_match.group(1)[:3].lower()
             year = int(month_year_match.group(2))
             return date(year, _MONTH_NUMBERS[month_key], 1), label
+        # The full capture isn't a clean "Month YYYY" match, but a runaway
+        # capture (paragraph breaks collapsed during extraction) still
+        # starts with the genuine period — recover it from the front
+        # rather than losing it entirely. This is what actually determines
+        # a document's position and label in the vast majority of real
+        # cases; the uploaded_at fallback below is a last resort for when
+        # even this fails.
+        prefix_match = _MONTH_YEAR_PREFIX.match(label)
+        if prefix_match:
+            month_key = prefix_match.group(1)[:3].lower()
+            year = int(prefix_match.group(2))
+            recovered_label = f"{prefix_match.group(1).capitalize()} {prefix_match.group(2)}"
+            return date(year, _MONTH_NUMBERS[month_key], 1), recovered_label
         # A period label exists but isn't a plain "Month YYYY" shape (e.g.
         # "Q1 2026") — still a genuine document-stated label, just without
         # a cheap deterministic sort key here; fall through to uploaded_at
