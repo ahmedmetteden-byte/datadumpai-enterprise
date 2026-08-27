@@ -29,6 +29,7 @@ from services.plan_service import PlanService
 from services.premium_export_service import PremiumExportService, ReportExportContext
 from services.profile_service import ProfileService
 from services.project_service import ProjectService
+from services.report_chart_data import extract_chart_data
 from services.report_document import report_data_from_markdown
 from services.report_service import ReportService
 from services.spa_report_generation_service import (
@@ -297,6 +298,22 @@ def export_report(
         title=str(report.get("name") or "Report"),
         source_documents=list(report.get("sourceDocuments") or []),
         stored=stored,
+    )
+    # Diagnostic (see spa_report_generation_service.py's chart-eligibility
+    # logging): a real Financial Analysis report confirmed generating charts
+    # correctly (visualizations present in the saved markdown's embedded
+    # REPORT_CHARTS block) still exported with zero chart images. Logging
+    # each candidate charts source here to see exactly where between
+    # generation and export the visualizations get dropped.
+    embedded_for_diagnostic = extract_chart_data(content)
+    logger.warning(
+        "Export chart source report_id=%s has_reportData=%s "
+        "stored_viz_count=%s embedded_viz_count=%s final_viz_count=%s",
+        report_id,
+        report.get("reportData") is not None,
+        len((stored.charts or {}).get("visualizations") or []) if stored else None,
+        len(embedded_for_diagnostic.get("visualizations") or []),
+        len((report_data.charts or {}).get("visualizations") or []),
     )
 
     with user_request_scope(principal):
