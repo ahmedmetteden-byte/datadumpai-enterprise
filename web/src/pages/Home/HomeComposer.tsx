@@ -680,10 +680,7 @@ export function HomeComposer() {
         <InlineRequestStatus kind="error" message={error} />
       ) : null}
       {workspaceError ? (
-        <InlineRequestStatus
-          kind="error"
-          message={UI_COPY.homeComposerWorkspaceError}
-        />
+        <InlineRequestStatus kind="error" message={workspaceError} />
       ) : null}
 
       {mode === 'report' && generatedReportId && workspaceId ? (

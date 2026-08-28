@@ -4,6 +4,7 @@ Workspace (project) routes for the product API.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -26,6 +27,8 @@ from api.schemas import (
 from models.user import User
 from services.plan_service import PlanLimitError, PlanService
 from services.project_service import ProjectService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
@@ -54,8 +57,21 @@ def list_workspaces(
     principal: AuthenticatedPrincipal = Depends(get_principal),
     _current_user: User = Depends(get_current_user),
 ) -> list[WorkspaceOut]:
-    with user_request_scope(principal):
-        projects = _svc(principal).get_projects()
+    try:
+        with user_request_scope(principal):
+            projects = _svc(principal).get_projects()
+    except Exception as exc:
+        # Same rationale as api/routers/reports.py's _get_project /
+        # _find_report hardening: this is called 3-4x concurrently on every
+        # page load (useEnsureWorkspace, useWorkspaceList, the workspace
+        # selector), which multiplies the odds of tripping a transient
+        # storage/DB blip -- never let that reach the client as a bare,
+        # unlogged 500 with no detail.
+        logger.exception("Failed to list workspaces for user_id=%s", principal.user.id)
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not load your workspaces right now. Please try again.",
+        ) from exc
     return [
         project_to_workspace(p)
         for p in projects
@@ -69,24 +85,40 @@ def create_workspace(
     principal: AuthenticatedPrincipal = Depends(get_principal),
     _current_user: User = Depends(get_current_user),
 ) -> WorkspaceOut:
-    with user_request_scope(principal):
-        svc = _svc(principal)
-        current_count = sum(1 for p in svc.get_projects() if not _is_archived(p))
-        try:
-            PlanService(access_token=principal.access_token).check_can_create_project(
-                current_count
-            )
-        except PlanLimitError as exc:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    try:
+        with user_request_scope(principal):
+            svc = _svc(principal)
+            current_count = sum(1 for p in svc.get_projects() if not _is_archived(p))
+            try:
+                PlanService(
+                    access_token=principal.access_token
+                ).check_can_create_project(current_count)
+            except PlanLimitError as exc:
+                raise HTTPException(status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
 
-        try:
-            project = svc.create_project(body.name)
-        except ValueError as exc:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-        if body.description:
-            project["description"] = body.description.strip()
-            svc.update_project(project)
-            project = svc.get_project(project["id"])
+            try:
+                project = svc.create_project(body.name)
+            except ValueError as exc:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST, detail=str(exc)
+                ) from exc
+            if body.description:
+                project["description"] = body.description.strip()
+                svc.update_project(project)
+                project = svc.get_project(project["id"])
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # Same rationale as list_workspaces above -- this is the other half
+        # of useEnsureWorkspace's silent-bootstrap path, hit whenever a
+        # brand-new account has no workspace yet.
+        logger.exception(
+            "Failed to create workspace for user_id=%s", principal.user.id
+        )
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not create your workspace right now. Please try again.",
+        ) from exc
     return project_to_workspace(project)
 
 

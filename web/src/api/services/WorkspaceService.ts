@@ -113,35 +113,56 @@ export class MockWorkspaceService implements WorkspaceService {
 }
 
 export class HttpWorkspaceService implements WorkspaceService {
+  // useEnsureWorkspace, useWorkspaceList, and the workspace selector each
+  // call listWorkspaces() independently on page load, firing the same GET
+  // 3-4x concurrently for no reason (and multiplying the odds of tripping a
+  // transient backend blip). Sharing one in-flight promise per token
+  // collapses those into a single network call, same fix as
+  // HttpProfileService.getProfile().
+  private inFlightByToken = new Map<string, Promise<Project[]>>();
+
   async listWorkspaces(auth?: ServiceAuth) {
     const url = '/api/v1/workspaces';
     const token = auth?.accessToken ?? null;
+    const key = token ?? '';
+
+    const existing = this.inFlightByToken.get(key);
+    if (existing) {
+      return existing;
+    }
+
     logAuth('WorkspaceService.listWorkspaces BEFORE', {
       url,
       tokenExists: Boolean(token),
       tokenPrefix: token ? token.slice(0, 20) : null,
     });
-    try {
-      const workspaces = await apiRequest<Project[]>(url, {
-        token,
+
+    const request = apiRequest<Project[]>(url, { token })
+      .then((workspaces) => {
+        logAuth('WorkspaceService.listWorkspaces AFTER', {
+          url,
+          status: 200,
+          responseBody: workspaces,
+        });
+        return workspaces;
+      })
+      .catch((err: unknown) => {
+        logAuth('WorkspaceService.listWorkspaces AFTER (error)', {
+          url,
+          status:
+            err instanceof Error && 'status' in err
+              ? (err as { status: number }).status
+              : 'unknown',
+          responseBody: err instanceof Error ? err.message : String(err),
+        });
+        throw err;
+      })
+      .finally(() => {
+        this.inFlightByToken.delete(key);
       });
-      logAuth('WorkspaceService.listWorkspaces AFTER', {
-        url,
-        status: 200,
-        responseBody: workspaces,
-      });
-      return workspaces;
-    } catch (err) {
-      logAuth('WorkspaceService.listWorkspaces AFTER (error)', {
-        url,
-        status:
-          err instanceof Error && 'status' in err
-            ? (err as { status: number }).status
-            : 'unknown',
-        responseBody: err instanceof Error ? err.message : String(err),
-      });
-      throw err;
-    }
+
+    this.inFlightByToken.set(key, request);
+    return request;
   }
 
   async getWorkspace(workspaceId: string, auth?: ServiceAuth) {
