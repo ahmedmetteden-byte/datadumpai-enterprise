@@ -15,6 +15,7 @@ from typing import Any
 
 from storage.file_store import FileStore
 from core.project_access import assert_project_access
+from core.runtime_investigation import investigation_enabled
 from models.report_data import ReportData
 from services.report_document import report_data_from_storage
 
@@ -69,9 +70,6 @@ class ReportService:
             project_id, filename, access_token=access_token
         )
         store = cls._file_store(access_token)
-
-        if not store.exists(storage_path):
-            return {}
 
         try:
             data = json.loads(store.read_text(storage_path))
@@ -287,44 +285,42 @@ class ReportService:
         cls, project_id: str, *, access_token: str | None = None
     ) -> list[dict]:
         try:
+            cls._require_project_access(project_id, access_token=access_token)
+        except PermissionError:
+            return []
+
+        store = cls._file_store(access_token)
+
+        # One listing call gets every filename AND its byte size (Supabase
+        # Storage reports size in list() metadata) — this used to be a
+        # separate list_files() call followed by a full read_bytes() download
+        # of each report's content just to compute len(), which meant every
+        # home-dashboard load re-downloaded the full text of every report in
+        # every workspace across the network.
+        sized_entries = store.list_files_with_size(project_id, "reports")
+        md_entries = [(name, size) for name, size in sized_entries if name.endswith(".md")]
+
+        if investigation_enabled():
             from core.runtime_investigation import log_report_load
 
-            store = cls._file_store(access_token)
             try:
                 if store._backend == "local":
                     filesystem_path = str(store._local_root(project_id) / "reports")
                 else:
                     filesystem_path = f"{store._user_id}/{project_id}/reports"
-                raw_filenames = [
-                    name for name in store.list_files(project_id, "reports")
-                    if name.endswith(".md")
-                ]
+                log_report_load(
+                    user_id=store._user_id,
+                    project_id=project_id,
+                    filesystem_path=filesystem_path,
+                    report_count=len(md_entries),
+                    filenames=[name for name, _ in md_entries],
+                )
             except Exception:
-                filesystem_path = f"(unresolved:{project_id})"
-                raw_filenames = []
-
-            log_report_load(
-                user_id=store._user_id,
-                project_id=project_id,
-                filesystem_path=filesystem_path,
-                report_count=len(raw_filenames),
-                filenames=raw_filenames,
-            )
-        except Exception:
-            pass
-
-        try:
-            cls._require_project_access(project_id, access_token=access_token)
-        except PermissionError:
-            return []
+                pass
 
         reports: list[dict] = []
-        store = cls._file_store(access_token)
 
-        for filename in store.list_files(project_id, "reports"):
-            if not filename.endswith(".md"):
-                continue
-
+        for filename, size in md_entries:
             if store._backend == "local":
                 storage_path = str(store._local_root(project_id) / "reports" / filename)
             else:
@@ -334,11 +330,6 @@ class ReportService:
                 project_id, filename, access_token=access_token
             )
             report_type = meta.get("report_type") or Path(filename).stem.replace("_", " ").title()
-
-            try:
-                size = len(store.read_bytes(storage_path))
-            except Exception:
-                size = 0
 
             reports.append(
                 {

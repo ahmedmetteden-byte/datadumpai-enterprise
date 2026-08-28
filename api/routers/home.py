@@ -98,12 +98,15 @@ def build_dashboard(
     docs: list[tuple[dict[str, Any], dict[str, Any]]] = []
     reports: list[tuple[dict[str, Any], dict[str, Any]]] = []
     conversations: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    reports_by_project: dict[str, list[dict[str, Any]]] = {}
 
     for project in active:
         project_id = str(project.get("id") or "")
         for document in project.get("documents") or []:
             docs.append((project, document))
-        for report in _workspace_reports(project_id, principal):
+        project_reports = _workspace_reports(project_id, principal)
+        reports_by_project[project_id] = project_reports
+        for report in project_reports:
             reports.append((project, report))
         for conversation in _workspace_conversations(project_id, principal):
             conversations.append((project, conversation))
@@ -207,6 +210,7 @@ def build_dashboard(
         "report_count": len(reports),
         "indexed_percent": indexed_percent,
         "workspace_count": len(active),
+        "reports_by_project": reports_by_project,
     }
 
 
@@ -320,7 +324,9 @@ def get_home(
     indexed = sum(1 for d in docs if _is_indexed(d))
     total = len(docs)
     health_percent = int(round((indexed / total) * 100)) if total else 100
-    selected_reports = _workspace_reports(str(selected.get("id") or ""), principal)
+    # Reuse the fetch build_dashboard() already did for every active project
+    # instead of re-downloading this workspace's reports a second time.
+    selected_reports = dash["reports_by_project"].get(str(selected.get("id") or ""), [])
     awaiting = sum(
         1
         for r in selected_reports

@@ -257,6 +257,47 @@ class FileStore:
             return []
         return sorted(path.name for path in folder.iterdir() if path.is_file())
 
+    def list_files_with_size(
+        self, project_id: str, category: str
+    ) -> list[tuple[str, int]]:
+        """Like list_files, but also returns each file's byte size without
+        downloading its content — Supabase Storage's list() already reports
+        size in per-entry metadata, so callers that only need a size (e.g.
+        dashboard summaries) don't have to pull the whole object across the
+        network just to call len() on it."""
+
+        storage_scope = self._storage_scope(project_id)
+
+        if self._backend == "supabase":
+            prefix = f"{self._user_id}/{storage_scope}/{category}/"
+            client = self._supabase_client()
+            bucket = client.storage.from_(config.SUPABASE_STORAGE_BUCKET)
+            entries_out: list[tuple[str, int]] = []
+            page_size = 100
+            offset = 0
+            while True:
+                entries = bucket.list(prefix, {"limit": page_size, "offset": offset})
+                if not entries:
+                    break
+                for entry in entries:
+                    name = entry.get("name")
+                    if name and not name.endswith("/"):
+                        size = int((entry.get("metadata") or {}).get("size") or 0)
+                        entries_out.append((name, size))
+                if len(entries) < page_size:
+                    break
+                offset += page_size
+            return sorted(entries_out)
+
+        folder = self._local_root(project_id) / category
+        if not folder.exists():
+            return []
+        return sorted(
+            (path.name, path.stat().st_size)
+            for path in folder.iterdir()
+            if path.is_file()
+        )
+
     @contextmanager
     def readable_path(self, storage_key: str) -> Iterator[Path]:
         """Yield a local path suitable for libraries that need filesystem access."""
