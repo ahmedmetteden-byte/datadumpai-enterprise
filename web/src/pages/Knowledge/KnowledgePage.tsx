@@ -83,7 +83,10 @@ export function KnowledgePage() {
       .run(action, {
         loading: UI_COPY.requestLoading,
         success: successMessage ?? UI_COPY.requestSuccess,
-        error: UI_COPY.requestError,
+        // No static `error` override — feedback.run() already falls back to
+        // err.message by default, which is the backend's actual reason
+        // (delete/re-index/tag/upload all share this helper) instead of a
+        // generic message that hides why the action failed.
       })
       .catch(() => {
         /* Error toast includes Retry */

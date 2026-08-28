@@ -77,7 +77,9 @@ export function ReportDetailPage() {
         {
           loading: UI_COPY.requestLoading,
           success: UI_COPY.requestSuccess,
-          error: UI_COPY.reportsExportError,
+          // No static `error` override — feedback.run() falls back to
+          // err.message, the backend's actual detail, instead of a generic
+          // message that hides why the export failed.
         },
       );
     } catch {
@@ -96,7 +98,9 @@ export function ReportDetailPage() {
         {
           loading: UI_COPY.requestLoading,
           success: UI_COPY.reportsSaved,
-          error: UI_COPY.reportsGenerateError,
+          // No static `error` override — feedback.run() falls back to
+          // err.message, the backend's actual detail, instead of a generic
+          // message that hides why the save failed.
         },
       );
       setReport(saved);

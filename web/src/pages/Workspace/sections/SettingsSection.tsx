@@ -63,7 +63,10 @@ export function SettingsSection({
         {
           loading: UI_COPY.requestLoading,
           success: UI_COPY.settingsSaved,
-          error: UI_COPY.settingsSaveError,
+          // No static `error` override — feedback.run() falls back to
+          // err.message, the backend's actual detail, instead of a generic
+          // message that hides why the save failed (and disagrees with the
+          // inline status below, which already shows the real message).
         },
       );
       bumpRevision();
@@ -91,7 +94,10 @@ export function SettingsSection({
         {
           loading: UI_COPY.requestLoading,
           success: UI_COPY.requestSuccess,
-          error: UI_COPY.deleteWorkspaceError,
+          // No static `error` override — feedback.run() falls back to
+          // err.message, the backend's actual detail, instead of a generic
+          // message that hides why deletion failed (and disagrees with the
+          // inline status below, which already shows the real message).
         },
       );
       bumpRevision();

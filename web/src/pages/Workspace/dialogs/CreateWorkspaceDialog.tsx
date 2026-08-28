@@ -46,7 +46,10 @@ export function CreateWorkspaceDialog({
         {
           loading: UI_COPY.requestLoading,
           success: UI_COPY.requestSuccess,
-          error: UI_COPY.createError,
+          // No static `error` override — feedback.run() falls back to
+          // err.message, the backend's actual detail, instead of a generic
+          // message that hides why creation failed (and disagrees with the
+          // inline status below, which already shows the real message).
         },
       );
       bumpRevision();

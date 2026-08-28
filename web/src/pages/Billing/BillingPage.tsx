@@ -63,7 +63,9 @@ export function BillingPage() {
       .run(() => services.billing.cancelAtPeriodEnd({ accessToken }), {
         loading: UI_COPY.requestLoading,
         success: UI_COPY.billingCancelSuccess,
-        error: UI_COPY.billingCancelError,
+        // No static `error` override — feedback.run() falls back to
+        // err.message, the backend's actual reason cancellation failed,
+        // instead of a generic message that hides why.
       })
       .then(reload)
       .catch(() => {
