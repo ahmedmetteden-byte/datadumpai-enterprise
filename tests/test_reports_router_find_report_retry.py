@@ -105,3 +105,60 @@ def test_find_report_retry_gives_up_after_the_full_delay_sequence(
     with pytest.raises(HTTPException) as exc_info:
         get_report(project["id"], "rpt_never_appears", principal, TEST_USER)
     assert exc_info.value.status_code == 404
+
+
+def test_find_report_retries_through_a_transient_listing_exception(
+    isolated_env, project_service: ProjectService, principal, monkeypatch
+):
+    """Regression test for a bug hit in production (2026-08-28): the retry
+    loop only protected against _reports() coming back empty, not against
+    it raising (a transient Storage/DB error). A raise on the first
+    attempt used to abort the whole loop immediately, surfacing a bare,
+    unlogged 500 to the caller even though a plain retry of the same
+    request succeeded a moment later. The loop must now retry through an
+    exception exactly like it already retries through "not found yet"."""
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(reports_router.time, "sleep", lambda _seconds: None)
+    project = project_service.create_project("Transient Error Project")
+
+    body = GenerateReportBody(template_id="executive_summary", period_id="custom")
+    created = generate_report(project["id"], body, principal, TEST_USER)
+
+    real_reports = reports_router._reports
+    calls = {"count": 0}
+
+    def _flaky_reports(workspace_id, principal_arg):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("simulated transient storage error")
+        return real_reports(workspace_id, principal_arg)
+
+    monkeypatch.setattr(reports_router, "_reports", _flaky_reports)
+
+    result = get_report(project["id"], created.id, principal, TEST_USER)
+
+    assert result.id == created.id
+    assert calls["count"] >= 2
+
+
+def test_find_report_raises_a_clean_500_when_listing_never_recovers(
+    isolated_env, project_service: ProjectService, principal, monkeypatch
+):
+    """When every retry attempt raises, the caller must get a proper
+    HTTPException with an honest, logged detail — not a bare unhandled
+    exception (which used to reach the client as a JSON-less 500 with no
+    diagnostic trail in the server logs)."""
+
+    monkeypatch.setattr(reports_router.time, "sleep", lambda _seconds: None)
+    project = project_service.create_project("Always Failing Project")
+
+    def _always_raises(*_args, **_kwargs):
+        raise RuntimeError("simulated persistent storage error")
+
+    monkeypatch.setattr(reports_router, "_reports", _always_raises)
+
+    with pytest.raises(HTTPException) as exc_info:
+        get_report(project["id"], "rpt_whatever", principal, TEST_USER)
+    assert exc_info.value.status_code == 500
+    assert "try again" in exc_info.value.detail.lower()

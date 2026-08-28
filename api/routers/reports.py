@@ -55,6 +55,18 @@ def _get_project(principal: AuthenticatedPrincipal, workspace_id: str) -> dict[s
             project = _svc(principal).get_project(workspace_id)
         except ValueError as exc:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except Exception as exc:
+            # Same rationale as _find_report's exhausted-retry branch: never
+            # let an unexpected storage/DB error reach the client as a bare,
+            # unlogged 500 with no detail -- log it with context and give the
+            # caller an honest, retryable message instead.
+            logger.exception(
+                "Failed to load workspace=%s for report routes", workspace_id
+            )
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Could not load workspace right now. Please try again.",
+            ) from exc
         if project.get("archived_at"):
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Workspace not found.")
         return project
@@ -88,14 +100,50 @@ def _find_report(
     listing (ReportService.get_reports -> FileStore.list_files), which on
     an eventually-consistent storage backend can briefly lag behind a
     write that already succeeded — retry a few times before surfacing a
-    404, rather than failing a report that was, in fact, just created."""
+    404, rather than failing a report that was, in fact, just created.
 
+    _reports() itself can also raise (a transient Storage/DB blip, or now
+    a fast-failing 10s client timeout instead of the old 120s one) rather
+    than just come back empty. That used to abort this loop on the first
+    attempt, skipping every retry and surfacing a bare, unlogged 500 to
+    the caller -- confirmed in production (2026-08-28): a report load
+    failed once, and a plain retry of the identical request immediately
+    succeeded, meaning the underlying listing call was fine on attempt 2
+    but the loop never got there. Retrying through exceptions the same
+    way it already retries through "not found yet" closes that gap."""
+
+    last_error: Exception | None = None
     for delay in (0.0, *_FIND_REPORT_RETRY_DELAYS_SECONDS):
         if delay:
             time.sleep(delay)
-        for report in _reports(workspace_id, principal):
+        try:
+            reports = _reports(workspace_id, principal)
+        except Exception as exc:  # noqa: BLE001 - retried below, logged if exhausted
+            last_error = exc
+            logger.warning(
+                "Transient failure listing reports workspace=%s report_id=%s "
+                "error=%s",
+                workspace_id,
+                report_id,
+                exc,
+            )
+            continue
+        last_error = None
+        for report in reports:
             if str(report.get("id")) == report_id:
                 return report
+    if last_error is not None:
+        logger.exception(
+            "Report lookup failed after %s attempts workspace=%s report_id=%s",
+            len(_FIND_REPORT_RETRY_DELAYS_SECONDS) + 1,
+            workspace_id,
+            report_id,
+            exc_info=last_error,
+        )
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not load report right now. Please try again.",
+        ) from last_error
     raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Report not found.")
 
 
