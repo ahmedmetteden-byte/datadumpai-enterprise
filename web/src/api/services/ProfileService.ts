@@ -97,32 +97,52 @@ export class MockProfileService implements ProfileService {
 }
 
 export class HttpProfileService implements ProfileService {
+  // AuthContext's bootstrap effect and its onAuthStateChange listener both
+  // call getProfile() with the same token within the same tick (Supabase
+  // fires INITIAL_SESSION plus a SIGNED_IN/TOKEN_REFRESHED event on load),
+  // which used to fire the request 2-3x concurrently. Sharing one in-flight
+  // promise per token collapses those into a single network call.
+  private inFlightByToken = new Map<string, Promise<UserProfile>>();
+
   async getProfile(auth?: ServiceAuth): Promise<UserProfile> {
     const url = '/api/v1/me/profile';
     const token = auth?.accessToken ?? null;
+    const key = token ?? '';
+
+    const existing = this.inFlightByToken.get(key);
+    if (existing) {
+      return existing;
+    }
+
     logAuth('ProfileService.getProfile BEFORE', {
       url,
       tokenExists: Boolean(token),
       tokenPrefix: token ? token.slice(0, 20) : null,
     });
-    try {
-      const profile = await apiRequest<UserProfile>(url, {
-        token,
+
+    const request = apiRequest<UserProfile>(url, { token })
+      .then((profile) => {
+        logAuth('ProfileService.getProfile AFTER', {
+          url,
+          status: 200,
+          responseBody: profile,
+        });
+        return profile;
+      })
+      .catch((err: unknown) => {
+        logAuth('ProfileService.getProfile AFTER (error)', {
+          url,
+          status: err instanceof Error && 'status' in err ? (err as { status: number }).status : 'unknown',
+          responseBody: err instanceof Error ? err.message : String(err),
+        });
+        throw err;
+      })
+      .finally(() => {
+        this.inFlightByToken.delete(key);
       });
-      logAuth('ProfileService.getProfile AFTER', {
-        url,
-        status: 200,
-        responseBody: profile,
-      });
-      return profile;
-    } catch (err) {
-      logAuth('ProfileService.getProfile AFTER (error)', {
-        url,
-        status: err instanceof Error && 'status' in err ? (err as { status: number }).status : 'unknown',
-        responseBody: err instanceof Error ? err.message : String(err),
-      });
-      throw err;
-    }
+
+    this.inFlightByToken.set(key, request);
+    return request;
   }
 
   async updateProfile(
