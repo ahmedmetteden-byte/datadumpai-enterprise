@@ -41,6 +41,9 @@ class ReportExportContext:
     # mark. Callers without plan context (or without an uploaded logo)
     # simply never set this.
     custom_logo_bytes: bytes | None = None
+    # User-editable "Prepared by" attribution, collected at export time.
+    # None/blank falls back to APP_NAME in each format's builder.
+    prepared_by: str | None = None
 
     @property
     def report_name(self) -> str:
@@ -90,6 +93,7 @@ class PremiumExportService:
                     metric_tables=context.metric_tables,
                     report_plan=context.report_plan,
                     custom_logo_bytes=context.custom_logo_bytes,
+                    prepared_by=context.prepared_by,
                 ),
             )
             filename = f"{self._slugify(context.report_name, 'executive')}.pdf"
@@ -123,6 +127,7 @@ class PremiumExportService:
                     metric_tables=context.metric_tables,
                     report_plan=context.report_plan,
                     custom_logo_bytes=context.custom_logo_bytes,
+                    prepared_by=context.prepared_by,
                 ),
             )
             filename = f"{self._slugify(context.report_name, 'board_pack')}.pdf"
@@ -161,6 +166,7 @@ class PremiumExportService:
                     report_name=context.report_name,
                     source_documents=context.source_documents,
                     custom_logo_bytes=context.custom_logo_bytes,
+                    prepared_by=context.prepared_by,
                 ),
             )
             filename = f"{self._slugify(context.report_name, 'presentation')}.pptx"
@@ -201,6 +207,7 @@ class PremiumExportService:
                     source_documents=context.source_documents,
                     pack_type="executive",
                     custom_logo_bytes=context.custom_logo_bytes,
+                    prepared_by=context.prepared_by,
                 ),
             )
             filename = f"{self._slugify(context.report_name, 'executive')}.docx"

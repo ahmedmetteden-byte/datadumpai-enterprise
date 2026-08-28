@@ -187,13 +187,17 @@ export class HttpReportService implements ReportService {
     reportId: string,
     format: ReportExportFormat,
     auth?: ServiceAuth,
+    preparedBy?: string,
   ) {
     const base = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(
       /\/$/,
       '',
     ) ?? '';
+    const preparedByParam = preparedBy?.trim()
+      ? `&prepared_by=${encodeURIComponent(preparedBy.trim())}`
+      : '';
     const response = await fetch(
-      `${base}/api/v1/workspaces/${workspaceId}/reports/${reportId}/export?format=${format}`,
+      `${base}/api/v1/workspaces/${workspaceId}/reports/${reportId}/export?format=${format}${preparedByParam}`,
       {
         headers: auth?.accessToken
           ? { Authorization: `Bearer ${auth.accessToken}` }

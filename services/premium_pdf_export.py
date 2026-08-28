@@ -147,6 +147,10 @@ class PremiumExportMetadata:
     # DataDumpAI mark. None for every plan that doesn't include custom
     # branding, or when the account hasn't uploaded one yet.
     custom_logo_bytes: bytes | None = None
+    # Cover-page "Prepared by" line — user-editable at export time so a
+    # report can be attributed to the account's own name/company instead of
+    # always reading "DataDumpAI". Falls back to APP_NAME when blank.
+    prepared_by: str | None = None
 
 
 class PremiumPDFBuilder:
@@ -429,7 +433,11 @@ class PremiumPDFBuilder:
         story.append(Paragraph("Executive Intelligence Report", self.styles["cover_subtitle"]))
         story.append(Spacer(1, 0.35 * inch))
         story.append(Paragraph("Prepared by", self.styles["cover_meta_label"]))
-        story.append(Paragraph(APP_NAME, self.styles["cover_meta_value"]))
+        story.append(
+            Paragraph(
+                self.metadata.prepared_by or APP_NAME, self.styles["cover_meta_value"]
+            )
+        )
         story.append(Spacer(1, 0.45 * inch))
 
         meta_rows = [

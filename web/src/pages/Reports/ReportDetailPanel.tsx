@@ -38,7 +38,8 @@ export function ReportDetailPanel({
   onSaved?: (report: ReportDetail) => void;
   onRegenerated?: (report: ReportDetail) => void;
 }) {
-  const { accessToken } = useAuth();
+  const { accessToken, profile } = useAuth();
+  const defaultPreparedBy = profile?.company || profile?.fullName || '';
   const auth = useMemo(() => ({ accessToken }), [accessToken]);
   const feedback = useRequestFeedback();
   const [report, setReport] = useState<ReportDetail | null>(null);
@@ -71,7 +72,11 @@ export function ReportDetailPanel({
     void reload();
   }, [reload]);
 
-  async function handleExport(format: ReportExportFormat, filename: string) {
+  async function handleExport(
+    format: ReportExportFormat,
+    filename: string,
+    preparedBy: string,
+  ) {
     if (!report) return;
     setExporting(format);
     try {
@@ -82,6 +87,7 @@ export function ReportDetailPanel({
             report.id,
             format,
             auth,
+            preparedBy,
           );
           downloadBlob(blob, filename);
         },
@@ -153,7 +159,11 @@ export function ReportDetailPanel({
         {
           loading: UI_COPY.requestLoading,
           success: UI_COPY.reportsSaved,
-          error: UI_COPY.reportsGenerateError,
+          // No static `error` override — feedback.run() falls back to
+          // err.message, which is the backend's actual detail (e.g. the
+          // "Report not found" 404 from _find_report's storage-consistency
+          // retry, or a plan-upgrade reason) instead of a generic message
+          // that hides why the save failed.
         },
       );
       setReport(saved);
@@ -286,11 +296,12 @@ export function ReportDetailPanel({
       <ExportFilenameDialog
         format={exportFormatPrompt}
         defaultName={report.name}
+        defaultPreparedBy={defaultPreparedBy}
         onClose={() => setExportFormatPrompt(null)}
-        onConfirm={(filename) => {
+        onConfirm={(filename, preparedBy) => {
           const format = exportFormatPrompt;
           setExportFormatPrompt(null);
-          if (format) void handleExport(format, filename);
+          if (format) void handleExport(format, filename, preparedBy);
         }}
       />
       <ExportUpgradeDialog

@@ -8,6 +8,7 @@ import { ReportCharts } from '@/components/ui/ReportCharts';
 import { ReportMarkdown } from '@/components/ui/ReportMarkdown';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { Spinner } from '@/components/ui/Spinner';
+import { ExportFilenameDialog } from '@/pages/Reports/ExportFilenameDialog';
 import { services } from '@/api/services';
 import { useAuth } from '@/context/AuthContext';
 import { useWorkspace } from '@/context/WorkspaceContext';
@@ -59,8 +60,9 @@ function downloadBlob(blob: Blob, filename: string) {
 
 export function ReportGeneratePage() {
   const navigate = useNavigate();
-  const { accessToken } = useAuth();
+  const { accessToken, profile } = useAuth();
   const auth = useMemo(() => ({ accessToken }), [accessToken]);
+  const defaultPreparedBy = profile?.company || profile?.fullName || '';
   const { activeWorkspaceId, setActiveWorkspaceId } = useWorkspace();
   const { workspaces } = useWorkspaceList();
 
@@ -74,6 +76,8 @@ export function ReportGeneratePage() {
   const [report, setReport] = useState<ReportDetail | null>(null);
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState<ReportExportFormat | null>(null);
+  const [exportFormatPrompt, setExportFormatPrompt] =
+    useState<ReportExportFormat | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [statusKind, setStatusKind] = useState<
     'loading' | 'success' | 'error' | null
@@ -193,7 +197,11 @@ export function ReportGeneratePage() {
     }
   }
 
-  async function handleExport(format: ReportExportFormat) {
+  async function handleExport(
+    format: ReportExportFormat,
+    filename: string,
+    preparedBy: string,
+  ) {
     if (!workspaceId || !report) return;
     setExporting(format);
     setError(null);
@@ -204,9 +212,9 @@ export function ReportGeneratePage() {
         report.id,
         format,
         auth,
+        preparedBy,
       );
-      const ext = format === 'pptx' ? 'pptx' : format;
-      downloadBlob(blob, `${report.name}.${ext}`);
+      downloadBlob(blob, filename);
       setStatusKind('success');
       window.setTimeout(() => setStatusKind(null), 2500);
     };
@@ -456,7 +464,7 @@ export function ReportGeneratePage() {
               <Button
                 variant="secondary"
                 disabled={Boolean(exporting)}
-                onClick={() => void handleExport('docx')}
+                onClick={() => setExportFormatPrompt('docx')}
               >
                 {exporting === 'docx'
                   ? UI_COPY.reportsExporting
@@ -465,7 +473,7 @@ export function ReportGeneratePage() {
               <Button
                 variant="secondary"
                 disabled={Boolean(exporting)}
-                onClick={() => void handleExport('pdf')}
+                onClick={() => setExportFormatPrompt('pdf')}
               >
                 {exporting === 'pdf'
                   ? UI_COPY.reportsExporting
@@ -474,7 +482,7 @@ export function ReportGeneratePage() {
               <Button
                 variant="secondary"
                 disabled={Boolean(exporting)}
-                onClick={() => void handleExport('pptx')}
+                onClick={() => setExportFormatPrompt('pptx')}
               >
                 {exporting === 'pptx'
                   ? UI_COPY.reportsExporting
@@ -490,6 +498,20 @@ export function ReportGeneratePage() {
           </div>
         ) : null}
       </div>
+
+      {report ? (
+        <ExportFilenameDialog
+          format={exportFormatPrompt}
+          defaultName={report.name}
+          defaultPreparedBy={defaultPreparedBy}
+          onClose={() => setExportFormatPrompt(null)}
+          onConfirm={(filename, preparedBy) => {
+            const format = exportFormatPrompt;
+            setExportFormatPrompt(null);
+            if (format) void handleExport(format, filename, preparedBy);
+          }}
+        />
+      ) : null}
 
       <div className="flex justify-between gap-3">
         <Button

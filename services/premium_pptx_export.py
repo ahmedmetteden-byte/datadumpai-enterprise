@@ -39,6 +39,9 @@ class PresentationExportMetadata:
     # PremiumExportMetadata.custom_logo_bytes for the same field on the PDF
     # builder.
     custom_logo_bytes: bytes | None = None
+    # "Prepared by" attribution line — see PremiumExportMetadata.prepared_by
+    # for the same field on the PDF builder. Falls back to APP_NAME when blank.
+    prepared_by: str | None = None
 
 
 class PremiumPresentationBuilder:
@@ -77,6 +80,7 @@ class PremiumPresentationBuilder:
         meta = slide.shapes.add_textbox(Inches(0.8), Inches(3.2), Inches(11.5), Inches(2))
         meta_frame = meta.text_frame
         meta_frame.text = (
+            f"Prepared by: {self.metadata.prepared_by or APP_NAME}\n"
             f"Project: {self.metadata.project_name}\n"
             f"Report: {self.metadata.report_name}\n"
             f"Generated: {datetime.now(timezone.utc).strftime('%d %B %Y')}"

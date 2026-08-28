@@ -82,6 +82,8 @@ export const UI_COPY = {
   reportsExportFilenameHint: 'Saved as a',
   reportsExportFilenameDownload: 'Download',
   reportsExportFilenameEmptyError: 'Enter a file name.',
+  reportsExportPreparedByLabel: 'Prepared by',
+  reportsExportPreparedByHint: 'Shown on the cover page. Leave blank to use DataDumpAI.',
   reportsExportLockedTitle: 'Upgrade to unlock this export',
   reportsExportLockedCta: 'View plans',
   reportsExportLockedDismiss: 'Maybe later',

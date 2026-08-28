@@ -277,7 +277,15 @@ def export_report(
     format: Literal["docx", "pdf", "pptx"] = Query(default="docx"),
     principal: AuthenticatedPrincipal = Depends(get_principal),
     _current_user: User = Depends(get_current_user),
+    prepared_by: str | None = Query(default=None, max_length=200),
 ) -> Response:
+    # Tests call this router function directly (bypassing the FastAPI request
+    # layer), where an omitted Query(...) param surfaces as the raw Query
+    # sentinel object rather than its resolved default -- guard on str so
+    # that path and real HTTP requests (where it's always str | None) both
+    # normalize a blank/absent value to None the same way.
+    prepared_by = prepared_by.strip() if isinstance(prepared_by, str) else None
+    prepared_by = prepared_by or None
     project = _get_project(principal, workspace_id)
     report = _find_report(workspace_id, principal, report_id)
     content = str(report.get("content") or "").strip()
@@ -346,6 +354,7 @@ def export_report(
             reporting_period=str(report.get("periodName") or "Not specified"),
             show_watermark=plans.show_watermark(),
             custom_logo_bytes=custom_logo_bytes,
+            prepared_by=prepared_by,
         )
 
         premium = PremiumExportService(

@@ -18,24 +18,29 @@ export function sanitizeExportFilename(name: string): string {
 export function ExportFilenameDialog({
   format,
   defaultName,
+  defaultPreparedBy = '',
   onClose,
   onConfirm,
 }: {
   format: ReportExportFormat | null;
   defaultName: string;
+  defaultPreparedBy?: string;
   onClose: () => void;
-  onConfirm: (filename: string) => void;
+  onConfirm: (filename: string, preparedBy: string) => void;
 }) {
   const inputId = useId();
+  const preparedById = useId();
   const [name, setName] = useState(() => sanitizeExportFilename(defaultName));
+  const [preparedBy, setPreparedBy] = useState(defaultPreparedBy);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (format) {
       setName(sanitizeExportFilename(defaultName));
+      setPreparedBy(defaultPreparedBy);
       setError(null);
     }
-  }, [format, defaultName]);
+  }, [format, defaultName, defaultPreparedBy]);
 
   if (!format) return null;
 
@@ -47,7 +52,7 @@ export function ExportFilenameDialog({
       setError(UI_COPY.reportsExportFilenameEmptyError);
       return;
     }
-    onConfirm(`${sanitized}.${extension}`);
+    onConfirm(`${sanitized}.${extension}`, preparedBy.trim());
   }
 
   return (
@@ -98,6 +103,27 @@ export function ExportFilenameDialog({
           {UI_COPY.reportsExportFilenameHint} .{extension} file.
         </p>
       )}
+
+      <label className="mt-4 block" htmlFor={preparedById}>
+        <span className="mb-1 block text-caption font-medium text-ink-muted">
+          {UI_COPY.reportsExportPreparedByLabel}
+        </span>
+        <Input
+          id={preparedById}
+          value={preparedBy}
+          onChange={(event) => setPreparedBy(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              handleConfirm();
+            }
+          }}
+          placeholder="DataDumpAI"
+        />
+      </label>
+      <p className="mt-2 text-small text-ink-faint">
+        {UI_COPY.reportsExportPreparedByHint}
+      </p>
     </Modal>
   );
 }

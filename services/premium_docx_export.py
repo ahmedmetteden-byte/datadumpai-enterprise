@@ -59,6 +59,9 @@ class DocxExportMetadata:
     # PremiumExportMetadata.custom_logo_bytes for the same field on the PDF
     # builder.
     custom_logo_bytes: bytes | None = None
+    # Cover-page "Prepared by" line — see PremiumExportMetadata.prepared_by
+    # for the same field on the PDF builder. Falls back to APP_NAME when blank.
+    prepared_by: str | None = None
 
 
 def _set_margins(document: Document) -> None:
@@ -313,7 +316,7 @@ def _cover_page(document: Document, metadata: DocxExportMetadata) -> None:
     prepared_by_label.runs[0].font.size = Pt(10)
     prepared_by_label.runs[0].font.color.rgb = COLOR_MUTED
 
-    prepared_by_value = document.add_paragraph(APP_NAME)
+    prepared_by_value = document.add_paragraph(metadata.prepared_by or APP_NAME)
     prepared_by_value.alignment = WD_ALIGN_PARAGRAPH.CENTER
     prepared_by_value.runs[0].bold = True
     prepared_by_value.runs[0].font.size = Pt(13)

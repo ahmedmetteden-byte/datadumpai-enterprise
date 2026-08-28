@@ -206,6 +206,7 @@ export interface ReportService {
     reportId: string,
     format: import('@/types/reports').ReportExportFormat,
     auth?: ServiceAuth,
+    preparedBy?: string,
   ): Promise<Blob>;
 }
 
