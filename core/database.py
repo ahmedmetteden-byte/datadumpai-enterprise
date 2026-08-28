@@ -61,6 +61,13 @@ def _apply_service_role_headers(client: Any, key: str) -> None:
         admin_headers.update(headers)
 
 
+# supabase-py defaults postgrest_client_timeout to 120s -- long enough that
+# a single slow/contended query reads as a hung request to anyone waiting on
+# it (browser, proxy, user). Every request-scoped client gets a much tighter
+# bound so a stalled query fails fast instead of hanging the caller.
+_POSTGREST_CLIENT_TIMEOUT_SECONDS = 10
+
+
 def create_service_role_client():
     """
     Create a fresh service-role Supabase client for admin/server operations.
@@ -78,6 +85,7 @@ def create_service_role_client():
         options=ClientOptions(
             auto_refresh_token=False,
             persist_session=False,
+            postgrest_client_timeout=_POSTGREST_CLIENT_TIMEOUT_SECONDS,
         ),
     )
     _apply_service_role_headers(client, key)
@@ -279,7 +287,7 @@ def get_database_client(*, access_token: str | None = None):
     if not database_is_available():
         raise DatabaseError("Database backend is not enabled.")
 
-    from supabase import create_client
+    from supabase import ClientOptions, create_client
 
     token = access_token
 
@@ -289,7 +297,13 @@ def get_database_client(*, access_token: str | None = None):
     if not token:
         raise DatabaseError("No authenticated session is available for database access.")
 
-    client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+    client = create_client(
+        SUPABASE_URL,
+        SUPABASE_ANON_KEY,
+        options=ClientOptions(
+            postgrest_client_timeout=_POSTGREST_CLIENT_TIMEOUT_SECONDS,
+        ),
+    )
     # Apply the user JWT to shared client headers so Storage (and PostgREST)
     # both use the authenticated session — not only postgrest.auth().
     auth_header = f"Bearer {token}"

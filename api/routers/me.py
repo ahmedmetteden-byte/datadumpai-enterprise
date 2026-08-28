@@ -5,9 +5,10 @@ Current-user profile and organisation membership routes for the React SPA.
 from __future__ import annotations
 
 import base64
+import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
 
 from api.auth_jwt import AuthenticatedPrincipal
 from api.deps import get_current_user, get_principal, user_request_scope
@@ -17,11 +18,14 @@ from api.schemas import (
     UpdateProfileBody,
     UserProfileOut,
 )
+from core.current_user import current_user_scope
 from models.user import User
 from services.branding_service import BrandingError, BrandingService
 from services.plan_service import PlanService
 from services.profile_service import ProfileService
 from services.project_service import ProjectService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/me", tags=["me"])
 
@@ -69,21 +73,48 @@ def _to_profile_out(
     )
 
 
+def _persist_profile_seed(
+    user: User, access_token: str | None, seed: dict[str, Any]
+) -> None:
+    """Write seeded profile fields after the response has already gone out.
+
+    Runs as a background task specifically so a slow or contended write can
+    never hold up the GET that triggered it — worst case this silently
+    doesn't persist (logged) and the next request seeds it again."""
+
+    try:
+        with current_user_scope(user):
+            service = ProfileService(access_token=access_token)
+            current = service.load()
+            service.save({**current, **seed})
+    except Exception:
+        logger.warning(
+            "Failed to persist profile seed for user_id=%s", user.id, exc_info=True
+        )
+
+
 @router.get("/profile", response_model=UserProfileOut)
 def get_my_profile(
+    background_tasks: BackgroundTasks,
     principal: AuthenticatedPrincipal = Depends(get_principal),
     _current_user: User = Depends(get_current_user),
 ) -> UserProfileOut:
     with user_request_scope(principal):
         service = ProfileService(access_token=principal.access_token)
         raw = service.load()
-        seed: dict[str, Any] = {}
-        if not raw.get("email") and principal.user.email:
-            seed["email"] = principal.user.email
-        if not raw.get("full_name") and principal.user.full_name:
-            seed["full_name"] = principal.user.full_name
-        if seed:
-            raw = service.save({**raw, **seed})
+
+    seed: dict[str, Any] = {}
+    if not raw.get("email") and principal.user.email:
+        seed["email"] = principal.user.email
+    if not raw.get("full_name") and principal.user.full_name:
+        seed["full_name"] = principal.user.full_name
+
+    if seed:
+        raw = {**raw, **seed}
+        background_tasks.add_task(
+            _persist_profile_seed, principal.user, principal.access_token, seed
+        )
+
     return _to_profile_out(principal, raw, _memberships(principal))
 
 
