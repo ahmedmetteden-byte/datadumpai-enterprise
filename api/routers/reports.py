@@ -269,6 +269,7 @@ def generate_report(
                 period_id=body.period_id,
                 title=body.title,
                 instructions=body.instructions,
+                document_ids=body.document_ids,
             )
         except Exception as exc:
             logger.exception("Report generation failed workspace=%s", workspace_id)

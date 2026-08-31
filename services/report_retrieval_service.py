@@ -261,6 +261,7 @@ def retrieve_grouped_sources(
     embedder: EmbeddingService | None = None,
     qdrant: QdrantService | None = None,
     documents: list[dict[str, Any]] | None = None,
+    document_ids: list[str] | None = None,
 ) -> list[dict[str, str]]:
     """Embed each facet query, search Qdrant per facet (already scoped to
     `workspace_id` by QdrantService.search's own filter — see that method
@@ -269,11 +270,19 @@ def retrieve_grouped_sources(
 
     `documents`, when given (the workspace's full document list, each with
     id/filename/status — used only when the caller detected an explicit
-    "use every document" instruction), guarantees every successfully-
-    indexed document contributes at least some evidence even if the
-    global relevance search above never surfaced it — see
+    "use every document" instruction, or the caller passed an explicit
+    `document_ids` selection), guarantees every successfully-indexed
+    document contributes at least some evidence even if the global
+    relevance search above never surfaced it — see
     _ensure_document_coverage(). Omitted or empty, behavior is unchanged
     from before this existed: pure relevance-ranked retrieval.
+
+    `document_ids`, when given, restricts the global relevance search
+    itself to chunks from just those documents — used when the caller
+    (a user picking specific documents for a report) wants retrieval
+    scoped to a subset of the workspace rather than searched against
+    everything indexed there. Omitted, behavior is unchanged: search
+    spans every document in the workspace.
 
     Returns [] whenever there's nothing useful to retrieve (nothing indexed
     for this workspace yet, no hits at all) — callers should treat an empty
@@ -296,7 +305,12 @@ def retrieve_grouped_sources(
     # stronger signal, not a duplicate to discard.
     merged: dict[str, dict[str, Any]] = {}
     for vector in vectors:
-        hits = qdrant.search(workspace_id=workspace_id, query_vector=vector, limit=FACET_TOP_K)
+        hits = qdrant.search(
+            workspace_id=workspace_id,
+            query_vector=vector,
+            limit=FACET_TOP_K,
+            document_ids=document_ids,
+        )
         for hit in hits:
             existing = merged.get(hit["id"])
             if existing is None or hit["score"] > existing["score"]:

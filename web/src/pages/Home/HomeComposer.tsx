@@ -33,6 +33,7 @@ import {
 import { ReportDetailPanel } from '@/pages/Reports/ReportDetailPanel';
 import type { IntelligenceMessage } from '@/types/intelligence';
 import type { ReportPeriod, ReportTemplate } from '@/types/reports';
+import type { KnowledgeListItem } from '@/types/knowledge';
 
 const ALLOWED_EXTENSIONS = new Set([
   '.pdf',
@@ -49,7 +50,7 @@ const DEFAULT_TEMPLATE_ID = 'executive_summary';
 const DEFAULT_PERIOD_ID = 'custom';
 
 type Mode = 'report' | 'ask';
-type AttachmentStatus = 'uploading' | 'uploaded' | 'error';
+type AttachmentStatus = 'uploading' | 'indexing' | 'uploaded' | 'error';
 
 interface Attachment {
   id: string;
@@ -58,7 +59,13 @@ interface Attachment {
   status: AttachmentStatus;
   progress: number;
   error?: string;
+  /** The server-assigned document id, set once the upload response comes
+   * back — this is what actually scopes report generation to this file. */
+  documentId?: string;
 }
+
+const INDEX_POLL_INTERVAL_MS = 1500;
+const INDEX_POLL_TIMEOUT_MS = 120_000;
 
 function extensionOf(name: string): string {
   const match = /\.[^.]+$/.exec(name.toLowerCase());
@@ -85,6 +92,13 @@ export function HomeComposer() {
   const [dragActive, setDragActive] = useState(false);
   const [templates, setTemplates] = useState<ReportTemplate[]>([]);
   const [periods, setPeriods] = useState<ReportPeriod[]>([]);
+  const [workspaceDocuments, setWorkspaceDocuments] = useState<
+    KnowledgeListItem[]
+  >([]);
+  const [documentsLoading, setDocumentsLoading] = useState(false);
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [templateId, setTemplateId] = useState(DEFAULT_TEMPLATE_ID);
   const [periodId, setPeriodId] = useState(DEFAULT_PERIOD_ID);
   const [submitting, setSubmitting] = useState(false);
@@ -162,6 +176,89 @@ export function HomeComposer() {
       cancelled = true;
     };
   }, [workspaceId, auth]);
+
+  async function reloadWorkspaceDocuments(targetWorkspaceId: string) {
+    setDocumentsLoading(true);
+    try {
+      const result = await services.knowledge.listKnowledge(
+        targetWorkspaceId,
+        { limit: 200, sort: 'updated_at' },
+        auth,
+      );
+      setWorkspaceDocuments(result.items);
+    } catch {
+      // Non-fatal: the document picker just stays empty/stale. Report
+      // generation itself doesn't depend on this list.
+    } finally {
+      setDocumentsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    void reloadWorkspaceDocuments(workspaceId);
+    setSelectedDocumentIds(new Set());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId]);
+
+  async function pollUntilIndexed(
+    targetWorkspaceId: string,
+    attachmentId: string,
+    documentId: string,
+  ) {
+    const deadline = Date.now() + INDEX_POLL_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      let outcome: 'indexed' | 'failed' | 'pending';
+      try {
+        const status = await services.knowledge.processingStatus(
+          targetWorkspaceId,
+          documentId,
+          auth,
+        );
+        outcome =
+          status.status === 'indexed'
+            ? 'indexed'
+            : status.status === 'failed'
+              ? 'failed'
+              : 'pending';
+      } catch {
+        outcome = 'pending';
+      }
+
+      if (outcome === 'indexed') {
+        updateAttachment(attachmentId, { status: 'uploaded' });
+        setSelectedDocumentIds((current) => new Set(current).add(documentId));
+        void reloadWorkspaceDocuments(targetWorkspaceId);
+        return;
+      }
+      if (outcome === 'failed') {
+        updateAttachment(attachmentId, {
+          status: 'error',
+          error: UI_COPY.homeComposerIndexFailed,
+        });
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, INDEX_POLL_INTERVAL_MS));
+    }
+    // Timed out waiting — don't block the user forever; let them generate
+    // with whatever finished, the backend will report a coverage gap for
+    // anything genuinely still unindexed.
+    updateAttachment(attachmentId, { status: 'uploaded' });
+    setSelectedDocumentIds((current) => new Set(current).add(documentId));
+    void reloadWorkspaceDocuments(targetWorkspaceId);
+  }
+
+  function toggleDocumentSelected(documentId: string) {
+    setSelectedDocumentIds((current) => {
+      const next = new Set(current);
+      if (next.has(documentId)) {
+        next.delete(documentId);
+      } else {
+        next.add(documentId);
+      }
+      return next;
+    });
+  }
 
   function updateAttachment(id: string, patch: Partial<Attachment>) {
     setAttachments((current) =>
@@ -269,7 +366,19 @@ export function HomeComposer() {
             },
             auth,
           )
-          .then(() => updateAttachment(id, { status: 'uploaded', progress: 100 }))
+          .then((created) => {
+            updateAttachment(id, {
+              status: 'indexing',
+              progress: 100,
+              documentId: created.id,
+            });
+            // Deliberately not awaited/returned into the upload chain:
+            // indexing runs as a backend background job independent of
+            // the next file's upload, so gating subsequent uploads on it
+            // here would serialize attaching N files behind N indexing
+            // waits for no reason.
+            void pollUntilIndexed(targetWorkspaceId, id, created.id);
+          })
           .catch((err) =>
             updateAttachment(id, {
               status: 'error',
@@ -284,7 +393,18 @@ export function HomeComposer() {
   }
 
   function removeAttachment(id: string) {
-    setAttachments((current) => current.filter((item) => item.id !== id));
+    setAttachments((current) => {
+      const removed = current.find((item) => item.id === id);
+      if (removed?.documentId) {
+        setSelectedDocumentIds((selected) => {
+          if (!selected.has(removed.documentId!)) return selected;
+          const next = new Set(selected);
+          next.delete(removed.documentId!);
+          return next;
+        });
+      }
+      return current.filter((item) => item.id !== id);
+    });
   }
 
   function handleDrop(event: DragEvent<HTMLDivElement>) {
@@ -296,15 +416,21 @@ export function HomeComposer() {
   }
 
   const uploading = attachments.some((item) => item.status === 'uploading');
+  const indexing = attachments.some((item) => item.status === 'indexing');
   const hasUploadedAttachment = attachments.some(
-    (item) => item.status === 'uploaded',
+    (item) => item.status === 'uploaded' || item.status === 'indexing',
   );
   const hasContent =
     mode === 'ask'
       ? text.trim().length > 0
       : text.trim().length > 0 || hasUploadedAttachment;
   const canSubmit =
-    ready && Boolean(workspaceId) && hasContent && !uploading && !submitting;
+    ready &&
+    Boolean(workspaceId) &&
+    hasContent &&
+    !uploading &&
+    !indexing &&
+    !submitting;
 
   async function askQuestion(question: string) {
     if (!workspaceId) return;
@@ -380,12 +506,14 @@ export function HomeComposer() {
     setSubmitting(true);
     setError(null);
     try {
+      const documentIds = Array.from(selectedDocumentIds);
       const created = await services.report.generate(
         workspaceId,
         {
           templateId,
           periodId,
           instructions: text.trim(),
+          documentIds: documentIds.length > 0 ? documentIds : undefined,
         },
         auth,
       );
@@ -404,6 +532,7 @@ export function HomeComposer() {
     setGeneratedReportId(null);
     setText('');
     setAttachments([]);
+    setSelectedDocumentIds(new Set());
   }
 
   return (
@@ -584,6 +713,11 @@ export function HomeComposer() {
                         {item.progress}%
                       </span>
                     </span>
+                  ) : item.status === 'indexing' ? (
+                    <span className="flex items-center gap-1.5 text-ink-muted">
+                      <Spinner size={14} />
+                      {UI_COPY.homeComposerIndexing}
+                    </span>
                   ) : item.status === 'error' ? (
                     <span className="text-danger">{item.error}</span>
                   ) : (
@@ -631,6 +765,56 @@ export function HomeComposer() {
       </div>
 
       <p className="text-caption text-ink-faint">{UI_COPY.aiDisclaimer}</p>
+
+      {mode === 'report' && (documentsLoading || workspaceDocuments.length > 0) ? (
+        <Collapsible title={UI_COPY.homeComposerDocumentsLabel} defaultOpen={false}>
+          <div className="space-y-2 text-left">
+            {documentsLoading && workspaceDocuments.length === 0 ? (
+              <p className="text-caption text-ink-faint">
+                {UI_COPY.homeComposerDocumentsLoading}
+              </p>
+            ) : (
+              <>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-caption text-ink-faint">
+                    {selectedDocumentIds.size > 0
+                      ? UI_COPY.homeComposerDocumentsSelectedHint(
+                          selectedDocumentIds.size,
+                        )
+                      : UI_COPY.homeComposerDocumentsAllHint}
+                  </p>
+                  {selectedDocumentIds.size > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedDocumentIds(new Set())}
+                      className="shrink-0 text-caption font-medium text-brand-600 hover:text-brand-700"
+                    >
+                      {UI_COPY.homeComposerDocumentsUseAll}
+                    </button>
+                  ) : null}
+                </div>
+                <ul className="max-h-56 space-y-1 overflow-y-auto rounded-lg border border-surface-border p-2">
+                  {workspaceDocuments.map((doc) => (
+                    <li key={doc.id}>
+                      <label className="flex items-center gap-2 rounded-md px-2 py-1.5 text-caption hover:bg-surface-alt">
+                        <input
+                          type="checkbox"
+                          checked={selectedDocumentIds.has(doc.id)}
+                          onChange={() => toggleDocumentSelected(doc.id)}
+                          className="h-3.5 w-3.5 shrink-0 rounded border-surface-border text-brand-500 focus:ring-brand-500"
+                        />
+                        <span className="min-w-0 flex-1 truncate text-ink">
+                          {doc.title || doc.filename}
+                        </span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+        </Collapsible>
+      ) : null}
 
       {mode === 'report' ? (
         <Collapsible title={UI_COPY.homeComposerAdvanced} defaultOpen={false}>

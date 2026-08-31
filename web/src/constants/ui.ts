@@ -146,6 +146,15 @@ export const UI_COPY = {
   homeComposerFileTypeError:
     'Unsupported file type. Choose PDF, DOCX, XLSX, PPTX, or TXT.',
   homeComposerUploadError: 'Upload failed.',
+  homeComposerIndexing: 'Indexing…',
+  homeComposerIndexFailed: 'Indexing failed.',
+  homeComposerDocumentsLabel: 'Documents to use',
+  homeComposerDocumentsAllHint:
+    'No documents selected — every document in this workspace will be used.',
+  homeComposerDocumentsSelectedHint: (count: number) =>
+    `${count} document${count === 1 ? '' : 's'} selected — only these will be used.`,
+  homeComposerDocumentsUseAll: 'Use all workspace documents',
+  homeComposerDocumentsLoading: 'Loading workspace documents…',
   homeComposerGenerateError: 'Could not generate the report. Try again.',
   homeComposerGenerateSuccess: 'Report ready.',
   homeComposerGenerateLoading: 'Generating your report…',

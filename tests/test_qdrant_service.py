@@ -71,3 +71,34 @@ def test_search_omits_document_id_filter_when_none():
     conditions = fake_client.calls[0]["query_filter"].must
     assert len(conditions) == 1
     assert conditions[0].key == "workspace_id"
+
+
+def test_search_adds_document_ids_as_a_match_any_filter():
+    """Document-selection scoping: restricting a report to a chosen set of
+    documents must filter Qdrant by any-of those ids, still AND'd with the
+    workspace_id filter — never a replacement for tenant isolation."""
+
+    service, fake_client = _service_with_fake_client()
+    service.search(
+        workspace_id="ws1",
+        query_vector=[0.1],
+        limit=5,
+        document_ids=["doc-1", "doc-2"],
+    )
+
+    call = fake_client.calls[0]
+    conditions = call["query_filter"].must
+    assert len(conditions) == 2
+
+    by_key = {c.key: c for c in conditions}
+    assert by_key["workspace_id"].match.value == "ws1"
+    assert by_key["document_id"].match.any == ["doc-1", "doc-2"]
+
+
+def test_search_omits_document_ids_filter_when_none():
+    service, fake_client = _service_with_fake_client()
+    service.search(workspace_id="ws1", query_vector=[0.1], limit=5, document_ids=None)
+
+    conditions = fake_client.calls[0]["query_filter"].must
+    assert len(conditions) == 1
+    assert conditions[0].key == "workspace_id"

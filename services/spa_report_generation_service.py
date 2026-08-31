@@ -498,6 +498,7 @@ class SpaReportGenerationService:
         template: dict[str, str],
         period: dict[str, str],
         instructions: str | None = None,
+        document_ids: list[str] | None = None,
     ) -> list[dict[str, str]]:
         if not docs:
             return []
@@ -510,14 +511,22 @@ class SpaReportGenerationService:
                     period_name=period["name"],
                     instructions=instructions,
                 )
-                # When the user explicitly asked for every document,
+                # When the user explicitly asked for every document, or
+                # explicitly selected a specific set of documents,
                 # relevance ranking alone must not be allowed to silently
                 # drop one that never scores in any facet query's top-K —
                 # guarantee coverage rather than just retrieving the most
                 # relevant evidence (see report_retrieval_service.py's
                 # _ensure_document_coverage()).
-                coverage_docs = docs if detect_all_documents_intent(instructions) else None
-                sources = retrieve_grouped_sources(workspace_id, queries, documents=coverage_docs)
+                coverage_docs = (
+                    docs if (document_ids or detect_all_documents_intent(instructions)) else None
+                )
+                sources = retrieve_grouped_sources(
+                    workspace_id,
+                    queries,
+                    documents=coverage_docs,
+                    document_ids=document_ids,
+                )
                 if sources:
                     return sources
             except Exception:
@@ -968,6 +977,7 @@ class SpaReportGenerationService:
         period_id: str,
         title: str | None = None,
         instructions: str | None = None,
+        document_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         template = template_by_id(template_id)
         period = period_by_id(period_id)
@@ -976,20 +986,32 @@ class SpaReportGenerationService:
         previous_report = self._find_previous_report(workspace_id, template_id, period_id)
 
         all_docs = list(project.get("documents") or [])
-        scoped_docs = filter_documents_by_period(all_docs, period_id)
+        selected_ids = [str(doc_id) for doc_id in (document_ids or []) if doc_id]
+        if selected_ids:
+            selected_id_set = set(selected_ids)
+            docs_in_scope = [
+                doc for doc in all_docs if str(doc.get("id") or "") in selected_id_set
+            ]
+            # An explicit document selection is a stronger, more specific
+            # scope than the period window — it must not be silently
+            # narrowed further by a date filter the user never asked for.
+            scoped_docs = docs_in_scope
+        else:
+            scoped_docs = filter_documents_by_period(all_docs, period_id)
         sources = self._gather_sources(
             workspace_id,
             scoped_docs,
             template=template,
             period=period,
             instructions=instructions,
+            document_ids=selected_ids or None,
         )
 
         source_coverage: dict[str, Any] = {}
-        if detect_all_documents_intent(instructions):
+        if selected_ids or detect_all_documents_intent(instructions):
             gaps = compute_coverage_gaps(sources, scoped_docs)
             source_coverage = {
-                "all_documents_requested": True,
+                "all_documents_requested": not selected_ids,
                 "documents_in_scope": len(scoped_docs),
                 "documents_covered": len(sources),
                 "gaps": gaps,

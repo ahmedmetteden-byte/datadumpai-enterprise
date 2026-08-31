@@ -131,6 +131,7 @@ class QdrantService:
         query_vector: list[float],
         limit: int = 8,
         document_id: str | None = None,
+        document_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Return ranked chunk hits for a workspace query vector.
 
@@ -138,7 +139,12 @@ class QdrantService:
         workspace_id filter, never a replacement for it) — used by the
         document-coverage-guarantee query in report_retrieval_service.py
         to pull a specific document's top chunks without ever loosening
-        workspace isolation."""
+        workspace isolation.
+
+        `document_ids`, when given, is the same kind of additional filter
+        but matches any document in the list — used to scope a report's
+        entire retrieval pass to a user-selected document subset rather
+        than the whole workspace."""
 
         from qdrant_client.http import models as qmodels
 
@@ -154,6 +160,13 @@ class QdrantService:
                 qmodels.FieldCondition(
                     key="document_id",
                     match=qmodels.MatchValue(value=document_id),
+                )
+            )
+        if document_ids:
+            must_conditions.append(
+                qmodels.FieldCondition(
+                    key="document_id",
+                    match=qmodels.MatchAny(any=document_ids),
                 )
             )
 

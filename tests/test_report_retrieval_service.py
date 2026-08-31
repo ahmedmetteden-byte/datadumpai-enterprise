@@ -57,12 +57,16 @@ class _FakeQdrant:
         self._hits_by_document_id = hits_by_document_id or {}
         self.calls = 0
         self.document_id_calls: list[str] = []
+        self.last_document_ids: list[str] | None = None
 
-    def search(self, *, workspace_id, query_vector, limit, document_id=None):
+    def search(
+        self, *, workspace_id, query_vector, limit, document_id=None, document_ids=None
+    ):
         self.calls += 1
         if document_id is not None:
             self.document_id_calls.append(document_id)
             return self._hits_by_document_id.get(document_id, [])
+        self.last_document_ids = document_ids
         index = int(query_vector[0])
         return self._hits_by_query_index.get(index, [])
 
@@ -323,6 +327,25 @@ def test_retrieve_grouped_sources_without_documents_param_is_unchanged():
     result = retrieve_grouped_sources("ws1", ["only query"], embedder=_FakeEmbedder(), qdrant=qdrant)
     assert [source["filename"] for source in result] == ["a.pdf"]
     assert qdrant.document_id_calls == []
+
+
+def test_retrieve_grouped_sources_passes_document_ids_through_to_global_search():
+    """Document-selection scoping: when the caller passes `document_ids`
+    (a user-picked subset of the workspace), every facet's global-relevance
+    Qdrant call must carry that same restriction — not just the coverage
+    stage — so a report scoped to specific documents can never surface
+    chunks from documents outside that set."""
+
+    hits = {0: [_hit("c1", 0.9, "doc-a", "a.pdf", 0, "A chunk")]}
+    qdrant = _FakeQdrant(hits)
+    retrieve_grouped_sources(
+        "ws1",
+        ["only query"],
+        embedder=_FakeEmbedder(),
+        qdrant=qdrant,
+        document_ids=["doc-a", "doc-b"],
+    )
+    assert qdrant.last_document_ids == ["doc-a", "doc-b"]
 
 
 def test_retrieve_grouped_sources_covers_a_document_missed_by_global_retrieval():

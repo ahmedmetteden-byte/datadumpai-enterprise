@@ -43,4 +43,7 @@ export interface GenerateReportInput {
   periodId: string;
   title?: string;
   instructions?: string;
+  /** Scope the report to exactly these document ids instead of every
+   * document in the workspace. Omitted or empty means "use all documents". */
+  documentIds?: string[];
 }

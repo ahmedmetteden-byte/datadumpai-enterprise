@@ -290,6 +290,10 @@ class GenerateReportBody(CamelModel):
     period_id: str
     title: str | None = None
     instructions: str | None = None
+    # When given, scope the report to exactly these documents instead of
+    # the whole workspace. Omitted or empty means "use every document" —
+    # the pre-existing default behavior.
+    document_ids: list[str] | None = None
 
 
 class SaveReportBody(CamelModel):
