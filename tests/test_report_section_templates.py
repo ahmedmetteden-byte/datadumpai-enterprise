@@ -8,8 +8,6 @@ from services.report_section_templates import (
     build_report_section_plan,
     filter_report_narrative,
 )
-from services.executive_report_prompt import build_executive_report_prompt
-from services.full_report_prompt import build_full_report_prompt
 
 LEGAL_NARRATIVE = """
 ## Executive Intelligence Dashboard
@@ -129,7 +127,18 @@ def test_single_period_full_report_suppresses_period_comparison():
     assert "Period Narrative" in filtered
 
 
-def test_dynamic_executive_prompt_uses_report_type_template():
+def test_section_plan_covers_meeting_intelligence_report_type():
+    """The two removed tests here (test_dynamic_executive_prompt_uses_report_
+    type_template, test_dynamic_full_report_prompt_omits_single_period_
+    sections) fed build_report_section_plan()'s output into the now-removed
+    dead prompt builders (build_executive_report_prompt / build_full_report_
+    prompt — see services/executive_report_prompt.py and services/full_
+    report_prompt.py's module docstrings). The live assertion worth keeping
+    is that build_report_section_plan() itself correctly detects a Meeting
+    Intelligence Report's action-item section — SpaReportGenerationService's
+    own inline prompt construction (the actual live path) is covered
+    separately in tests/test_spa_report_generation_service.py."""
+
     report_data = extract_report_data(
         document_text=(
             "=== SOURCE DOCUMENT: minutes.pdf ===\n"
@@ -145,24 +154,12 @@ def test_dynamic_executive_prompt_uses_report_type_template():
         source_document_count=1,
     )
 
-    prompt = build_executive_report_prompt(
-        report_type="Meeting Intelligence Report",
-        document_text="meeting content",
-        writing_style="Professional",
-        audience="Board",
-        include_recommendations=True,
-        include_charts=True,
-        source_document_count=1,
-        report_context={"source_documents": ["minutes.pdf"]},
-        section_plan=plan,
-    )
-
-    assert "Action Items and Owners" in prompt
-    assert "## Visual Summary" not in prompt
-    assert "## Cross-Document Intelligence" not in prompt
+    assert "Action Items and Owners" in plan.allowed_sections
+    assert "Visual Summary" not in plan.allowed_sections
+    assert "Cross-Document Intelligence" not in plan.allowed_sections
 
 
-def test_dynamic_full_report_prompt_omits_single_period_sections():
+def test_section_plan_omits_single_period_sections_for_full_report():
     report_data = extract_report_data(
         document_text="=== SOURCE DOCUMENT: q1.pdf ===\nRevenue $1m.",
         report_type="Full Report",
@@ -176,17 +173,5 @@ def test_dynamic_full_report_prompt_omits_single_period_sections():
         report_format="full_report",
     )
 
-    prompt = build_full_report_prompt(
-        document_text="content",
-        writing_style="Professional",
-        audience="Executive Management",
-        include_recommendations=True,
-        include_charts=True,
-        source_document_count=1,
-        report_context={"source_documents": ["q1.pdf"], "reporting_period": "Q1 2026"},
-        section_plan=plan,
-    )
-
-    assert "## Period-over-Period Comparison" not in prompt
-    assert "## Cross-Period Themes" not in prompt
-    assert "Period Narrative" in prompt
+    assert "Period-over-Period Comparison" not in plan.allowed_sections
+    assert "Cross-Period Themes" not in plan.allowed_sections

@@ -1363,6 +1363,126 @@ def test_generate_threads_deterministic_calculations_into_the_prompt(
     assert "cite them exactly as given" in prompt
 
 
+# --- Instruction-following: an explicit user instruction must override the
+# default rigid section structure, not just get appended alongside it. See
+# ReportGeneratePage/HomeComposer "instructions" field — a user typing
+# "summarize this in 2 paragraphs" was previously still forced through the
+# full Executive Summary / Key Findings / Risks & Issues / Strategic
+# Recommendations structure because the structural mandate was unconditional
+# and far more detailed than the one-line instructions aside.
+
+
+def test_generate_markdown_with_instructions_drops_rigid_section_structure():
+    svc = SpaReportGenerationService()
+    client, completions = _fake_openai_client()
+    svc._client = client
+    sources = [{"filename": "a.pdf", "excerpt": "Some evidence."}]
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_id="executive_summary",
+        template_name="Executive Summary",
+        sources=sources,
+        instructions="Summarize this document in no more than 2 paragraphs.",
+    )
+    prompt = completions.calls[0]["messages"][1]["content"]
+
+    assert "must contain ONLY these sections, no others" not in prompt
+    assert "## Key Findings" not in prompt
+    assert "## Strategic Recommendations" not in prompt
+    assert "Go beyond summarizing — synthesize" not in prompt
+    assert "Summarize this document in no more than 2 paragraphs." in prompt
+    assert "Match the user's requested length and format precisely" in prompt
+    assert "overrides here" in prompt
+
+
+def test_generate_markdown_with_instructions_keeps_accuracy_guardrails():
+    """Dropping the section-structure mandate must not drop the factual
+    grounding requirements — only the SHAPE is user-governed, not whether
+    claims are allowed to be fabricated or miscategorized."""
+
+    svc = SpaReportGenerationService()
+    client, completions = _fake_openai_client()
+    svc._client = client
+    sources = [{"filename": "a.pdf", "excerpt": "Some evidence."}]
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_id="executive_summary",
+        template_name="Executive Summary",
+        sources=sources,
+        instructions="Summarize this document in no more than 2 paragraphs.",
+    )
+    prompt = completions.calls[0]["messages"][1]["content"]
+
+    assert "never use either term for a single period-over-period change" in prompt  # CAGR guardrail
+    assert "SAME thing at two DIFFERENT points in time" in prompt  # dimension framing
+    assert "'improved', 'deteriorated', 'gotten better', or 'gotten worse'" in prompt  # single obs.
+    assert "unless a source document explicitly states that causal mechanism" in prompt  # causal
+
+
+def test_generate_markdown_without_instructions_keeps_rigid_section_structure():
+    """Regression guard: the structured wizard flow (no free-text
+    instructions) must be completely unaffected by the instruction-following
+    branch — same rigid multi-section behavior as before."""
+
+    svc = SpaReportGenerationService()
+    client, completions = _fake_openai_client()
+    svc._client = client
+    sources = [{"filename": "a.pdf", "excerpt": "Some evidence."}]
+
+    svc._generate_markdown(
+        title="Test Report",
+        period_name="Custom / Ad hoc",
+        template_id="executive_summary",
+        template_name="Executive Summary",
+        sources=sources,
+    )
+    prompt = completions.calls[0]["messages"][1]["content"]
+
+    assert "must contain ONLY these sections, no others" in prompt
+    assert "## Key Findings" in prompt
+    assert "Go beyond summarizing — synthesize" in prompt
+
+
+def test_generate_end_to_end_with_instructions_produces_unstructured_content(
+    isolated_env, project_service: ProjectService, monkeypatch
+):
+    """Full generate() call (not just _generate_markdown) with a real
+    instruction must save a record whose content is the model's lean
+    instruction-following answer, not boilerplate section headings."""
+
+    project = project_service.create_project("Instruction Override Test Project")
+
+    svc = SpaReportGenerationService()
+    monkeypatch.setattr(
+        svc,
+        "_gather_sources",
+        lambda *a, **k: [{"filename": "a.pdf", "excerpt": "Two quarters of steady growth."}],
+    )
+    client, completions = _fake_openai_client(
+        response_text="This document covers two quarters of steady growth. "
+        "Revenue rose each period with no major risks flagged.\n\n"
+        "Overall the outlook is stable heading into next quarter."
+    )
+    svc._client = client
+
+    record = svc.generate(
+        workspace_id=project["id"],
+        project=project,
+        template_id="executive_summary",
+        period_id="custom",
+        instructions="Summarize this document in no more than 2 paragraphs.",
+    )
+
+    prompt = completions.calls[0]["messages"][1]["content"]
+    assert "must contain ONLY these sections" not in prompt
+    assert "This document covers two quarters" in record["content"]
+    assert record["instructions"] == "Summarize this document in no more than 2 paragraphs."
+
+
 def test_generate_document_periods_map_uses_real_project_document_metadata(
     isolated_env, project_service: ProjectService, monkeypatch
 ):

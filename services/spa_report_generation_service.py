@@ -597,10 +597,25 @@ class SpaReportGenerationService:
             for index, src in enumerate(sources, start=1)
         )
         source_filenames = ", ".join(f'"{src["filename"]}"' for src in sources)
+        # When the user typed a free-text instruction (e.g. from the Home
+        # composer's "Report" box — "summarize this in 2 paragraphs"), that
+        # instruction is the actual brief. Previously it was appended as a
+        # soft "prioritize this" aside and then immediately followed by a
+        # hard "must contain ONLY these sections" structural mandate — the
+        # model reliably obeyed the detailed, repeated structural mandate
+        # over the one-line aside, so "summarize in 2 paragraphs" always
+        # produced a full multi-section report regardless. has_user_
+        # instructions branches the prompt below so an explicit instruction
+        # actually replaces the default section structure instead of
+        # competing with it.
+        has_user_instructions = bool(instructions and instructions.strip())
         instructions_line = (
-            f"\nThe user specifically asked for: {instructions.strip()}\n"
-            "Prioritize this request while still grounding every claim in the evidence below.\n"
-            if instructions and instructions.strip()
+            f"\nThe user's instruction for this request: {instructions.strip()}\n"
+            "This is the brief for what to produce — follow it exactly, including any length, "
+            "format, or scope it specifies (e.g. \"two paragraphs\", \"just the key risks\", "
+            "\"under 150 words\", \"bullet points only\"). It governs the SHAPE of your answer; "
+            "every factual claim must still be grounded in the evidence below.\n"
+            if has_user_instructions
             else ""
         )
         calculated_metrics_context = format_metrics_for_evidence(metric_tables or [])
@@ -726,7 +741,7 @@ class SpaReportGenerationService:
                 "them; that kind of cross-document corroboration is the most valuable thing you "
                 "can produce.\n\n"
             )
-            if source_count > 1
+            if source_count > 1 and not has_user_instructions
             else ""
         )
         coverage_gap_requirement = (
@@ -891,40 +906,75 @@ class SpaReportGenerationService:
         sections_text = "".join(section_blocks[sid] for sid in section_ids if section_blocks.get(sid))
         first_heading = SECTION_HEADINGS.get(section_ids[0], "## Executive Summary")
 
-        prompt = (
-            f"Write a {template_name} titled \"{title}\" covering the period '{period_name}', "
-            "using only the evidence provided below.\n"
-            f"{instructions_line}\n"
-            f"{TEMPLATE_AUDIENCE_PURPOSE.get(template_id, '')}"
-            f"{synthesis_requirement}"
-            f"{coverage_gap_requirement}"
+        accuracy_requirements = (
             f"{calculated_metrics_requirement}"
             f"{growth_terminology_requirement}"
             f"{dimension_framing_requirement}"
             f"{single_observation_requirement}"
             f"{polarity_requirement}"
             f"{causal_language_requirement}"
-            f"{report_plan_requirement}"
-            "Go beyond summarizing — synthesize. For every major point, explain not just what "
-            "happened but why it matters, what pattern or trend it fits into, what changed since "
-            "prior context (if evidence shows it), and what the implication is for decision-makers. "
-            "Every non-obvious claim should be traceable to a specific source document by name.\n\n"
-            "Write like an analyst, not a promoter: prefer exact figures and specific evidence over "
-            "adjectives. Avoid words like 'remarkable', 'robust', 'significant', 'pivotal', "
-            "'dynamic', 'transformative', 'compelling', and 'impressive' unless the evidence "
-            "specifically justifies that word — a number in context communicates more than an "
-            "adjective describing it. Do not draw a conclusion the evidence doesn't support (e.g. "
-            "two metrics both rising does not by itself mean profitability improved) — state what "
-            "the data shows and stop there unless the evidence explicitly supports going further.\n\n"
-            "Structure the report in GitHub-flavoured markdown with exactly these sections, in order "
-            f"— a {template_name} must contain ONLY these sections, no others. Do not include a "
-            "top-level title heading — start directly at the first section below; the document "
-            "title is rendered separately by the export layer.\n\n"
-            f"{sections_text}"
-            "Do not wrap your answer in a code fence. Output raw markdown starting directly with the "
-            f"{first_heading} heading.\n\n"
-            f"Evidence:\n{evidence}{calculated_metrics_context}{report_plan_context}{comparison_context}"
         )
+
+        if has_user_instructions:
+            # The user told us exactly what they want — do not also hand the
+            # model a competing, much more detailed "must contain ONLY these
+            # sections" mandate (below, in the else branch). Every accuracy/
+            # grounding requirement still applies; only the DEFAULT section
+            # structure is dropped, since it's what was overriding the
+            # user's actual request (e.g. "summarize in 2 paragraphs").
+            prompt = (
+                f"Fulfil the user's request below using only the evidence provided.\n"
+                f"{instructions_line}\n"
+                f"{coverage_gap_requirement}"
+                f"{accuracy_requirements}"
+                f"{report_plan_requirement}"
+                "Match the user's requested length and format precisely — if they asked for two "
+                "paragraphs, write exactly two paragraphs of plain prose; if they asked for bullet "
+                "points, use bullet points; if they gave a word or sentence limit, respect it. Do "
+                "NOT add report sections, headings, an executive-summary framing, confidence/basis "
+                "tags, or any other structure the user did not ask for — those belong to this "
+                "platform's standard report templates, which the user's explicit instruction "
+                "overrides here. If the user's instruction is silent on format (asks a substantive "
+                "question with no stated length/shape), answer it directly and concisely rather "
+                "than defaulting to a long structured report.\n\n"
+                "Every non-obvious claim should be traceable to a specific source document by "
+                "name. Write like an analyst, not a promoter: prefer exact figures and specific "
+                "evidence over adjectives, and do not draw a conclusion the evidence doesn't "
+                "support.\n\n"
+                "Do not wrap your answer in a code fence. Do not include a top-level title "
+                "heading. Output raw markdown containing only what the user asked for.\n\n"
+                f"Evidence:\n{evidence}{calculated_metrics_context}{report_plan_context}{comparison_context}"
+            )
+        else:
+            prompt = (
+                f"Write a {template_name} titled \"{title}\" covering the period '{period_name}', "
+                "using only the evidence provided below.\n"
+                f"{instructions_line}\n"
+                f"{TEMPLATE_AUDIENCE_PURPOSE.get(template_id, '')}"
+                f"{synthesis_requirement}"
+                f"{coverage_gap_requirement}"
+                f"{accuracy_requirements}"
+                f"{report_plan_requirement}"
+                "Go beyond summarizing — synthesize. For every major point, explain not just what "
+                "happened but why it matters, what pattern or trend it fits into, what changed since "
+                "prior context (if evidence shows it), and what the implication is for decision-makers. "
+                "Every non-obvious claim should be traceable to a specific source document by name.\n\n"
+                "Write like an analyst, not a promoter: prefer exact figures and specific evidence over "
+                "adjectives. Avoid words like 'remarkable', 'robust', 'significant', 'pivotal', "
+                "'dynamic', 'transformative', 'compelling', and 'impressive' unless the evidence "
+                "specifically justifies that word — a number in context communicates more than an "
+                "adjective describing it. Do not draw a conclusion the evidence doesn't support (e.g. "
+                "two metrics both rising does not by itself mean profitability improved) — state what "
+                "the data shows and stop there unless the evidence explicitly supports going further.\n\n"
+                "Structure the report in GitHub-flavoured markdown with exactly these sections, in order "
+                f"— a {template_name} must contain ONLY these sections, no others. Do not include a "
+                "top-level title heading — start directly at the first section below; the document "
+                "title is rendered separately by the export layer.\n\n"
+                f"{sections_text}"
+                "Do not wrap your answer in a code fence. Output raw markdown starting directly with the "
+                f"{first_heading} heading.\n\n"
+                f"Evidence:\n{evidence}{calculated_metrics_context}{report_plan_context}{comparison_context}"
+            )
         try:
             response = self._client.chat.completions.create(
                 model=CHAT_MODEL,
@@ -934,21 +984,21 @@ class SpaReportGenerationService:
                     {
                         "role": "system",
                         "content": (
-                            "You are DataDumpAI's executive reporting analyst. Organizations bring "
-                            "you raw documents — meeting minutes, board papers, policies, financials — "
-                            "and you turn them into executive intelligence, not summaries. Your "
-                            "signature skill is multi-document synthesis: when given several "
-                            "documents, you connect them — recurring issues across meetings, "
-                            "positions that shifted over time, findings corroborated by more than one "
-                            "source — rather than writing about each document in isolation or letting "
-                            "one document dominate. For every point you make, answer not just 'what "
-                            "happened' but 'why it matters', 'what pattern it's part of', and 'what "
-                            "management should do about it'. Write in clear, confident, "
-                            "board-appropriate prose that favors exact figures and specific evidence "
-                            "over adjectives — you are an analyst, not a promoter. Never fabricate a "
-                            "figure, name, date, or claim that isn't in the evidence — if the evidence "
-                            "is thin on a section, say so briefly rather than padding with generic "
-                            "text."
+                            "You are DataDumpAI's executive reporting analyst. By default — when the "
+                            "user hasn't specified their own format — you turn raw documents (meeting "
+                            "minutes, board papers, policies, financials) into executive intelligence "
+                            "rather than a bare summary: connecting multiple documents, explaining why "
+                            "findings matter, and surfacing what management should do about them. But "
+                            "when the user gives an explicit instruction about what they want (e.g. "
+                            "\"summarize this in 2 paragraphs\", \"just list the risks\", \"keep it "
+                            "under 150 words\"), that instruction is the actual task — follow it "
+                            "exactly, including its length and format, even when that means producing "
+                            "something much simpler than your usual structured report. Being asked for "
+                            "a plain summary and still returning a multi-section report is a failure to "
+                            "follow the user, not a display of thoroughness. Whatever the requested "
+                            "shape, never fabricate a figure, name, date, or claim that isn't in the "
+                            "evidence — if the evidence is thin, say so briefly rather than padding "
+                            "with generic text."
                         ),
                     },
                     {"role": "user", "content": prompt},

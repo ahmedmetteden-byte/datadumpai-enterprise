@@ -5,7 +5,6 @@ from __future__ import annotations
 from services.report_document import compose_report_data, prepare_report_view, report_data_from_storage
 from services.report_metrics_extractor import extract_report_data
 from services.report_section_templates import build_report_section_plan
-from services.full_report_prompt import build_full_report_prompt
 
 LEGAL = """=== SOURCE DOCUMENT: judgment.pdf ===
 The court held that the plaintiff succeeded on March 12, 2024.
@@ -80,7 +79,13 @@ def test_compose_filters_forbidden_sections_for_single_legal_full_report():
     assert "Cross-Period Themes" not in loaded.narrative
 
 
-def test_prompt_with_section_plan_omits_forbidden_headings():
+def test_section_plan_omits_forbidden_headings_for_single_document_legal_report():
+    """Replaces the removed test_prompt_with_section_plan_omits_forbidden_
+    headings, which fed this same plan into the now-deleted dead
+    build_full_report_prompt() (see services/full_report_prompt.py's module
+    docstring). build_report_section_plan() itself — the live logic this
+    test actually exercises — is asserted on directly instead."""
+
     base = extract_report_data(
         document_text=LEGAL,
         report_type="Full Report",
@@ -95,20 +100,7 @@ def test_prompt_with_section_plan_omits_forbidden_headings():
         source_document_count=1,
         report_format="full_report",
     )
-    prompt = build_full_report_prompt(
-        document_text=LEGAL,
-        writing_style="Professional",
-        audience="Executive Management",
-        include_recommendations=True,
-        include_charts=True,
-        source_document_count=1,
-        report_context={
-            "source_documents": ["judgment.pdf"],
-            "reporting_period": "Q1 2026",
-        },
-        section_plan=plan,
-    )
 
-    assert "## Cross-Period Themes" not in prompt
-    assert "## Period-over-Period Comparison" not in prompt
-    assert "## Visual Summary" not in prompt
+    assert "Cross-Period Themes" not in plan.allowed_sections
+    assert "Period-over-Period Comparison" not in plan.allowed_sections
+    assert "Visual Summary" not in plan.allowed_sections
