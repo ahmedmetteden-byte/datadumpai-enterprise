@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
+
 from services.premium_docx_export import DocxExportMetadata, build_premium_docx
 from services.premium_pdf_export import PremiumExportMetadata, build_premium_pdf
 from services.premium_pptx_export import PresentationExportMetadata, build_premium_presentation
+from services.report_chart_export import is_chart_export_available
 from services.report_document_parser import parse_intelligence_report
 
 SAMPLE_REPORT = """
@@ -678,6 +681,10 @@ def test_build_premium_pdf_drops_isolated_singular_recommendation_preview():
 
 
 def test_build_premium_presentation_embeds_charts_for_spa_format_report():
+    is_chart_export_available.cache_clear()
+    if not is_chart_export_available():
+        pytest.skip("Chart export runtime is not available in this environment")
+
     pptx_bytes = build_premium_presentation(
         report_text=SPA_REPORT,
         metadata=PresentationExportMetadata(
