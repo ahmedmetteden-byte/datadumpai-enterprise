@@ -159,6 +159,92 @@ def test_stripe_checkout_uses_price_id(mock_stripe, billing_env, monkeypatch):
     assert call_kwargs["line_items"] == [{"price": "price_starter", "quantity": 1}]
 
 
+def test_cancel_at_period_end_disables_paystack_subscription_with_cached_token(
+    billing_env, monkeypatch
+):
+    """The core fix: cancelling a Paystack subscription must actually call
+    Paystack's disable endpoint, not just flip local state — see
+    BillingService._disable_paystack_subscription."""
+
+    subscription = SubscriptionService()
+    subscription.activate_paid_plan(
+        "starter", provider="paystack", customer_id="cus_1"
+    )
+    subscription.set_paystack_subscription_token(code="SUB_1", token="tok_1")
+
+    calls = []
+    monkeypatch.setattr(
+        "services.billing_service.paystack_disable_subscription",
+        lambda **kwargs: calls.append(kwargs),
+    )
+    monkeypatch.setattr(
+        "services.billing_service.paystack_fetch_active_subscription",
+        lambda customer_id: pytest.fail("should not need the fallback lookup"),
+    )
+
+    state = BillingService().cancel_at_period_end()
+
+    assert calls == [{"code": "SUB_1", "token": "tok_1"}]
+    assert state["cancel_at_period_end"] is True
+    assert state["subscription_status"] == SubscriptionService.STATUS_CANCELED
+
+
+def test_cancel_at_period_end_falls_back_to_live_paystack_lookup(
+    billing_env, monkeypatch
+):
+    """A subscription created before the subscription.create webhook fired
+    (or before this fix shipped) has no cached code/token — cancel must
+    still work by asking Paystack directly, not silently no-op."""
+
+    subscription = SubscriptionService()
+    subscription.activate_paid_plan(
+        "starter", provider="paystack", customer_id="cus_2"
+    )
+
+    calls = []
+    monkeypatch.setattr(
+        "services.billing_service.paystack_fetch_active_subscription",
+        lambda customer_id: {"code": "SUB_fetched", "token": "tok_fetched"}
+        if customer_id == "cus_2"
+        else None,
+    )
+    monkeypatch.setattr(
+        "services.billing_service.paystack_disable_subscription",
+        lambda **kwargs: calls.append(kwargs),
+    )
+
+    state = BillingService().cancel_at_period_end()
+
+    assert calls == [{"code": "SUB_fetched", "token": "tok_fetched"}]
+    assert state["cancel_at_period_end"] is True
+
+
+def test_cancel_at_period_end_raises_when_paystack_details_unavailable(
+    billing_env, monkeypatch
+):
+    """Never silently mark a subscription canceled locally while leaving it
+    active on Paystack — that's strictly worse than doing nothing, since
+    the customer would believe it's cancelled while still being billed."""
+
+    subscription = SubscriptionService()
+    subscription.activate_paid_plan(
+        "starter", provider="paystack", customer_id="cus_3"
+    )
+
+    monkeypatch.setattr(
+        "services.billing_service.paystack_fetch_active_subscription",
+        lambda customer_id: None,
+    )
+
+    with pytest.raises(ValueError, match="contact support"):
+        BillingService().cancel_at_period_end()
+
+    # Nothing should have been mutated by the failed attempt.
+    unchanged = SubscriptionService().load_state()
+    assert unchanged["subscription_status"] == SubscriptionService.STATUS_ACTIVE
+    assert unchanged["cancel_at_period_end"] is False
+
+
 def test_mark_canceled_at_period_end(isolated_env):
     subscription = SubscriptionService()
     subscription.activate_paid_plan("starter", provider="stripe", customer_id="cus_1")

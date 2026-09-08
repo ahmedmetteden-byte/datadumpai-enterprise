@@ -10,6 +10,8 @@ import config
 from core.current_user import require_current_user
 from services.paystack_billing_service import (
     PaystackBillingError,
+    disable_subscription as paystack_disable_subscription,
+    fetch_active_subscription as paystack_fetch_active_subscription,
     initialize_transaction as paystack_initialize,
     verify_transaction as paystack_verify,
 )
@@ -108,14 +110,46 @@ class BillingService:
         return create_customer_portal_session(customer_id=customer_id)
 
     def cancel_at_period_end(self) -> dict:
-        summary = self._subscription.get_billing_summary()
-        subscription_id = summary.get("payment_subscription_id")
-        provider = summary.get("payment_provider")
+        state = self._subscription.load_state()
+        provider = state.get("payment_provider")
 
-        if provider == "stripe" and subscription_id:
-            cancel_subscription_at_period_end(subscription_id)
+        if provider == "stripe":
+            subscription_id = state.get("payment_subscription_id")
+            if subscription_id:
+                cancel_subscription_at_period_end(subscription_id)
+        elif provider == "paystack":
+            self._disable_paystack_subscription(state)
 
         return self._subscription.mark_canceled(at_period_end=True)
+
+    def _disable_paystack_subscription(self, state: dict) -> None:
+        """Actually stop Paystack's recurring billing for this
+        subscription — not just flip local status. Paystack requires the
+        subscription's own code + email_token (never derivable from
+        anything else this app stores); see paystack_billing_service.py
+        for why. Prefers whatever the subscription.create webhook already
+        persisted; falls back to a live Paystack lookup for a subscription
+        created before that webhook was handled, or requested to cancel
+        within seconds of checkout (before the webhook has arrived).
+        """
+
+        code = state.get("paystack_subscription_code")
+        token = state.get("paystack_subscription_token")
+
+        if not (code and token):
+            customer_id = state.get("payment_customer_id") or ""
+            fetched = paystack_fetch_active_subscription(customer_id)
+            if fetched:
+                code, token = fetched["code"], fetched["token"]
+
+        if not (code and token):
+            raise ValueError(
+                "We could not find your Paystack subscription details to "
+                "cancel automatically. Please contact support so we can "
+                "cancel it for you."
+            )
+
+        paystack_disable_subscription(code=code, token=token)
 
     def get_summary(self) -> dict:
         return self._subscription.get_billing_summary()

@@ -161,6 +161,54 @@ def verify_transaction(reference: str) -> dict[str, Any]:
     }
 
 
+def disable_subscription(*, code: str, token: str) -> None:
+    """Stop a Paystack subscription's recurring billing.
+
+    `code` is the subscription's `subscription_code` and `token` its
+    `email_token` — both only obtainable from Paystack itself (the
+    `subscription.create` webhook, or fetch_active_subscription() below),
+    never derivable from data this app already holds. Without this call,
+    canceling in the product only updates our own database; Paystack's own
+    recurring-billing engine keeps charging the customer's saved
+    authorization on schedule regardless.
+    """
+
+    _call_paystack(
+        "POST",
+        "/subscription/disable",
+        json_body={"code": code, "token": token},
+    )
+
+
+def fetch_active_subscription(customer_id: str) -> dict[str, str] | None:
+    """Look up a customer's active subscription code + email token directly
+    from Paystack.
+
+    Fallback for when the subscription_code/email_token pair hasn't been
+    persisted locally yet — either the subscription.create webhook hasn't
+    arrived (a cancel requested within seconds of checkout), or the
+    subscription predates this lookup existing at all. Returns None if the
+    customer has no active subscription on Paystack's side, so callers can
+    tell "nothing to disable" apart from "Paystack is unreachable" (the
+    latter raises PaystackBillingError from _call_paystack, same as every
+    other call in this module).
+    """
+
+    if not customer_id:
+        return None
+
+    data = _call_paystack("GET", f"/customer/{customer_id}")
+    subscriptions = data.get("subscriptions") or []
+    for subscription in subscriptions:
+        if subscription.get("status") != "active":
+            continue
+        code = subscription.get("subscription_code")
+        token = subscription.get("email_token")
+        if code and token:
+            return {"code": str(code), "token": str(token)}
+    return None
+
+
 def verify_webhook_signature(payload: bytes, signature: str) -> bool:
     import hashlib
     import hmac

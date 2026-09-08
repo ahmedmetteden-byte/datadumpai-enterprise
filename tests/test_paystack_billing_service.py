@@ -14,6 +14,8 @@ import requests
 
 from services.paystack_billing_service import (
     PaystackBillingError,
+    disable_subscription,
+    fetch_active_subscription,
     initialize_transaction,
     verify_transaction,
 )
@@ -127,3 +129,78 @@ def test_verify_transaction_happy_path(monkeypatch):
     assert result["provider"] == "paystack"
     assert result["plan_id"] == "starter"
     assert result["customer_id"] == "42"
+
+
+def test_disable_subscription_posts_code_and_token(monkeypatch):
+    captured = {}
+
+    def fake_request(method, url, *, json=None, headers=None, timeout=None):
+        captured["method"] = method
+        captured["url"] = url
+        captured["json"] = json
+        return _FakeResponse(ok=True, json_data={"status": True, "data": {}})
+
+    monkeypatch.setattr("requests.request", fake_request)
+
+    disable_subscription(code="SUB_abc123", token="email_tok_xyz")
+
+    assert captured["method"] == "POST"
+    assert captured["url"].endswith("/subscription/disable")
+    assert captured["json"] == {"code": "SUB_abc123", "token": "email_tok_xyz"}
+
+
+def test_disable_subscription_surfaces_paystack_error(monkeypatch):
+    monkeypatch.setattr(
+        "requests.request",
+        lambda *a, **k: _FakeResponse(
+            ok=False, json_data={"status": False, "message": "Subscription not found"}
+        ),
+    )
+
+    with pytest.raises(PaystackBillingError, match="Subscription not found"):
+        disable_subscription(code="SUB_missing", token="tok")
+
+
+def test_fetch_active_subscription_returns_none_for_empty_customer_id():
+    assert fetch_active_subscription("") is None
+
+
+def test_fetch_active_subscription_finds_active_subscription(monkeypatch):
+    monkeypatch.setattr(
+        "requests.request",
+        lambda *a, **k: _FakeResponse(
+            ok=True,
+            json_data={
+                "status": True,
+                "data": {
+                    "subscriptions": [
+                        {
+                            "status": "cancelled",
+                            "subscription_code": "SUB_old",
+                            "email_token": "tok_old",
+                        },
+                        {
+                            "status": "active",
+                            "subscription_code": "SUB_active",
+                            "email_token": "tok_active",
+                        },
+                    ]
+                },
+            },
+        ),
+    )
+
+    result = fetch_active_subscription("42")
+    assert result == {"code": "SUB_active", "token": "tok_active"}
+
+
+def test_fetch_active_subscription_returns_none_when_no_active_subscription(monkeypatch):
+    monkeypatch.setattr(
+        "requests.request",
+        lambda *a, **k: _FakeResponse(
+            ok=True,
+            json_data={"status": True, "data": {"subscriptions": []}},
+        ),
+    )
+
+    assert fetch_active_subscription("42") is None

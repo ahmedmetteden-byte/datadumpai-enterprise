@@ -72,6 +72,8 @@ class SupabaseUsageRepository:
                 "payment_reference": row.get("payment_reference"),
                 "cancel_at_period_end": bool(row.get("cancel_at_period_end", False)),
                 "current_period_end": row.get("current_period_end"),
+                "paystack_subscription_code": row.get("paystack_subscription_code"),
+                "paystack_subscription_token": row.get("paystack_subscription_token"),
             }
         )
 
@@ -91,6 +93,8 @@ class SupabaseUsageRepository:
             "payment_reference": state.get("payment_reference"),
             "cancel_at_period_end": bool(state.get("cancel_at_period_end", False)),
             "current_period_end": state.get("current_period_end"),
+            "paystack_subscription_code": state.get("paystack_subscription_code"),
+            "paystack_subscription_token": state.get("paystack_subscription_token"),
         }
         handle_response(
             self._client.table("user_usage").upsert(row).execute(),

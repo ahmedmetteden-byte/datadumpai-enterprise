@@ -148,5 +148,10 @@ def cancel_subscription(
 ) -> BillingSummaryOut:
     with user_request_scope(principal):
         billing = BillingService(access_token=principal.access_token)
-        billing.cancel_at_period_end()
+        try:
+            billing.cancel_at_period_end()
+        except (ValueError, StripeBillingError, PaystackBillingError) as exc:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            ) from exc
         return _summary_out(principal)

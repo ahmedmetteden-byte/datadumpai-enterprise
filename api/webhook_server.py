@@ -157,4 +157,24 @@ async def paystack_webhook(request: Request) -> dict[str, str]:
                 user_id, use_service_role=True
             ).mark_canceled(at_period_end=False)
 
+    elif event_type == "subscription.create":
+        # The subscription_code + email_token pair here is the ONLY way to
+        # later call POST /subscription/disable and actually stop this
+        # subscription's recurring billing — see
+        # services/paystack_billing_service.disable_subscription(). Nothing
+        # else this app receives (the transaction/verify response, the
+        # charge.success event) carries a real subscription identifier,
+        # only the *plan* code.
+        customer_id = str((data.get("customer") or {}).get("id") or "")
+        subscription_code = data.get("subscription_code")
+        email_token = data.get("email_token")
+        if customer_id and subscription_code and email_token:
+            user_id = find_user_id_by_customer_id(customer_id, use_service_role=True)
+            if user_id:
+                SubscriptionService.for_user_id(
+                    user_id, use_service_role=True
+                ).set_paystack_subscription_token(
+                    code=str(subscription_code), token=str(email_token)
+                )
+
     return {"received": "true"}

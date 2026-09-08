@@ -71,6 +71,13 @@ class SubscriptionService:
             "payment_reference": None,
             "cancel_at_period_end": False,
             "current_period_end": None,
+            # Paystack-specific: subscription_code + email_token, the pair
+            # Paystack's /subscription/disable endpoint requires to actually
+            # stop recurring billing — captured from the subscription.create
+            # webhook (see api/webhook_server.py), never derivable from
+            # anything else this app already stores.
+            "paystack_subscription_code": None,
+            "paystack_subscription_token": None,
         }
 
     def _utc_now(self) -> datetime:
@@ -189,6 +196,24 @@ class SubscriptionService:
         state["payment_reference"] = reference
         state["cancel_at_period_end"] = False
         state["current_period_end"] = current_period_end
+        # A fresh activation (new subscribe, or resubscribe after a prior
+        # cancellation) always gets a new Paystack subscription_code/
+        # email_token pair, if any — never carry over the previous
+        # subscription's disable-token, which would no longer be valid for
+        # this one. Repopulated by the next subscription.create webhook.
+        state["paystack_subscription_code"] = None
+        state["paystack_subscription_token"] = None
+        self.save_state(state)
+        return state
+
+    def set_paystack_subscription_token(self, *, code: str, token: str) -> dict:
+        """Persist the subscription_code/email_token pair Paystack's
+        subscription.create webhook delivers — the only way to later call
+        POST /subscription/disable and actually stop recurring billing."""
+
+        state = self.load_state()
+        state["paystack_subscription_code"] = code
+        state["paystack_subscription_token"] = token
         self.save_state(state)
         return state
 
@@ -200,6 +225,8 @@ class SubscriptionService:
             state["plan"] = DEFAULT_PLAN
             state["billing_plan"] = DEFAULT_PLAN
             state["payment_subscription_id"] = None
+            state["paystack_subscription_code"] = None
+            state["paystack_subscription_token"] = None
         self.save_state(state)
         return state
 
