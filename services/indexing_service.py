@@ -30,28 +30,43 @@ def _find_document(project: dict[str, Any], document_id: str) -> dict[str, Any] 
     return None
 
 
-def _chunk_document_text(filename: str, text: str) -> list[dict[str, Any]]:
-    """Build retrieval chunks from extracted text."""
+MAX_CHUNKS_PER_DOCUMENT = 200
+
+
+def _chunk_document_text(filename: str, text: str) -> tuple[list[dict[str, Any]], bool]:
+    """Build retrieval chunks from extracted text.
+
+    Returns (chunks, truncated) — extremely large documents are capped at
+    MAX_CHUNKS_PER_DOCUMENT chunks (a real limit, not a bug: unbounded
+    per-document chunk counts would blow up embedding cost and Qdrant
+    storage for one outlier upload). `truncated` tells the caller whether
+    this cap actually bit, so it isn't silently indexed as if the whole
+    document were covered — see IndexingService.index_document(), which
+    persists it onto the document record.
+    """
 
     if not text.strip():
-        return []
+        return [], False
 
     wrapped = f"=== SOURCE DOCUMENT: {filename} ===\n\n{text}\n"
     chunks: list[DocumentChunk] = chunk_combined_source_text(
         wrapped,
         chunk_size=1800,
     )
-    # Cap extremely large docs for this sprint
-    limited = chunks[:200]
-    return [
-        {
-            "chunk_index": chunk.chunk_index,
-            "heading": chunk.heading,
-            "text": chunk.text,
-        }
-        for chunk in limited
-        if chunk.text.strip()
-    ]
+    truncated = len(chunks) > MAX_CHUNKS_PER_DOCUMENT
+    limited = chunks[:MAX_CHUNKS_PER_DOCUMENT]
+    return (
+        [
+            {
+                "chunk_index": chunk.chunk_index,
+                "heading": chunk.heading,
+                "text": chunk.text,
+            }
+            for chunk in limited
+            if chunk.text.strip()
+        ],
+        truncated,
+    )
 
 
 class IndexingService:
@@ -101,6 +116,7 @@ class IndexingService:
         progress_percent: int,
         error_message: str | None = None,
         chunk_count: int | None = None,
+        truncated: bool | None = None,
         indexed: bool = False,
     ) -> dict[str, Any]:
         with current_user_scope(self._user):
@@ -116,6 +132,8 @@ class IndexingService:
             document["updated_at"] = _utc_now()
             if chunk_count is not None:
                 document["chunk_count"] = chunk_count
+            if truncated is not None:
+                document["chunks_truncated"] = truncated
             if indexed:
                 document["indexed_at"] = _utc_now()
             self._persist_document(project_service, project, document)
@@ -151,7 +169,7 @@ class IndexingService:
                     stage="chunking",
                     progress_percent=34,
                 )
-                chunks = _chunk_document_text(filename, text)
+                chunks, truncated = _chunk_document_text(filename, text)
                 if not chunks:
                     raise ValueError("Document produced no chunks.")
 
@@ -162,6 +180,7 @@ class IndexingService:
                     stage="embedding",
                     progress_percent=58,
                     chunk_count=len(chunks),
+                    truncated=truncated,
                 )
                 embeddings = EmbeddingService().embed_texts(
                     [chunk["text"] for chunk in chunks]
@@ -174,6 +193,7 @@ class IndexingService:
                     stage="upserting",
                     progress_percent=82,
                     chunk_count=len(chunks),
+                    truncated=truncated,
                 )
                 QdrantService().upsert_chunks(
                     workspace_id=workspace_id,
@@ -191,6 +211,7 @@ class IndexingService:
                     stage="indexed",
                     progress_percent=100,
                     chunk_count=len(chunks),
+                    truncated=truncated,
                     indexed=True,
                 )
             except Exception as exc:

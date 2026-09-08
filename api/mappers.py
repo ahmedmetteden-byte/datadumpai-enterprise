@@ -110,6 +110,7 @@ def document_to_knowledge_item(
         indexed_at=document.get("indexed_at"),
         progress_percent=int(document.get("progress_percent") or 0),
         index_stage=str(document.get("index_stage") or "") or None,
+        truncated=bool(document.get("chunks_truncated") or False),
     )
 
 
@@ -137,6 +138,7 @@ def document_to_knowledge_detail(
             "status": item.status,
             "indexStage": document.get("index_stage") or "queued",
             "chunkCount": int(document.get("chunk_count") or 0),
+            "truncated": bool(document.get("chunks_truncated") or False),
         },
         storage_path=str(document.get("path") or "") or None,
         relationships=[],
@@ -162,6 +164,7 @@ def document_processing_status(document: dict[str, Any]) -> KnowledgeProcessingS
         index_stage=stage_key,
         progress_percent=int(document.get("progress_percent") or 0),
         error_message=document.get("error_message"),
+        truncated=bool(document.get("chunks_truncated") or False),
         updated_at=str(
             document.get("indexed_at")
             or document.get("updated_at")

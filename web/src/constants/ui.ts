@@ -358,6 +358,9 @@ export const UI_COPY = {
   knowledgeIndexIndexing: 'Indexing...',
   knowledgeIndexPercent: '{percent}%',
   knowledgeIndexDone: 'Done',
+  knowledgeIndexDonePartial: 'Indexed (partial)',
+  knowledgeIndexTruncatedHint:
+    'This document is very long — only the first part was indexed and is available for reports and Ask.',
   knowledgeIndexStageQueued: 'Indexing...',
   knowledgeIndexStageExtract: 'Extract text',
   knowledgeIndexStageChunk: 'Chunk',

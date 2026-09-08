@@ -326,6 +326,7 @@ export function KnowledgeUploadDialog({
               }
               stage={status.stage}
               indexStage={indexStage}
+              truncated={status.truncated}
             />
           ) : null}
 

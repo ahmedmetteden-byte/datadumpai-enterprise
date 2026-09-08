@@ -53,6 +53,11 @@ export interface KnowledgeListItem {
   progressPercent?: number;
   /** Pipeline stage key: queued | extracting | chunking | embedding | upserting | indexed */
   indexStage?: string | null;
+  /** True when this document was too large to index in full — only its
+   * first ~200 chunks are retrievable for reports/Ask. Indexing still
+   * succeeded (status is still "indexed"); this just means coverage is
+   * partial rather than complete. */
+  truncated?: boolean;
 }
 
 export interface KnowledgeRelationship {
@@ -108,6 +113,8 @@ export interface KnowledgeProcessingStatus {
   indexStage?: string | null;
   progressPercent?: number;
   errorMessage?: string;
+  /** See KnowledgeListItem.truncated. */
+  truncated?: boolean;
   updatedAt: IsoDateTime;
 }
 

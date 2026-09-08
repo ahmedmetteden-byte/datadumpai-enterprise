@@ -62,6 +62,11 @@ interface Attachment {
   /** The server-assigned document id, set once the upload response comes
    * back — this is what actually scopes report generation to this file. */
   documentId?: string;
+  /** True once indexing finishes if the document was too large to index
+   * in full — only its first ~200 chunks are retrievable for reports/Ask.
+   * Not an error: the upload still succeeded, this just means coverage
+   * is partial. */
+  truncated?: boolean;
 }
 
 const INDEX_POLL_INTERVAL_MS = 1500;
@@ -209,12 +214,14 @@ export function HomeComposer() {
     const deadline = Date.now() + INDEX_POLL_TIMEOUT_MS;
     while (Date.now() < deadline) {
       let outcome: 'indexed' | 'failed' | 'pending';
+      let truncated = false;
       try {
         const status = await services.knowledge.processingStatus(
           targetWorkspaceId,
           documentId,
           auth,
         );
+        truncated = Boolean(status.truncated);
         outcome =
           status.status === 'indexed'
             ? 'indexed'
@@ -226,7 +233,7 @@ export function HomeComposer() {
       }
 
       if (outcome === 'indexed') {
-        updateAttachment(attachmentId, { status: 'uploaded' });
+        updateAttachment(attachmentId, { status: 'uploaded', truncated });
         setSelectedDocumentIds((current) => new Set(current).add(documentId));
         void reloadWorkspaceDocuments(targetWorkspaceId);
         return;
@@ -720,6 +727,13 @@ export function HomeComposer() {
                     </span>
                   ) : item.status === 'error' ? (
                     <span className="text-danger">{item.error}</span>
+                  ) : item.truncated ? (
+                    <span
+                      className="text-warning"
+                      title={UI_COPY.knowledgeIndexTruncatedHint}
+                    >
+                      ⚠ {UI_COPY.knowledgeIndexDonePartial}
+                    </span>
                   ) : (
                     <span className="text-success">✓</span>
                   )}

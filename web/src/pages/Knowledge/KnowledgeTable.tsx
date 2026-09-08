@@ -129,6 +129,7 @@ export function KnowledgeTable({
                     status={item.status}
                     progressPercent={item.progressPercent}
                     indexStage={item.indexStage}
+                    truncated={item.truncated}
                     compact
                   />
                 </td>

@@ -26,11 +26,13 @@ export function isIndexingInFlight(
 
 export function indexingHeadline({
   status,
+  truncated,
 }: {
   status: KnowledgeProcessingStatusValue;
   progressPercent?: number | null;
   stage?: string | null;
   indexStage?: string | null;
+  truncated?: boolean;
 }): string {
   if (status === 'failed') {
     return UI_COPY.knowledgeUploadIndexFailed;
@@ -41,9 +43,9 @@ export function indexingHeadline({
     status === 'linked' ||
     status === 'archived'
   ) {
-    return status === 'archived'
-      ? 'Archived'
-      : UI_COPY.knowledgeIndexDone;
+    if (status === 'archived') return 'Archived';
+    if (truncated) return UI_COPY.knowledgeIndexDonePartial;
+    return UI_COPY.knowledgeIndexDone;
   }
   return UI_COPY.knowledgeIndexIndexing;
 }
@@ -53,6 +55,7 @@ export function IndexingProgress({
   progressPercent,
   stage,
   indexStage,
+  truncated = false,
   showBar = true,
   compact = false,
   className,
@@ -61,6 +64,9 @@ export function IndexingProgress({
   progressPercent?: number | null;
   stage?: string | null;
   indexStage?: string | null;
+  /** See KnowledgeListItem.truncated — shows a distinct, non-error state
+   * instead of the plain "Done" once indexing finishes. */
+  truncated?: boolean;
   showBar?: boolean;
   compact?: boolean;
   className?: string;
@@ -72,10 +78,15 @@ export function IndexingProgress({
       : status === 'indexed' || status === 'verified'
         ? 100
         : 0;
-  const label = indexingHeadline({ status, progressPercent: percent || undefined });
+  const label = indexingHeadline({
+    status,
+    progressPercent: percent || undefined,
+    truncated,
+  });
   const stageLabel =
     (indexStage && STAGE_LABELS[indexStage]) ||
     (stage?.trim() ? stage : null);
+  const isPartial = !inFlight && status !== 'failed' && truncated;
 
   return (
     <div className={cn('min-w-[7.5rem]', className)}>
@@ -88,8 +99,11 @@ export function IndexingProgress({
               ? 'text-danger'
               : inFlight
                 ? 'animate-pulse text-ink'
-                : 'text-success',
+                : isPartial
+                  ? 'text-warning'
+                  : 'text-success',
           )}
+          title={isPartial ? UI_COPY.knowledgeIndexTruncatedHint : undefined}
         >
           {label}
         </span>
@@ -99,6 +113,11 @@ export function IndexingProgress({
           </span>
         ) : null}
       </div>
+      {isPartial ? (
+        <p className="mt-0.5 text-caption text-warning">
+          {UI_COPY.knowledgeIndexTruncatedHint}
+        </p>
+      ) : null}
       {inFlight && stageLabel ? (
         <p className="mt-0.5 text-caption text-ink-muted">{stageLabel}</p>
       ) : null}

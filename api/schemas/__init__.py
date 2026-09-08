@@ -122,6 +122,12 @@ class KnowledgeListItemOut(CamelModel):
     indexed_at: str | None = None
     progress_percent: int | None = None
     index_stage: str | None = None
+    # True when indexing capped this document at
+    # IndexingService.MAX_CHUNKS_PER_DOCUMENT — it was successfully
+    # indexed, but only part of it is actually retrievable for reports/
+    # Ask. Distinct from `status`/`error_message`, which are about
+    # whether indexing succeeded at all, not how complete it is.
+    truncated: bool = False
 
 
 class KnowledgeListResultOut(CamelModel):
@@ -155,6 +161,7 @@ class KnowledgeProcessingStatusOut(CamelModel):
     index_stage: str | None = None
     progress_percent: int | None = None
     error_message: str | None = None
+    truncated: bool = False
     updated_at: str
 
 

@@ -85,6 +85,7 @@ export function KnowledgePreview({
                   ? detail.metadata.indexStage
                   : undefined)
               }
+              truncated={processing.truncated ?? detail.truncated}
             />
             {processing.errorMessage ? (
               <p className="mt-2 text-small text-danger">
