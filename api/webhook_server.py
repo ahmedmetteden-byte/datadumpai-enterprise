@@ -21,6 +21,13 @@ from services.billing_service import activate_subscription_for_user
 from services.paystack_billing_service import verify_webhook_signature
 from services.stripe_billing_service import construct_webhook_event
 from services.subscription_service import SubscriptionService
+from core.monitoring import init_monitoring
+
+# See api/app.py for why this runs before the FastAPI app is constructed.
+# Tagged "webhooks" (distinct from "api") so a failure processing a
+# payment webhook is distinguishable in Sentry from a product-API error
+# even though both processes share this module.
+init_monitoring(service_name="webhooks")
 
 app = FastAPI(title="DataDumpAI Billing Webhooks", version="1.0.0")
 

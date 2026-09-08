@@ -245,6 +245,7 @@ Generated from `.env.example`. Production values are **never committed**. Use `s
 | **Email** | `EMAIL_ENABLED`, `EMAIL_FROM`, `EMAIL_FROM_NAME`, `SMTP_*`, `RESEND_API_KEY` |
 | **Admin** | `ADMIN_USER_IDS`, `ADMIN_EMAILS` |
 | **Analytics** | `ANALYTICS_ENABLED`, `ANALYTICS_PROVIDER`, `POSTHOG_*`, `PLAUSIBLE_DOMAIN` |
+| **Error monitoring** | `SENTRY_DSN`, `SENTRY_TRACES_SAMPLE_RATE` — `api` and `webhooks` only; separate from the marketing site's own `NEXT_PUBLIC_SENTRY_DSN` |
 | **General** | `SITE_URL`, `DEBUG` |
 
 Production requirements:

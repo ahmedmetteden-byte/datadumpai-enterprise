@@ -20,6 +20,13 @@ from api.routers import (
     reports,
     workspaces,
 )
+from core.monitoring import init_monitoring
+
+# Must run before the FastAPI app is constructed below — the Starlette/
+# FastAPI Sentry integrations instrument the app at creation time via
+# sentry_sdk's global client, not something attached to `app` afterward.
+# A no-op when SENTRY_DSN is unset (see core/monitoring.py).
+init_monitoring(service_name="api")
 
 app = FastAPI(title="DataDumpAI Product API", version="1.0.0")
 

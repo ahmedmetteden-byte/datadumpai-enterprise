@@ -567,6 +567,24 @@ POSTHOG_HOST = os.getenv("POSTHOG_HOST", "https://app.posthog.com").strip()
 PLAUSIBLE_DOMAIN = os.getenv("PLAUSIBLE_DOMAIN", "").strip()
 ANALYTICS_EVENTS_PATH = os.getenv("ANALYTICS_EVENTS_PATH", "data/analytics_events.json").strip()
 
+# ==========================================================
+# ERROR MONITORING (Sentry) — backend (api/webhooks). The marketing
+# site's Sentry integration (NEXT_PUBLIC_SENTRY_DSN) is separate — see
+# marketing-site/src/lib/monitoring/. Empty DSN disables it; nothing
+# else about SENTRY_DSN being unset should ever fail a request.
+# ==========================================================
+
+SENTRY_DSN = os.getenv("SENTRY_DSN", "").strip()
+# Fraction of requests to trace (0.0-1.0). Default 0: error capture works
+# regardless of this — it only affects performance-tracing volume/cost,
+# which is not something to turn on by default without a deliberate
+# choice about Sentry quota.
+SENTRY_TRACES_SAMPLE_RATE = float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0") or 0)
+
+
+def is_sentry_configured() -> bool:
+    return bool(SENTRY_DSN)
+
 
 # ==========================================================
 # PLANS & USAGE LIMITS
