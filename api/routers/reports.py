@@ -15,7 +15,12 @@ from fastapi.responses import Response
 from api.auth_jwt import AuthenticatedPrincipal
 from models.report_data import ReportData
 from models.user import User
-from api.deps import get_current_user, get_principal, user_request_scope
+from api.deps import (
+    enforce_rate_limit,
+    get_current_user,
+    get_principal,
+    user_request_scope,
+)
 from api.schemas import (
     GenerateReportBody,
     ReportDetailOut,
@@ -240,6 +245,9 @@ def generate_report(
     body: GenerateReportBody,
     principal: AuthenticatedPrincipal = Depends(get_principal),
     _current_user: User = Depends(get_current_user),
+    _rate_limit: None = Depends(
+        enforce_rate_limit("reports.generate", max_requests=10, window_seconds=300)
+    ),
 ) -> ReportDetailOut:
     project = _get_project(principal, workspace_id)
     with user_request_scope(principal):

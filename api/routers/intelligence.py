@@ -14,7 +14,12 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from api.auth_jwt import AuthenticatedPrincipal
 from models.user import User
-from api.deps import get_current_user, get_principal, user_request_scope
+from api.deps import (
+    enforce_rate_limit,
+    get_current_user,
+    get_principal,
+    user_request_scope,
+)
 from api.schemas import (
     IntelligenceCitationOut,
     IntelligenceConversationOut,
@@ -429,6 +434,9 @@ def send_message(
     body: SendMessageBody,
     principal: AuthenticatedPrincipal = Depends(get_principal),
     _current_user: User = Depends(get_current_user),
+    _rate_limit: None = Depends(
+        enforce_rate_limit("intelligence.ask", max_requests=30, window_seconds=300)
+    ),
 ) -> IntelligenceConversationOut:
     content = body.content.strip()
     if not content:
@@ -472,6 +480,9 @@ def ask_temporary(
     body: SendMessageBody,
     principal: AuthenticatedPrincipal = Depends(get_principal),
     _current_user: User = Depends(get_current_user),
+    _rate_limit: None = Depends(
+        enforce_rate_limit("intelligence.ask", max_requests=30, window_seconds=300)
+    ),
 ) -> IntelligenceMessageOut:
     """Answer a question without creating or persisting any conversation —
     backs "temporary chat" mode, which behaves like ChatGPT/Claude's

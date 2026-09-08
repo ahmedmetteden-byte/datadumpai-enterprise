@@ -16,6 +16,7 @@ from fastapi import Depends, Header, HTTPException, status
 
 from api.auth_jwt import AuthenticatedPrincipal, decode_supabase_token
 from core.current_user import CurrentUser, current_user_scope
+from core.rate_limit import RateLimitExceeded, check_rate_limit
 from models.user import User
 from services.document_service import DocumentService
 from services.project_service import ProjectService
@@ -101,6 +102,38 @@ def project_service_for(principal: AuthenticatedPrincipal) -> ProjectService:
 def document_service_for(principal: AuthenticatedPrincipal) -> DocumentService:
     with user_request_scope(principal):
         return DocumentService(access_token=principal.access_token)
+
+
+def enforce_rate_limit(scope: str, *, max_requests: int, window_seconds: int):
+    """Dependency factory: rate-limit an endpoint per authenticated user.
+
+    Usage: ``Depends(enforce_rate_limit("intelligence.ask", max_requests=20,
+    window_seconds=300))``. Keyed by user id (not IP) — meaningful here
+    because every route this protects already requires auth, and per-user
+    is what actually matches the abuse case (one account driving unbounded
+    OpenAI spend), not per-network-address. See core/rate_limit.py for why
+    this is in-memory/per-process rather than backed by a shared store.
+    """
+
+    def _dependency(principal: AuthenticatedPrincipal = Depends(get_principal)) -> None:
+        try:
+            check_rate_limit(
+                scope,
+                principal.user.id,
+                max_requests=max_requests,
+                window_seconds=window_seconds,
+            )
+        except RateLimitExceeded as exc:
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=(
+                    "Too many requests. Please wait "
+                    f"{exc.retry_after_seconds} seconds and try again."
+                ),
+                headers={"Retry-After": str(exc.retry_after_seconds)},
+            ) from exc
+
+    return _dependency
 
 
 # Backwards-compatible alias
