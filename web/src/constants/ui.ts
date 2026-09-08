@@ -35,7 +35,6 @@ export const PRIMARY_NAV: NavItem[] = [
 export const UI_COPY = {
   searchPlaceholder: "Ask anything about your organization's knowledge...",
   viewInsights: 'View Insights',
-  createReport: 'Generate Report',
   reportsTitle: 'Reports',
   reportsSubtitle:
     'Generate workspace reports, save them to the library, and export to Word, PDF, or PowerPoint.',
@@ -88,7 +87,6 @@ export const UI_COPY = {
   reportsExportLockedCta: 'View plans',
   reportsExportLockedDismiss: 'Maybe later',
   reportsGenerateError: 'Generation failed. Try again.',
-  notifications: 'Notifications',
   workspaceSelector: 'Workspace',
   continueWorking: 'Continue working',
   quickActions: 'Quick actions',
@@ -119,7 +117,6 @@ export const UI_COPY = {
   requestNetworkError:
     'Network error. Check your connection and try again.',
   comingSoon: 'This section is coming in a later phase.',
-  heroSupport: "Your organization's knowledge, ready when you are.",
   homeComposerEyebrow: 'AI Reporting Workspace',
   homeComposerTitle: 'What would you like DataDumpAI to do?',
   homeComposerSubtitle:
