@@ -387,6 +387,41 @@ curl -sk https://www.getdatadump.com/ -o /dev/null -w "%{http_code}\n"
 
 ---
 
+## Backup / restore readiness
+
+Production data (accounts, projects, documents, billing state) lives in
+Supabase Postgres + Supabase Storage (see [Environment variables](#environment-variables) above for `DATABASE_BACKEND`/`STORAGE_BACKEND`). Supabase runs its own automated backups for the project; this section covers what's checked automatically and how to actually drill a restore.
+
+### What's automated
+
+`.github/workflows/check-backups.yml` runs `scripts/check_supabase_backups.py` daily. It calls Supabase's Management API's **read-only** backups-list endpoint (`GET /v1/projects/{ref}/database/backups`) and fails the workflow if:
+
+- point-in-time recovery (PITR) is disabled,
+- the most recent completed backup is older than 26 hours, or
+- any backup is in a non-completed (failed) state.
+
+It requires two repository secrets, distinct from anything the app itself uses:
+
+- `SUPABASE_ACCESS_TOKEN` — a Management API personal access token (Supabase dashboard → Account → Access Tokens). Not `SUPABASE_SERVICE_ROLE_KEY`, which has no access to this API.
+- `SUPABASE_PROJECT_REF` — the project ref (the subdomain in `https://<ref>.supabase.co`).
+
+This check is deliberately read-only. It never calls Supabase's restore/PITR endpoint (`POST .../database/backups/restore-pitr`) — Supabase's own documentation describes that endpoint as experimental, and it restores **in place, into the same project**, with no way to target a new project via the API. Running it unattended against production would be a way to *cause* an incident, not prevent one. A stale or failing check means "go run the manual drill below soon," never "run the API's restore now."
+
+### Manual restore drill (do this periodically, not just when something breaks)
+
+The only *safe* way to prove backups actually work end-to-end is Supabase's dashboard-only **"Restore to a New Project"** feature — it creates an isolated new project from a backup, so a drill can never touch production data. This is not exposed through the Management API, so it is not (and should not be) scripted.
+
+1. In the Supabase dashboard, open the production project → **Database → Backups**.
+2. Pick a backup and choose **Restore to a New Project** (not the in-place "Restore" action).
+3. Wait for the new project to finish provisioning, then verify the restored data directly against it (e.g. spot-check row counts on `accounts`/`projects`/`documents`, or run the app's own read-only scripts like `scripts/inspect_account_state.py` against it with its connection details).
+4. Note what the restore does **not** bring over automatically — Storage objects, Edge Functions, Auth users, and API keys need separate/manual reconfiguration on the new project. Confirm whether Storage objects referenced by restored `documents` rows are actually retrievable, since that gap is the most likely to be missed silently.
+5. Tear down the drill project once verified (it costs money to leave running and must never be pointed at by production config).
+6. Record the drill date and outcome in your team's incident/ops log — "restore was proven to work on \<date\>" is the useful fact for the next real incident, and a restored project can't itself be a source for a further restore, so each drill is against a fresh backup.
+
+This is intentionally a human-supervised procedure, not automation — the two-project isolation is what makes it safe, and only the dashboard offers that isolation today.
+
+---
+
 ## Related documentation
 
 - [SYSTEM_ARCHITECTURE.md](./SYSTEM_ARCHITECTURE.md) — application design, data flow, and component details
