@@ -360,9 +360,18 @@ export function HomeComposer() {
         },
       ]);
 
-      // Uploads are chained one-at-a-time (not fired in parallel): the backend
-      // saves a workspace's whole document list on every upload, so concurrent
-      // uploads race and can silently delete each other's newly-added documents.
+      // Uploads are chained one-at-a-time (not fired in parallel). The
+      // original reason — the backend rewriting a workspace's whole
+      // document list on every upload, so concurrent uploads could race
+      // and silently drop each other's newly-added documents — is fixed
+      // at the source (ProjectService.upsert_document() /
+      // JsonProjectRepository now do a real locked, per-document write;
+      // see storage/json_storage.py's JSONStorage.update()). Kept
+      // serialized anyway: UsageService.check_can_upload() /
+      // record_uploads() is a separate, still-real check-then-act race
+      // on the upload-quota counter (services/usage_service.py) that
+      // concurrent uploads would newly make exercisable in practice —
+      // not this file's bug to fix.
       uploadQueueRef.current = uploadQueueRef.current.then(() =>
         services.knowledge
           .upload(
